@@ -1,0 +1,9 @@
+Create Postgres database and connect to it on command line
+Import old data into Postgres database:
+    Australian coastline shapefiles
+    Electoral districts shapefiles
+Run SQL and parse WKB in C program: check against Postgres output
+Turn WKB into vertex attributes
+
+Get frontend to read vertices from file
+Output to vertex file from C program
