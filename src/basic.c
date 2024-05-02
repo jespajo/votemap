@@ -1,0 +1,54 @@
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "basic.h"
+
+s64 round_up_to_power_of_two(s64 num)
+{
+    // @Fixme: Assert not out of max range.
+
+    s64 result = 1;
+
+    while (result < num)  result <<= 1;
+
+    return result;
+}
+
+bool is_power_of_two(s64 num)
+{
+    s64 round = round_up_to_power_of_two(num);
+
+    return (num == round);
+}
+
+void log_error_(char *file, int line, char *format, ...)
+{
+    fprintf(stderr, "%s:%d: ", file, line);
+
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+
+    fprintf(stderr, "\n");
+    fflush(stderr);
+}
+
+void assert_(bool cond, char *cond_text, char *file, int line) // @Deprecated.
+{
+    if (!cond) {
+        log_error("%s:%d: Assertion failed: `%s`.\n", file, line, cond_text);
+        exit(1);
+    }
+}
+
+char *trim_left_(char *string, char *trim_chars, int num_trim_chars)
+{
+    for (int i = 0; i < num_trim_chars; i++) {
+        if (string[0] == trim_chars[i]) {
+            return trim_left_(string + 1, trim_chars, num_trim_chars);
+        }
+    }
+    return string;
+}
