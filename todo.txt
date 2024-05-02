@@ -1,9 +1,10 @@
-Create Postgres database and connect to it on command line
-Import old data into Postgres database:
-    Australian coastline shapefiles
-    Electoral districts shapefiles
-Run SQL and parse WKB in C program: check against Postgres output
-Turn WKB into vertex attributes
-
 Get frontend to read vertices from file
 Output to vertex file from C program
+
+Connect to Postgis database from C
+See if you can render low-res Australia landmass from WKB
+Add pan and zoom to frontend
+
+Import old data into new Postgres database:
+    Australian coastline shapefiles
+    Electoral districts shapefiles
