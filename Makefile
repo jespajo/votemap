@@ -13,6 +13,7 @@ cflags += -MT bin/$*.o
 cflags += -o $@
 cflags += -DDEBUG
 cflags += $(fsan)
+cflags += -I/usr/include/postgresql
 
 ifeq ($(cc),gcc)
   cflags += -Wno-missing-braces
@@ -20,6 +21,12 @@ endif
 
 lflags += -o $@
 lflags += $(fsan)
+
+# @Cleanup: Surely all this isn't necessary to link with Postgres?
+lflags += -L/usr/local/src/postgresql-14.8/build/src/interfaces/libpq
+lflags += -L/usr/local/src/postgresql-14.8/build/src/common
+lflags += -L/usr/local/src/postgresql-14.8/build/src/port
+lflags += -Wl,-Bstatic -lpq -lpgcommon -lpgport -Wl,-Bdynamic
 
 # Build targets:
 all:  bin/main
@@ -42,6 +49,7 @@ bin/%:  bin/%.o $(shared_obj);  $(cc) $^ $(lflags)
 bin/%.o:  src/%.c;  $(cc) -c $(cflags) $<
 
 tags:  $(sources);  ctags --recurse src/
+#tags:  $(sources);  ctags --recurse src/ /usr/include/postgresql/libpq-fe.h
 
 tidy:  ;  rm -f core.*
 clean:  tidy;  rm -rf bin tags
