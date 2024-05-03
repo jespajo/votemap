@@ -1,6 +1,9 @@
 const VERTEX_SHADER_TEXT = `
 	precision highp float;
 
+	uniform vec2 scale;
+	uniform vec2 translate;
+
 	attribute vec2 v_position;
 	attribute vec4 v_colour;
 
@@ -8,7 +11,7 @@ const VERTEX_SHADER_TEXT = `
 
 	void main()
 	{
-		gl_Position = vec4(v_position, 0.0, 1.0);
+		gl_Position = vec4(scale * v_position + translate, 0.0, 1.0);
 
 		f_colour = v_colour;
 	}
@@ -53,7 +56,39 @@ document.addEventListener("DOMContentLoaded", async () => {
 			return; // @Todo: Clean up GL program?
 		} 
 	}
-	
+
+	// @Temporary.
+	const scale   = new Float32Array([0.00001, 0.00001]);
+	const u_scale = gl.getUniformLocation(program, "scale"); // @Cleanup. Inconsistency. Why don't we put u_ before variable in shader as well.
+	const translate   = new Float32Array([6, 15]);
+	const u_translate = gl.getUniformLocation(program, "translate");
+	document.addEventListener("keydown", event => {
+		switch (event.key) {
+			case "ArrowUp":
+				translate[1] += 0.1;
+				break;
+			case "ArrowDown":
+				translate[1] -= 0.1;
+				break;
+			case "ArrowLeft":
+				translate[0] -= 0.1;
+				break;
+			case "ArrowRight":
+				translate[0] += 0.1;
+				break;
+			case "w":
+				scale[0] *= 1.1;
+				scale[1] *= 1.1;
+				break;
+			case "s":
+				scale[0] /= 1.1;
+				scale[1] /= 1.1;
+				break;
+		}
+
+		console.log("scale", scale);
+		console.log("translate", translate);
+	});
 
 	{
 		const buffer = gl.createBuffer();
@@ -87,6 +122,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 		gl.clear(gl.COLOR_BUFFER_BIT);
 
 		gl.useProgram(program);
+
+	    gl.uniform2fv(u_scale,     scale);
+	    gl.uniform2fv(u_translate, translate);
 
 		gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
 

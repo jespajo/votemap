@@ -71,6 +71,89 @@ Polygon *polygon_from_wkb_geometry(char *geometry, Memory_Context *context)
     return polygon;
 }
 
+struct Vertex {
+    float x, y;
+    float r, g, b, a;
+};
+typedef struct Vertex  Vertex;
+typedef Array(Vertex)  Vertex_array;
+
+Vertex_array *vertices_from_delaunay_triangles(char *geometry_collection, Vector4 colour, Memory_Context *context)
+// The Postgis ST_DelaunayTriangles() function returns a WKB GeometryCollection. Every member of the
+// collection is a polygon. Each polygon is a triangle represented by four points---the first and
+// last points are the same. This function turns this data into an array of vertex attributes.
+{
+    Vertex_array *vertices = NewArray(vertices, context);
+
+    char *data = geometry_collection;
+
+    u8 byte_order;  memcpy(&byte_order, data, sizeof(u8));
+    data += sizeof(u8);
+    assert(byte_order == WKB_LITTLE_ENDIAN);
+
+    u32 wkb_type;  memcpy(&wkb_type, data, sizeof(u32));
+    data += sizeof(u32);
+    assert(wkb_type == WKB_GEOMETRYCOLLECTION);
+
+    u32 num_triangles;  memcpy(&num_triangles, data, sizeof(u32));
+    data += sizeof(u32);
+
+    for (int i = 0; i < num_triangles; i++) {
+        u8 byte_order;  memcpy(&byte_order, data, sizeof(u8));
+        data += sizeof(u8);
+        assert(byte_order == WKB_LITTLE_ENDIAN);
+
+        u32 wkb_type;  memcpy(&wkb_type, data, sizeof(u32));
+        data += sizeof(u32);
+        assert(wkb_type == WKB_POLYGON);
+
+        u32 num_rings;  memcpy(&num_rings, data, sizeof(u32));
+        data += sizeof(u32);
+        assert(num_rings == 1);
+
+        u32 num_points;  memcpy(&num_points, data, sizeof(u32));
+        data += sizeof(u32);
+        assert(num_points == 4);
+        
+        for (int j = 0; j < 3; j++) {
+            double x;  memcpy(&x, data, sizeof(double));
+            data += sizeof(double);
+
+            double y;  memcpy(&y, data, sizeof(double));
+            data += sizeof(double);
+
+            float r = colour.v[0];
+            float g = colour.v[1];
+            float b = colour.v[2];
+            float a = colour.v[3];
+
+            *Add(vertices) = (Vertex){(float)x, (float)y, r, g, b, a};
+        }
+
+        // Skip the fourth point, which should be the same as the fourth.
+        // @Todo: Assert that it's the same?
+        data += sizeof(double);
+        data += sizeof(double);
+    }
+
+    return vertices;
+}
+
+Vertex_array *merge_vertex_arrays(Vertex_array **arrays, s64 num_arrays, Memory_Context *context)
+// @Speed! Slow because it copies all the data.
+// This is also something we may want to make generic later and use a macro for e.g. Merge() or Flatten().
+{
+    Vertex_array *merged = NewArray(merged, context);
+
+    for (int i = 0; i < num_arrays; i++) {
+        Vertex_array *array = arrays[i];
+
+        for (int j = 0; j < array->count; j++)  *Add(merged) = array->data[j];
+    }
+
+    return merged;
+}
+
 PGresult *query_database(char *query, PGconn *db)
 // Make a database query and return the results as binary.
 {
@@ -81,7 +164,7 @@ PGresult *query_database(char *query, PGconn *db)
     return result;
 }
 
-/*
+
 int main()
 {
     Memory_Context *ctx = new_context(NULL);
@@ -91,68 +174,44 @@ int main()
         Error("Database connection failed: %s", PQerrorMessage(db));
     }
 
-    Polygon_array *polygons = NewArray(polygons, ctx);
+    Vertex_array *vertices = NULL;
     {
-        //char *query = "SELECT ST_AsBinary(ST_PolygonFromText('POLYGON((0 300, 20 250, 100 200, 50 0, 0 300))')) AS polygon";
-        char *query = "SELECT ST_AsBinary(swp.way) AS polygon FROM simplified_water_polygons swp JOIN (SELECT * FROM planet_osm_polygon WHERE name = 'Australia') AS australia ON ST_Within(swp.way, australia.way)";
+        char *query = "SELECT ST_AsBinary(ST_DelaunayTriangles(swp.way)) AS collection FROM simplified_water_polygons swp JOIN (SELECT * FROM planet_osm_polygon WHERE name = 'Australia') AS australia ON ST_Within(swp.way, australia.way)";
 
         PGresult *result = query_database(query, db);
 
         int num_tuples = PQntuples(result);
         assert(num_tuples >= 1);
 
-        int polygon_column = 0;
-        assert(PQfnumber(result, "polygon") == polygon_column);
+        int collection_column = 0;
+        assert(PQfnumber(result, "collection") == collection_column);
+
+        Array(Vertex_array *) *arrays = NewArray(arrays, ctx);
 
         for (int i = 0; i < num_tuples; i++) {
-            char *geometry = PQgetvalue(result, 0, polygon_column);
+            char *collection = PQgetvalue(result, 0, collection_column);
 
-            *Add(polygons) = *polygon_from_wkb_geometry(geometry, ctx);
+            Vector4 colour = {0.5, 0.9, 0.3, 1.0};
+
+            *Add(arrays) = vertices_from_delaunay_triangles(collection, colour, ctx);
         }
+
+        vertices = merge_vertex_arrays(arrays->data, arrays->count, ctx);
 
         PQclear(result);
     }
 
-    printf("Found %ld polygons!\n", polygons->count);
+    // Write vertices to file.
+    {
+        char *file_name = "/home/jpj/src/webgl/bin/vertices";
+        FILE *file      = fopen(file_name, "wb");
+
+        u64 num_chars = fwrite(vertices->data, sizeof(vertices->data[0]), vertices->count, file);
+        assert(num_chars > 0);
+    }
 
     PQfinish(db);
     free_context(ctx);
 
-    return 0;
-}
-*/
-
-struct Vertex {
-    float x, y;
-    float r, g, b, a;
-};
-typedef struct Vertex  Vertex;
-typedef Array(Vertex)  Vertex_array;
-
-int main()
-{
-    Memory_Context *ctx = new_context(NULL);
-
-    Vertex_array *array = NewArray(array, ctx);
-
-    *Add(array) = (Vertex){0.0, 0.0, 0.98, 0.34, 0.54, 1.0};
-    *Add(array) = (Vertex){0.0, 1.0, 0.18, 0.74, 0.54, 1.0};
-    *Add(array) = (Vertex){1.0, 1.0, 0.18, 0.34, 0.84, 1.0};
-
-    *Add(array) = (Vertex){0.0, 0.0, 0.38, 0.94, 0.54, 1.0};
-    *Add(array) = (Vertex){0.9, 0.0, 0.58, 0.24, 0.54, 1.0};
-    *Add(array) = (Vertex){0.9, 0.9, 0.88, 0.34, 0.44, 1.0};
-
-    //
-    // Write to file.
-    //
-
-    char *file_name = "/home/jpj/src/webgl/bin/vertices";
-    FILE *file      = fopen(file_name, "wb");
-
-    u64 num_chars = fwrite(array->data, sizeof(array->data[0]), array->count, file);
-    assert(num_chars > 0);
-
-    free_context(ctx);
     return 0;
 }
