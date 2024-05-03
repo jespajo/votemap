@@ -13,14 +13,15 @@ typedef struct {float v[4];}    Vector4;
 typedef struct {float m[4][4];} Matrix4;
 
 typedef Array(Vector2)    Linestring;
-typedef Array(Linestring) Polygon; // We follow the convention where the first ring is the outer ring. Subsequent rings are holes.
+typedef Array(Linestring) Polygon; // We follow the convention where the first ring of a polygon is the outer ring. Subsequent rings are holes.
+typedef Array(Polygon)    Polygon_array;
 
-enum WKBByteOrder {
+enum WKB_Byte_Order {
     WKB_BIG_ENDIAN    = 0,
     WKB_LITTLE_ENDIAN = 1,
 };
 
-enum WKBGeometryType {
+enum WKB_Geometry_Type {
     WKB_POINT              = 1,
     WKB_LINESTRING         = 2,
     WKB_POLYGON            = 3,
@@ -31,6 +32,9 @@ enum WKBGeometryType {
 };
 
 Polygon *polygon_from_wkb_geometry(char *geometry, Memory_Context *context)
+// @Todo: Check that the number of bytes parsed by this function is equal to the Postgres tuple size
+// (not sure of the PQ function to check this but there must be one). We will have to pass the
+// number to the function I guess?
 {
     Polygon *polygon = NewArray(polygon, context);
 
@@ -67,12 +71,13 @@ Polygon *polygon_from_wkb_geometry(char *geometry, Memory_Context *context)
     return polygon;
 }
 
-PGresult *pq(PGconn *conn, char *query)
-// A simplified function for making a database query and returning the results as binary.
+PGresult *query_database(char *query, PGconn *db)
+// Make a database query and return the results as binary.
 {
-    PGresult *result = PQexecParams(conn, query, 0, NULL, NULL, NULL, NULL, 1);
-    if (PQresultStatus(result) != PGRES_TUPLES_OK)  Error("Query failed: %s", PQerrorMessage(conn));
-
+    PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
+    if (PQresultStatus(result) != PGRES_TUPLES_OK) {
+        Error("Query failed: %s", PQerrorMessage(db));
+    }
     return result;
 }
 
@@ -80,30 +85,37 @@ int main()
 {
     Memory_Context *ctx = new_context(NULL);
 
-    PGconn *conn = PQconnectdb("postgres://postgres:postgisclarity@osm.tal/gis");
-    if (PQstatus(conn) != CONNECTION_OK)  Error("Database connection failed: %s", PQerrorMessage(conn));
+    PGconn *db = PQconnectdb("postgres://postgres:postgisclarity@osm.tal/gis");
+    if (PQstatus(db) != CONNECTION_OK) {
+        Error("Database connection failed: %s", PQerrorMessage(db));
+    }
 
-    Polygon *polygon; // @Todo: Get all of em.
+    Polygon_array *polygons = NewArray(polygons, ctx);
     {
-        PGresult *query = pq(conn, "SELECT ST_AsBinary(ST_PolygonFromText('POLYGON((0 300, 20 250, 100 200, 50 0, 0 300))')) AS polygon");
-        //PGresult *query = pq(conn, "SELECT ST_AsBinary(way) AS polygon, ST_GeometryType(way) as type FROM simplified_water_polygons ORDER BY RANDOM() LIMIT 1");
-        if (!query)  Error("Query error.");
+        //char *query = "SELECT ST_AsBinary(ST_PolygonFromText('POLYGON((0 300, 20 250, 100 200, 50 0, 0 300))')) AS polygon";
+        char *query = "SELECT ST_AsBinary(swp.way) AS polygon FROM simplified_water_polygons swp JOIN (SELECT * FROM planet_osm_polygon WHERE name = 'Australia') AS australia ON ST_Within(swp.way, australia.way)";
 
-        int num_tuples = PQntuples(query);
+        PGresult *result = query_database(query, db);
+
+        int num_tuples = PQntuples(result);
         assert(num_tuples >= 1);
 
         int polygon_column = 0;
-        assert(PQfnumber(query, "polygon") == polygon_column);
+        assert(PQfnumber(result, "polygon") == polygon_column);
 
-        char *geometry = PQgetvalue(query, 0, polygon_column);
+        for (int i = 0; i < num_tuples; i++) {
+            char *geometry = PQgetvalue(result, 0, polygon_column);
 
-        polygon = polygon_from_wkb_geometry(geometry, ctx); // @Todo: Check that the number of bytes parsed by this function is equal to the Postgres tuple size (not sure of the PQ function to check this but there must be one).
+            *Add(polygons) = *polygon_from_wkb_geometry(geometry, ctx);
+        }
 
-        PQclear(query);
+        PQclear(result);
     }
 
-    PQfinish(conn);
+    printf("Found %ld polygons!\n", polygons->count);
 
+    PQfinish(db);
     free_context(ctx);
+
     return 0;
 }
