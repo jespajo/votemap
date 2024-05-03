@@ -81,6 +81,7 @@ PGresult *query_database(char *query, PGconn *db)
     return result;
 }
 
+/*
 int main()
 {
     Memory_Context *ctx = new_context(NULL);
@@ -117,5 +118,57 @@ int main()
     PQfinish(db);
     free_context(ctx);
 
+    return 0;
+}
+*/
+
+struct Vertex {
+    float x, y;
+    float r, g, b, a;
+};
+typedef struct Vertex  Vertex;
+
+typedef Array(float)  Float_array;
+
+void add_vertex(Float_array *vertices, Vertex vertex)
+// We're storing vertices in a Float_array rather than a Vertex_array because the memory manager
+// will automatically align a Vertex_array with gaps for alignment and we want them tightly packed.
+// This is a limitation of the memory manager.
+{
+    int num_floats_per_vertex = sizeof(Vertex)/sizeof(float);
+    assert(num_floats_per_vertex == 6);
+
+    *Add(vertices) = vertex.x;
+    *Add(vertices) = vertex.y;
+    *Add(vertices) = vertex.r;
+    *Add(vertices) = vertex.g;
+    *Add(vertices) = vertex.b;
+    *Add(vertices) = vertex.a;
+}
+
+int main()
+{
+    Memory_Context *ctx = new_context(NULL);
+
+    Float_array *array = NewArray(array, ctx);
+
+    add_vertex(array, (Vertex){0.0, 0.0, 0.98, 0.34, 0.54, 1.0});
+    add_vertex(array, (Vertex){0.0, 1.0, 0.18, 0.74, 0.54, 1.0});
+    add_vertex(array, (Vertex){1.0, 1.0, 0.18, 0.34, 0.84, 1.0});
+
+    add_vertex(array, (Vertex){0.0, 0.0, 0.98, 0.34, 0.54, 1.0});
+    add_vertex(array, (Vertex){1.0, 0.0, 0.18, 0.74, 0.54, 1.0});
+    add_vertex(array, (Vertex){1.0, 1.0, 0.18, 0.34, 0.84, 1.0});
+
+    //
+    // Write to file.
+    //
+    char *file_name = "/home/jpj/src/webgl/bin/vertices";
+    FILE *file      = fopen(file_name, "wb");
+
+    u64 num_chars = fwrite(array->data, sizeof(array->data[0]), array->count, file);
+    assert(num_chars > 0);
+
+    free_context(ctx);
     return 0;
 }

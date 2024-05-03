@@ -25,7 +25,7 @@ const FRAGMENT_SHADER_TEXT = `
 	}
 `;
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
 	const canvas = document.querySelector("canvas");
 
 	const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
@@ -70,13 +70,12 @@ document.addEventListener("DOMContentLoaded", () => {
 	}
 
 
-	const vertices = new Float32Array([
-		// x, y, r, g, b, a
-		0.0, 0.0, 0.18, 0.34, 0.54, 1.0,
-		1.0, 0.0, 0.18, 0.34, 0.54, 1.0,
-		0.0, 1.0, 0.18, 0.34, 0.54, 1.0,
-	]);
+	let vertices; {
+		const response = await fetch("../bin/vertices");
+		const data     = await response.arrayBuffer();
 
+		vertices = new Float32Array(data);
+	}
 
 	;(function step() {
 		canvas.width  = Math.floor(canvas.parentElement.clientWidth);
