@@ -1,8 +1,7 @@
 const VERTEX_SHADER_TEXT = `
 	precision highp float;
 
-	uniform vec2 u_scale;
-	uniform vec2 u_translate;
+	uniform mat3 u_matrix;
 
 	attribute vec2 v_position;
 	attribute vec4 v_colour;
@@ -11,9 +10,9 @@ const VERTEX_SHADER_TEXT = `
 
 	void main()
 	{
-		vec2 position = u_scale * v_position + u_translate;
+		vec3 position = u_matrix * vec3(v_position, 1.0);
 
-		gl_Position = vec4(position, 0.0, 1.0);
+		gl_Position = vec4(position.xy, 0.0, 1.0);
 
 		f_colour = v_colour;
 	}
@@ -59,11 +58,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 		} 
 	}
 
-	const scale     = new Float32Array([0.00001, 0.00001]);
-	const translate = new Float32Array([6, 15]);
+	const u_matrix = gl.getUniformLocation(program, "u_matrix");
 
-	const u_scale     = gl.getUniformLocation(program, "u_scale");
-	const u_translate = gl.getUniformLocation(program, "u_translate");
+	let scale = 1;
+	const translate = {x:0, y:0};
 
 	{
 		const buffer = gl.createBuffer();
@@ -91,6 +89,23 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const width  = Math.floor(canvas.parentElement.clientWidth);
 		const height = Math.floor(canvas.parentElement.clientHeight);
 
+		const matrix = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]); // @Naming. ctm? mvp? xform?
+        {
+			// Make the matrix transform from pixel space to UV space. Flip the y-axis so we can
+			// reference pixels from the top-left corner.
+			matrix[0] =  2/width;   // X scale.
+			matrix[4] = -2/height;  // Y scale.
+			matrix[6] = -1; 		// X translate.
+			matrix[7] =  1; 		// Y translate.
+
+			// Apply the user-controlled transform.
+			matrix[0] *= scale;
+			matrix[4] *= scale;
+			matrix[6] += translate.x;
+			matrix[7] += translate.y;
+        }
+
+
 		canvas.width  = width;
 		canvas.height = height;
 
@@ -101,8 +116,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 		gl.useProgram(program);
 
-	    gl.uniform2fv(u_scale, scale);
-	    gl.uniform2fv(u_translate, translate);
+	    gl.uniformMatrix3fv(u_matrix, false, matrix);
 
 		gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
 
@@ -114,25 +128,26 @@ document.addEventListener("DOMContentLoaded", async () => {
 	document.addEventListener("keydown", event => {
 		switch (event.key) {
 			case "ArrowUp":
-				translate[1] += 0.1;
+				translate.y += 0.1;
 				break;
 			case "ArrowDown":
-				translate[1] -= 0.1;
+				translate.y -= 0.1;
 				break;
 			case "ArrowLeft":
-				translate[0] -= 0.1;
+				translate.x -= 0.1;
 				break;
 			case "ArrowRight":
-				translate[0] += 0.1;
+				translate.x += 0.1;
 				break;
 			case "w":
-				scale[0] *= 1.1;
-				scale[1] *= 1.1;
+				scale *= 1.1;
 				break;
 			case "s":
-				scale[0] /= 1.1;
-				scale[1] /= 1.1;
+				scale /= 1.1;
 				break;
+			default:
+				return;
 		}
+		event.preventDefault();
 	});
 });

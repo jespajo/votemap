@@ -164,6 +164,17 @@ PGresult *query_database(char *query, PGconn *db)
     return result;
 }
 
+void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
+{
+    FILE *file = fopen(file_name, "wb");
+
+    u64 num_chars_written = fwrite(data, unit_size, count, file);
+    assert(num_chars_written > 0);
+
+    fclose(file);
+}
+#define write_array_to_file(ARRAY, FILE_NAME)  \
+    write_array_to_file_((ARRAY)->data, sizeof((ARRAY)->data[0]), (ARRAY)->count, (FILE_NAME))
 
 int main()
 {
@@ -176,7 +187,9 @@ int main()
 
     Vertex_array *vertices = NULL;
     {
-        char *query = "SELECT ST_AsBinary(ST_DelaunayTriangles(swp.way)) AS collection FROM simplified_water_polygons swp JOIN (SELECT * FROM planet_osm_polygon WHERE name = 'Australia') AS australia ON ST_Within(swp.way, australia.way)";
+        //char *query = "SELECT ST_AsBinary(ST_DelaunayTriangles(swp.way)) AS collection FROM simplified_water_polygons swp JOIN (SELECT * FROM planet_osm_polygon WHERE name = 'Australia') AS australia ON ST_Within(swp.way, australia.way)";
+        //char *query = " select ST_AsBinary(ST_DelaunayTriangles(way)) AS collection from planet_osm_polygon where name = 'Tasmania' and place = 'island' ";
+        char *query = "SELECT ST_AsBinary(ST_DelaunayTriangles(way)) AS collection FROM ( select ST_PolygonFromText('POLYGON((0 300, 20 250, 100 200, 50 0, 0 300))') as way) t";
 
         PGresult *result = query_database(query, db);
 
@@ -202,13 +215,8 @@ int main()
     }
 
     // Write vertices to file.
-    {
-        char *file_name = "/home/jpj/src/webgl/bin/vertices";
-        FILE *file      = fopen(file_name, "wb");
+    write_array_to_file(vertices, "/home/jpj/src/webgl/bin/vertices");
 
-        u64 num_chars = fwrite(vertices->data, sizeof(vertices->data[0]), vertices->count, file);
-        assert(num_chars > 0);
-    }
 
     PQfinish(db);
     free_context(ctx);
