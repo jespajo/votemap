@@ -1,7 +1,8 @@
 const VERTEX_SHADER_TEXT = `
 	precision highp float;
 
-	uniform mat3 u_matrix;
+	uniform mat3 u_proj;
+	uniform mat3 u_view;
 
 	attribute vec2 v_position;
 	attribute vec4 v_colour;
@@ -10,10 +11,10 @@ const VERTEX_SHADER_TEXT = `
 
 	void main()
 	{
-		vec3 position = u_matrix * vec3(v_position, 1.0);
+		mat3 matrix = u_proj * u_view;
+		vec3 position = matrix * vec3(v_position, 1.0);
 
 		gl_Position = vec4(position.xy, 0.0, 1.0);
-
 		f_colour = v_colour;
 	}
 `;
@@ -34,7 +35,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 	const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
 	if (!gl) {
-		console.log("Failed to get WebGL context.");
+		console.error("Failed to get WebGL context.");
 		return;
 	}
 
@@ -58,10 +59,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 		} 
 	}
 
-	const u_matrix = gl.getUniformLocation(program, "u_matrix");
+	const u_proj = gl.getUniformLocation(program, "u_proj"); // Transforms pixel space to UV space. Only changes when the screen dimensions change.
+	const u_view = gl.getUniformLocation(program, "u_view"); // Applies current pan/zoom. User-controlled.
 
-	let scale = 1;
-	const translate = {x:0, y:0};
+	const view = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
 
 	{
 		const buffer = gl.createBuffer();
@@ -89,22 +90,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const width  = Math.floor(canvas.parentElement.clientWidth);
 		const height = Math.floor(canvas.parentElement.clientHeight);
 
-		const matrix = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]); // @Naming. ctm? mvp? xform?
+		const proj = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
         {
-			// Make the matrix transform from pixel space to UV space. Flip the y-axis so we can
-			// reference pixels from the top-left corner.
-			matrix[0] =  2/width;   // X scale.
-			matrix[4] = -2/height;  // Y scale.
-			matrix[6] = -1; 		// X translate.
-			matrix[7] =  1; 		// Y translate.
-
-			// Apply the user-controlled transform.
-			matrix[0] *= scale;
-			matrix[4] *= scale;
-			matrix[6] += translate.x;
-			matrix[7] += translate.y;
-        }
-
+			// Transform from pixel space to UV space. Flip the y-axis for top-left origin.
+			proj[0] =  2/width;   // X scale.
+			proj[4] = -2/height;  // Y scale.
+			proj[6] = -1; 		  // X translate.
+			proj[7] =  1; 		  // Y translate.
+		}
 
 		canvas.width  = width;
 		canvas.height = height;
@@ -116,7 +109,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 		gl.useProgram(program);
 
-	    gl.uniformMatrix3fv(u_matrix, false, matrix);
+	    gl.uniformMatrix3fv(u_proj, false, proj);
+	    gl.uniformMatrix3fv(u_view, false, view);
 
 		gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
 
@@ -125,29 +119,42 @@ document.addEventListener("DOMContentLoaded", async () => {
 		window.requestAnimationFrame(step);
 	})();
 
-	document.addEventListener("keydown", event => {
-		switch (event.key) {
-			case "ArrowUp":
-				translate.y += 0.1;
-				break;
-			case "ArrowDown":
-				translate.y -= 0.1;
-				break;
-			case "ArrowLeft":
-				translate.x -= 0.1;
-				break;
-			case "ArrowRight":
-				translate.x += 0.1;
-				break;
-			case "w":
-				scale *= 1.1;
-				break;
-			case "s":
-				scale /= 1.1;
-				break;
-			default:
-				return;
-		}
+	//
+	// Mouse/touch events.
+	//
+	canvas.addEventListener("wheel", event => {
+		const originX = (event.clientX - view[6])/view[0];
+		const originY = (event.clientY - view[7])/view[0];
+
+		const delta = (event.deltaY > 0) ? 0.98 : 1.02;
+
+		view[0] *= delta;
+		view[4] *= delta;
+
+		view[6] = event.clientX - originX*view[0];
+		view[7] = event.clientY - originY*view[0];
+
 		event.preventDefault();
+	});
+
+	let dragging = false;
+	let mouseX = 0;
+	let mouseY = 0;
+	canvas.addEventListener("mousedown", event => {
+		dragging = true;
+		mouseX = event.clientX;
+		mouseY = event.clientY;
+	});
+	canvas.addEventListener("mouseup", event => {
+		dragging = false;
+	});
+	canvas.addEventListener("mousemove", event => {
+		if (!dragging)  return;
+
+		view[6] += (event.clientX - mouseX);
+		view[7] += (event.clientY - mouseY);
+
+		mouseX = event.clientX;
+		mouseY = event.clientY;
 	});
 });
