@@ -12,9 +12,10 @@ typedef struct {float v[3];}    Vector3;
 typedef struct {float v[4];}    Vector4;
 typedef struct {float m[4][4];} Matrix4;
 
-typedef Array(Vector2)    Linestring;
-typedef Array(Linestring) Polygon; // We follow the convention where the first ring of a polygon is the outer ring. Subsequent rings are holes.
-typedef Array(Polygon)    Polygon_array;
+typedef Array(Vector2)  Path;
+typedef Array(Path)     Path_array;
+typedef Array(Path)     Polygon; // We follow the convention where the first ring of a polygon is the outer ring. Subsequent rings are holes.
+typedef Array(Polygon)  Polygon_array;
 
 enum WKB_Byte_Order {
     WKB_BIG_ENDIAN    = 0,
@@ -31,10 +32,7 @@ enum WKB_Geometry_Type {
     WKB_GEOMETRYCOLLECTION = 7,
 };
 
-Polygon *polygon_from_wkb_geometry(char *geometry, Memory_Context *context)
-// @Todo: Check that the number of bytes parsed by this function is equal to the Postgres tuple size
-// (not sure of the PQ function to check this but there must be one). We will have to pass the
-// number to the function I guess?
+Polygon *polygon_from_wkb_geometry(char *geometry, Memory_Context *context) // @Seprecated. Do it in the query_polygon function instead.
 {
     Polygon *polygon = NewArray(polygon, context);
 
@@ -50,7 +48,7 @@ Polygon *polygon_from_wkb_geometry(char *geometry, Memory_Context *context)
     geometry += sizeof(u32);
 
     while (num_rings--) {
-        Linestring ring = {.context = context};
+        Path ring = {.context = context};
 
         u32 num_points;  memcpy(&num_points, geometry, sizeof(u32));
         geometry += sizeof(u32);
@@ -114,7 +112,7 @@ Vertex_array *vertices_from_delaunay_triangles(char *geometry_collection, Vector
         u32 num_points;  memcpy(&num_points, data, sizeof(u32));
         data += sizeof(u32);
         assert(num_points == 4);
-        
+
         for (int j = 0; j < 3; j++) {
             double x;  memcpy(&x, data, sizeof(double));
             data += sizeof(double);
@@ -154,7 +152,7 @@ Vertex_array *merge_vertex_arrays(Vertex_array **arrays, s64 num_arrays, Memory_
     return merged;
 }
 
-PGresult *query_database(char *query, PGconn *db)
+PGresult *query_database(char *query, PGconn *db) // @Seprecated. Just put this in type-specific interfaces.
 // Make a database query and return the results as binary.
 {
     PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
@@ -176,47 +174,248 @@ void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
 #define write_array_to_file(ARRAY, FILE_NAME)  \
     write_array_to_file_((ARRAY)->data, sizeof((ARRAY)->data[0]), (ARRAY)->count, (FILE_NAME))
 
+Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
+{
+#define QueryError(...)  (Error(__VA_ARGS__), NULL)
+    PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
+    if (PQresultStatus(result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
+
+    int column = PQfnumber(result, "polygon");
+    if (column < 0)  return QueryError("We couldn't find a \"Polygon\" column in the results.");
+
+    int num_tuples = PQntuples(result);
+    if (num_tuples == 0)  return QueryError("A query for polygons returned no results.");
+
+    Polygon_array *polygons = NewArray(polygons, context);
+
+    for (int row = 0; row < num_tuples; row++) {
+        char *data = PQgetvalue(result, row, column);
+        char *d = data;
+
+        Polygon polygon = {.context = context};
+
+        u8 byte_order = *d;
+        d += sizeof(u8);
+        assert(byte_order == WKB_LITTLE_ENDIAN);
+
+        u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
+        d += sizeof(u32);
+        assert(wkb_type == WKB_POLYGON);
+
+        u32 num_rings;  memcpy(&num_rings, d, sizeof(u32));
+        d += sizeof(u32);
+
+        while (num_rings--) {
+            Path ring = {.context = context};
+
+            u32 num_points;  memcpy(&num_points, d, sizeof(u32));
+            d += sizeof(u32);
+
+            while (num_points--) {
+                double x;  memcpy(&x, d, sizeof(double));
+                d += sizeof(double);
+
+                double y;  memcpy(&y, d, sizeof(double));
+                d += sizeof(double);
+
+                // Cast doubles to floats.
+                *Add(&ring) = (Vector2){(float)x, (float)y};
+            }
+            *Add(&polygon) = ring;
+        }
+        *Add(polygons) = polygon;
+
+        // Check that the number of bytes parsed by this function is equal to the Postgres reported size.
+        s64 num_bytes_parsed = d - data;
+        assert(num_bytes_parsed == PQgetlength(result, row, column));
+    }
+
+    PQclear(result);
+#undef QueryError
+
+    return polygons;
+}
+
+bool points_are_clockwise(Vector2 *points, s64 num_points)
+{
+    if (num_points < 3)  Error("points_are_clockwise() needs at least 3 points. We only have %ld.", num_points);
+
+    float sum = 0;
+
+    for (int i = 0; i < num_points-1; i++) {
+        float *p = points[i].v;
+        float *q = points[i+1].v;
+        sum += (q[0] - p[0])/(q[1] + p[1]);
+    }
+
+    float *p = points[0].v;
+    float *q = points[num_points-1].v;
+    sum += (p[0] - q[0])/(p[1] + q[1]);
+
+    return sum > 0;
+
+}
+
+bool same_point(Vector2 p, Vector2 q)
+{
+    if (p.v[0] != q.v[0])  return false;
+    if (p.v[1] != q.v[1])  return false;
+    return true;
+}
+
+bool is_triangle(Path triangle)
+{
+    // @Todo: Check the three points aren't colinear?
+    if (triangle.count == 3)  return true;
+    if (triangle.count == 4) {
+        Vector2 first = triangle.data[0];
+        Vector2 last  = triangle.data[3];
+        if (same_point(first, last))  return true;
+    }
+    return false;
+}
+
+bool point_in_triangle(Vector2 point, Path triangle)
+{
+    assert(is_triangle(triangle));
+
+    float *p  = point.v;
+    float *t1 = triangle.data[0].v;
+    float *t2 = triangle.data[1].v;
+    float *t3 = triangle.data[2].v;
+
+    float d1 = (p[0] - t1[0])*(t2[1] - t1[1]) - (p[1] - t1[1])*(t2[0] - t1[0]);
+    float d2 = (p[0] - t2[0])*(t3[1] - t2[1]) - (p[1] - t2[1])*(t3[0] - t2[0]);
+    float d3 = (p[0] - t3[0])*(t1[1] - t3[1]) - (p[1] - t3[1])*(t1[0] - t3[0]);
+
+    bool negative = d1 < 0 || d2 < 0 || d3 < 0;
+    bool positive = d1 > 0 || d2 > 0 || d3 > 0;
+
+    return !(negative && positive);
+}
+
+Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
+{
+    Path_array *triangles = NewArray(triangles, ctx);
+
+    // @Todo: If the polygon has holes, turn it into one big ring.
+    // But for now we'll just take the firth path, the outer ring.
+    Path *ring = &polygon->data[0];
+
+    // This is like a circular linked list but all the links are stored in a separate array, and
+    // instead of being pointers, they're the indices of the next points in the ring. This makes it
+    // easy to iterate over all the points starting from any place: just call `i = next[i]` at the
+    // end of each loop until you encouter the current index again.
+    int *next = New(ring->count, int, ctx);
+    for (int i = 0; i < ring->count-1; i++)  next[i] = i + 1;
+    next[ring->count-1] = 0; // { 1, 2, 3, ..., 0 }
+
+    int num_triangles = ring->count-2;
+    {
+        int i1 = 0;
+        int i0 = 0;
+
+        while (triangles->count < num_triangles) {
+            int v1 = i1;
+            int v2 = next[v1];
+            int v3 = next[v2];
+
+            bool remove = true;
+
+            Path ear = {.context = ctx};
+
+            *Add(&ear) = ring->data[v1];
+            *Add(&ear) = ring->data[v2];
+            *Add(&ear) = ring->data[v3];
+            *Add(&ear) = ring->data[v1]; // Repeat the first point. @Speed, but might be useful for is_triangle verification??
+
+            if (points_are_clockwise(ear.data, 3)) {
+                // The ear is not on the outer hull.
+                remove = false;
+            } else {
+                // The ear is on the outer hull. Check all other points to see if any of them is inside this ear.
+                int i2 = next[v3];
+                while (i2 != v1) {
+                    if (point_in_triangle(ring->data[i2], ear)) {
+                        remove = false; // There is another point inside the ear.
+                        break;
+                    }
+                    i2 = next[i2];
+                }
+            }
+
+            if (!remove) {
+                i1 = v2;
+
+                // Make sure we don't loop around the ring forever. If there are no triangles yet, we shouldn't be back at the start where i1 == 0.
+                assert(triangles->count || i1);
+
+                // If we have partially triangulated, return what we've got. @Todo: Control what to return if triangulation fails with a parameter?
+                if (!(!triangles->count || i1 != i0)) {
+                    Error("Partial triangulation. Used %d out of %d vertices.", triangles->count, triangles->count);
+                    return triangles;
+                }
+
+                continue;
+            }
+
+            //
+            // Off with the ear!
+            //
+
+            *Add(triangles) = ear;
+
+            next[v1] = v3;
+            i1       = v3;
+            i0       = v3;
+        }
+    }
+
+    assert(triangles->count == num_triangles);
+    return triangles;
+}
+
+Vertex_array *polygon_to_vertices(Polygon *polygon, Vector4 colour, Memory_Context *ctx)
+{
+    Vertex_array *vertices = NewArray(vertices, ctx);
+
+    float r = colour.v[0];
+    float g = colour.v[1];
+    float b = colour.v[2];
+    float a = colour.v[3];
+
+    Path_array *triangles = triangulate_polygon(polygon, ctx);
+
+    for (s64 i = 0; i < triangles->count; i++) {
+        Path *triangle = &triangles->data[i];
+
+        for (int j = 0; j < 3; j++) {
+            float x = triangle->data[j].v[0];
+            float y = triangle->data[j].v[1];
+
+            *Add(vertices) = (Vertex){x, y, r, g, b, a};
+        }
+    }
+
+    return vertices;
+}
+
 int main()
 {
     Memory_Context *ctx = new_context(NULL);
 
     PGconn *db = PQconnectdb("postgres://postgres:postgisclarity@osm.tal/gis");
-    if (PQstatus(db) != CONNECTION_OK) {
-        Error("Database connection failed: %s", PQerrorMessage(db));
-    }
+    if (PQstatus(db) != CONNECTION_OK)  Error("Database connection failed: %s", PQerrorMessage(db));
 
-    Vertex_array *vertices = NULL;
-    {
-        //char *query = "SELECT ST_AsBinary(ST_DelaunayTriangles(swp.way)) AS collection FROM simplified_water_polygons swp JOIN (SELECT * FROM planet_osm_polygon WHERE name = 'Australia') AS australia ON ST_Within(swp.way, australia.way)";
-        //char *query = " select ST_AsBinary(ST_DelaunayTriangles(way)) AS collection from planet_osm_polygon where name = 'Tasmania' and place = 'island' ";
-        char *query = "SELECT ST_AsBinary(ST_DelaunayTriangles(way)) AS collection FROM ( select ST_PolygonFromText('POLYGON((0 300, 20 250, 100 200, 50 0, 0 300))') as way) t";
+    Polygon_array *polygons = query_polygons(db, ctx,
+        "select ST_AsBinary(st_concavehull(way, 1.0)) AS polygon from planet_osm_polygon where name = 'Elisabeth Murdoch'");
 
-        PGresult *result = query_database(query, db);
-
-        int num_tuples = PQntuples(result);
-        assert(num_tuples >= 1);
-
-        int collection_column = 0;
-        assert(PQfnumber(result, "collection") == collection_column);
-
-        Array(Vertex_array *) *arrays = NewArray(arrays, ctx);
-
-        for (int i = 0; i < num_tuples; i++) {
-            char *collection = PQgetvalue(result, 0, collection_column);
-
-            Vector4 colour = {0.5, 0.9, 0.3, 1.0};
-
-            *Add(arrays) = vertices_from_delaunay_triangles(collection, colour, ctx);
-        }
-
-        vertices = merge_vertex_arrays(arrays->data, arrays->count, ctx);
-
-        PQclear(result);
-    }
+    // Turn the first polygon into vertex attributes.
+    Vertex_array *vertices = polygon_to_vertices(&polygons->data[0], (Vector4){0.5,0.5,1,1}, ctx);
+    assert(vertices);
 
     // Write vertices to file.
     write_array_to_file(vertices, "/home/jpj/src/webgl/bin/vertices");
-
 
     PQfinish(db);
     free_context(ctx);

@@ -56,7 +56,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			console.error("Shader program did not link successfully.");
 			console.error("Error log: ", gl.getProgramInfoLog(program));
 			return; // @Todo: Clean up GL program?
-		} 
+		}
 	}
 
 	const u_proj = gl.getUniformLocation(program, "u_proj"); // Transforms pixel space to UV space. Only changes when the screen dimensions change.
@@ -77,7 +77,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 		gl.vertexAttribPointer(v_position, 2, gl.FLOAT, false, 6*4, 0);
 		gl.vertexAttribPointer(v_colour,   4, gl.FLOAT, false, 6*4, 8); // @Cleanup: Avoid hard-coding these numbers.
 	}
-
 
 	let vertices; {
 		const response = await fetch("../bin/vertices");
@@ -122,33 +121,33 @@ document.addEventListener("DOMContentLoaded", async () => {
 	//
 	// Mouse/touch events.
 	//
+
 	canvas.addEventListener("wheel", event => {
-		const originX = (event.clientX - view[6])/view[0];
-		const originY = (event.clientY - view[7])/view[0];
+		const oldScale = view[0];
+		const newScale = view[0]*((event.deltaY > 0) ? 0.75 : 1.5);
 
-		const delta = (event.deltaY > 0) ? 0.98 : 1.02;
+		const originX = (event.clientX - view[6])/oldScale;
+		const originY = (event.clientY - view[7])/oldScale;
 
-		view[0] *= delta;
-		view[4] *= delta;
+		view[0] = newScale;
+		view[4] = newScale;
 
-		view[6] = event.clientX - originX*view[0];
-		view[7] = event.clientY - originY*view[0];
-
-		event.preventDefault();
-	});
+		view[6] = event.clientX - originX*newScale;
+		view[7] = event.clientY - originY*newScale;
+	}, {passive: true});
 
 	let dragging = false;
 	let mouseX = 0;
 	let mouseY = 0;
-	canvas.addEventListener("mousedown", event => {
+	canvas.addEventListener("pointerdown", event => {
 		dragging = true;
 		mouseX = event.clientX;
 		mouseY = event.clientY;
 	});
-	canvas.addEventListener("mouseup", event => {
+	window.addEventListener("pointerup", event => {
 		dragging = false;
 	});
-	canvas.addEventListener("mousemove", event => {
+	window.addEventListener("pointermove", event => {
 		if (!dragging)  return;
 
 		view[6] += (event.clientX - mouseX);
@@ -157,4 +156,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 		mouseX = event.clientX;
 		mouseY = event.clientY;
 	});
+
+	// For debugging.
+	window.view = view;
+	window.vertices = vertices;
 });
