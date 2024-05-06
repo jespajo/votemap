@@ -1,3 +1,6 @@
+const $ = document.querySelector.bind(document);
+const $$ = document.querySelectorAll.bind(document);
+
 const VERTEX_SHADER_TEXT = `
 	precision highp float;
 
@@ -31,9 +34,10 @@ const FRAGMENT_SHADER_TEXT = `
 `;
 
 document.addEventListener("DOMContentLoaded", async () => {
-	const canvas = document.querySelector("canvas");
-
-	const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+	//
+	// Create the map.
+	//
+	const gl = $("canvas#map").getContext("webgl");
 	if (!gl) {
 		console.error("Failed to get WebGL context.");
 		return;
@@ -57,14 +61,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			console.error("Error log: ", gl.getProgramInfoLog(program));
 			return; // @Todo: Clean up GL program?
 		}
-	}
 
-	const u_proj = gl.getUniformLocation(program, "u_proj"); // Transforms pixel space to UV space. Only changes when the screen dimensions change.
-	const u_view = gl.getUniformLocation(program, "u_view"); // Applies current pan/zoom. User-controlled.
-
-	const view = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
-
-	{
 		const buffer = gl.createBuffer();
 		gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
 
@@ -78,6 +75,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 		gl.vertexAttribPointer(v_colour,   4, gl.FLOAT, false, 6*4, 8); // @Cleanup: Avoid hard-coding these numbers.
 	}
 
+	const u_proj = gl.getUniformLocation(program, "u_proj"); // Transforms pixel space to UV space. Only changes when the screen dimensions change.
+	const u_view = gl.getUniformLocation(program, "u_view"); // Applies current pan/zoom. User-controlled.
+
+	const view = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
+
 	let vertices; {
 		const response = await fetch("../bin/vertices");
 		const data     = await response.arrayBuffer();
@@ -85,9 +87,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 		vertices = new Float32Array(data);
 	}
 
+	// Create the UI canvas.
+	const ui = $("canvas#gui").getContext("2d");
+	if (!ui) {
+		console.error("Failed to get 2D context.");
+		return;
+	}
+
 	;(function step() {
-		const width  = Math.floor(canvas.parentElement.clientWidth);
-		const height = Math.floor(canvas.parentElement.clientHeight);
+		//
+		// Update variables.
+		//
+		const width  = Math.floor(document.body.clientWidth);
+		const height = Math.floor(document.body.clientHeight);
 
 		const proj = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
         {
@@ -98,22 +110,40 @@ document.addEventListener("DOMContentLoaded", async () => {
 			proj[7] =  1; 		  // Y translate.
 		}
 
-		canvas.width  = width;
-		canvas.height = height;
+		//
+		// Draw the page.
+		//
+		$$("canvas").forEach(canvas => {
+			canvas.width  = width;
+			canvas.height = height;
+		});
 
-		gl.viewport(0, 0, width, height);
+		// WebGL canvas:
+		{
+			gl.viewport(0, 0, width, height);
 
-		gl.clearColor(0.0, 0.0, 0.0, 1.0);
-		gl.clear(gl.COLOR_BUFFER_BIT);
+			gl.clearColor(0.0, 0.0, 0.0, 1.0);
+			gl.clear(gl.COLOR_BUFFER_BIT);
 
-		gl.useProgram(program);
+			gl.useProgram(program);
 
-	    gl.uniformMatrix3fv(u_proj, false, proj);
-	    gl.uniformMatrix3fv(u_view, false, view);
+			gl.uniformMatrix3fv(u_proj, false, proj);
+			gl.uniformMatrix3fv(u_view, false, view);
 
-		gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+			gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
 
-		gl.drawArrays(gl.TRIANGLES, 0, vertices.length/6); // 6 is the number of floats per vertex attribute.
+			gl.drawArrays(gl.TRIANGLES, 0, vertices.length/6); // 6 is the number of floats per vertex attribute.
+		}
+
+		// 2D canvas:
+		{
+			ui.clearRect(0, 0, width, height);
+
+			ui.fillStyle = '#141414';
+			ui.fillRect(0, 0, width, height);
+
+			ui.clearRect(10, 10, width-20, height-20);
+		}
 
 		window.requestAnimationFrame(step);
 	})();
@@ -122,7 +152,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	// Mouse/touch events.
 	//
 
-	canvas.addEventListener("wheel", event => {
+	window.addEventListener("wheel", event => {
 		const oldScale = view[0];
 		const newScale = view[0]*((event.deltaY > 0) ? 0.75 : 1.5);
 
@@ -139,7 +169,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	let dragging = false;
 	let mouseX = 0;
 	let mouseY = 0;
-	canvas.addEventListener("pointerdown", event => {
+	window.addEventListener("pointerdown", event => {
 		dragging = true;
 		mouseX = event.clientX;
 		mouseY = event.clientY;

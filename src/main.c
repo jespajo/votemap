@@ -1,7 +1,3 @@
-// Figure out why my shapes seem to be convex?
-
-// Play around with different queries. If a query returns multiple polygons, draw them all in different colours. See what you can see. You can bring the shapes closer to the view by running `view[6]=-vertices[0]; view[7]=-vertices[1]` in the browser console.
-
 #include <stdio.h>
 #include <string.h>
 
@@ -127,28 +123,26 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
     }
 
     PQclear(result);
-#undef QueryError
 
     return polygons;
+#undef QueryError
 }
 
 bool points_are_clockwise(Vector2 *points, s64 num_points)
 // This function assumes that we're working with a bottom-left origin, with Y increasing upwards.
 {
-    if (num_points < 3)  Error("points_are_clockwise() needs at least 3 points. We only have %ld.", num_points);
-
+    if (num_points < 3) {
+        Error("points_are_clockwise() needs at least 3 points. We only have %ld.", num_points);
+    }
     float sum = 0;
-
     for (int i = 0; i < num_points-1; i++) {
         float *p = points[i].v;
         float *q = points[i+1].v;
         sum += (q[0] - p[0])/(q[1] + p[1]);
     }
-
     float *p = points[0].v;
     float *q = points[num_points-1].v;
     sum += (p[0] - q[0])/(p[1] + q[1]);
-
     return sum < 0;
 }
 
@@ -255,7 +249,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
                 assert(triangles->count || i1);
                 // If we have partially triangulated, return what we've got. @Todo: Control what to return if triangulation fails with a parameter?
                 if (!(!triangles->count || i1 != i0)) {
-                    //Error("Partial triangulation. Used %d out of %d vertices.", triangles->count, ring->count); // @Todo.
+                    //Error("Partial triangulation. Used %d out of %d vertices.", triangles->count, ring->count); // @Fixme.
                     return triangles;
                 }
                 continue;
