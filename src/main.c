@@ -1,3 +1,7 @@
+// Figure out why my shapes seem to be convex?
+
+// Play around with different queries. If a query returns multiple polygons, draw them all in different colours. See what you can see. You can bring the shapes closer to the view by running `view[6]=-vertices[0]; view[7]=-vertices[1]` in the browser console.
+
 #include <stdio.h>
 #include <string.h>
 
@@ -32,110 +36,12 @@ enum WKB_Geometry_Type {
     WKB_GEOMETRYCOLLECTION = 7,
 };
 
-Polygon *polygon_from_wkb_geometry(char *geometry, Memory_Context *context) // @Seprecated. Do it in the query_polygon function instead.
-{
-    Polygon *polygon = NewArray(polygon, context);
-
-    u8 byte_order = *geometry;
-    geometry += sizeof(u8);
-    assert(byte_order == WKB_LITTLE_ENDIAN);
-
-    u32 wkb_type;  memcpy(&wkb_type, geometry, sizeof(u32));
-    geometry += sizeof(u32);
-    assert(wkb_type == WKB_POLYGON);
-
-    u32 num_rings;  memcpy(&num_rings, geometry, sizeof(u32));
-    geometry += sizeof(u32);
-
-    while (num_rings--) {
-        Path ring = {.context = context};
-
-        u32 num_points;  memcpy(&num_points, geometry, sizeof(u32));
-        geometry += sizeof(u32);
-
-        while (num_points--) {
-            double x;  memcpy(&x, geometry, sizeof(double));
-            geometry += sizeof(double);
-
-            double y;  memcpy(&y, geometry, sizeof(double));
-            geometry += sizeof(double);
-
-            *Add(&ring) = (Vector2){(float)x, (float)y};
-        }
-
-        *Add(polygon) = ring;
-    }
-
-    return polygon;
-}
-
 struct Vertex {
     float x, y;
     float r, g, b, a;
 };
 typedef struct Vertex  Vertex;
 typedef Array(Vertex)  Vertex_array;
-
-Vertex_array *vertices_from_delaunay_triangles(char *geometry_collection, Vector4 colour, Memory_Context *context)
-// The Postgis ST_DelaunayTriangles() function returns a WKB GeometryCollection. Every member of the
-// collection is a polygon. Each polygon is a triangle represented by four points---the first and
-// last points are the same. This function turns this data into an array of vertex attributes.
-{
-    Vertex_array *vertices = NewArray(vertices, context);
-
-    char *data = geometry_collection;
-
-    u8 byte_order;  memcpy(&byte_order, data, sizeof(u8));
-    data += sizeof(u8);
-    assert(byte_order == WKB_LITTLE_ENDIAN);
-
-    u32 wkb_type;  memcpy(&wkb_type, data, sizeof(u32));
-    data += sizeof(u32);
-    assert(wkb_type == WKB_GEOMETRYCOLLECTION);
-
-    u32 num_triangles;  memcpy(&num_triangles, data, sizeof(u32));
-    data += sizeof(u32);
-
-    for (int i = 0; i < num_triangles; i++) {
-        u8 byte_order;  memcpy(&byte_order, data, sizeof(u8));
-        data += sizeof(u8);
-        assert(byte_order == WKB_LITTLE_ENDIAN);
-
-        u32 wkb_type;  memcpy(&wkb_type, data, sizeof(u32));
-        data += sizeof(u32);
-        assert(wkb_type == WKB_POLYGON);
-
-        u32 num_rings;  memcpy(&num_rings, data, sizeof(u32));
-        data += sizeof(u32);
-        assert(num_rings == 1);
-
-        u32 num_points;  memcpy(&num_points, data, sizeof(u32));
-        data += sizeof(u32);
-        assert(num_points == 4);
-
-        for (int j = 0; j < 3; j++) {
-            double x;  memcpy(&x, data, sizeof(double));
-            data += sizeof(double);
-
-            double y;  memcpy(&y, data, sizeof(double));
-            data += sizeof(double);
-
-            float r = colour.v[0];
-            float g = colour.v[1];
-            float b = colour.v[2];
-            float a = colour.v[3];
-
-            *Add(vertices) = (Vertex){(float)x, (float)y, r, g, b, a};
-        }
-
-        // Skip the fourth point, which should be the same as the fourth.
-        // @Todo: Assert that it's the same?
-        data += sizeof(double);
-        data += sizeof(double);
-    }
-
-    return vertices;
-}
 
 Vertex_array *merge_vertex_arrays(Vertex_array **arrays, s64 num_arrays, Memory_Context *context)
 // @Speed! Slow because it copies all the data.
@@ -150,16 +56,6 @@ Vertex_array *merge_vertex_arrays(Vertex_array **arrays, s64 num_arrays, Memory_
     }
 
     return merged;
-}
-
-PGresult *query_database(char *query, PGconn *db) // @Seprecated. Just put this in type-specific interfaces.
-// Make a database query and return the results as binary.
-{
-    PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
-    if (PQresultStatus(result) != PGRES_TUPLES_OK) {
-        Error("Query failed: %s", PQerrorMessage(db));
-    }
-    return result;
 }
 
 void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
@@ -237,6 +133,7 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
 }
 
 bool points_are_clockwise(Vector2 *points, s64 num_points)
+// This function assumes that we're working with a bottom-left origin, with Y increasing upwards.
 {
     if (num_points < 3)  Error("points_are_clockwise() needs at least 3 points. We only have %ld.", num_points);
 
@@ -252,8 +149,7 @@ bool points_are_clockwise(Vector2 *points, s64 num_points)
     float *q = points[num_points-1].v;
     sum += (p[0] - q[0])/(p[1] + q[1]);
 
-    return sum > 0;
-
+    return sum < 0;
 }
 
 bool same_point(Vector2 p, Vector2 q)
@@ -295,6 +191,10 @@ bool point_in_triangle(Vector2 point, Path triangle)
 }
 
 Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
+// Assumptions:
+// - The polygon's first ring is its outer ring with points in counter-clockwise order.
+// - Subsequent rings are holes with points in clockwise order.
+// - @Todo: Do we assume that the first and last points are the same? Not the same? Either way?
 {
     Path_array *triangles = NewArray(triangles, ctx);
 
@@ -302,10 +202,15 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
     // But for now we'll just take the firth path, the outer ring.
     Path *ring = &polygon->data[0];
 
+    // The points as a whole should go anticlockwise.
+    assert(!points_are_clockwise(ring->data, ring->count));
+
     // This is like a circular linked list but all the links are stored in a separate array, and
     // instead of being pointers, they're the indices of the next points in the ring. This makes it
-    // easy to iterate over all the points starting from any place: just call `i = next[i]` at the
-    // end of each loop until you encouter the current index again.
+    // easy to iterate over all the points starting from any one: just call `i = next[i]` at the end
+    // of each loop until you encouter the current point again. The other advantage is that, as we
+    // "chop off ears" in the process of turning polygons into triangles, we just update the
+    // preceding index to point to the one after the removed one.
     int *next = New(ring->count, int, ctx);
     for (int i = 0; i < ring->count-1; i++)  next[i] = i + 1;
     next[ring->count-1] = 0; // { 1, 2, 3, ..., 0 }
@@ -346,22 +251,17 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
 
             if (!remove) {
                 i1 = v2;
-
                 // Make sure we don't loop around the ring forever. If there are no triangles yet, we shouldn't be back at the start where i1 == 0.
                 assert(triangles->count || i1);
-
                 // If we have partially triangulated, return what we've got. @Todo: Control what to return if triangulation fails with a parameter?
                 if (!(!triangles->count || i1 != i0)) {
-                    Error("Partial triangulation. Used %d out of %d vertices.", triangles->count, triangles->count);
+                    //Error("Partial triangulation. Used %d out of %d vertices.", triangles->count, ring->count); // @Todo.
                     return triangles;
                 }
-
                 continue;
             }
 
-            //
             // Off with the ear!
-            //
 
             *Add(triangles) = ear;
 
@@ -400,6 +300,11 @@ Vertex_array *polygon_to_vertices(Polygon *polygon, Vector4 colour, Memory_Conte
     return vertices;
 }
 
+float frand()
+{
+    return rand()/(float)RAND_MAX;
+}
+
 int main()
 {
     Memory_Context *ctx = new_context(NULL);
@@ -408,11 +313,28 @@ int main()
     if (PQstatus(db) != CONNECTION_OK)  Error("Database connection failed: %s", PQerrorMessage(db));
 
     Polygon_array *polygons = query_polygons(db, ctx,
-        "select ST_AsBinary(st_concavehull(way, 1.0)) AS polygon from planet_osm_polygon where name = 'Elisabeth Murdoch'");
+        //"SELECT ST_AsBinary(ST_GeomFromEWKB(way)) AS polygon FROM planet_osm_polygon WHERE name = 'Macquarie River' and ST_GeometryType(way) = 'ST_Polygon'");
+        //"SELECT ST_AsBinary(ST_GeomFromEWKB(ST_ForcePolygonCW(way))) AS polygon FROM planet_osm_polygon WHERE ST_GeometryType(way) = 'ST_Polygon' LIMIT 500");
 
-    // Turn the first polygon into vertex attributes.
-    Vertex_array *vertices = polygon_to_vertices(&polygons->data[0], (Vector4){0.5,0.5,1,1}, ctx);
-    assert(vertices);
+        "SELECT ST_AsBinary(ST_GeomFromEWKB(p1.way)) AS polygon         "
+        "FROM planet_osm_polygon p1                                     "
+        "  JOIN planet_osm_polygon p2 ON ST_Within(p1.way, p2.way)      "
+        "WHERE p2.name = 'City of Melbourne'                            "
+        "  AND ST_GeometryType(p1.way) = 'ST_Polygon'                   "
+        "ORDER BY ST_Area(p1.way) DESC                                  "
+        "LIMIT 500                                                      "
+        );
+
+    Vertex_array *vertices = NewArray(vertices, ctx);
+
+    for (s64 i = 0; i < polygons->count; i++) {
+        float   alpha  = 0.75;
+        Vector4 colour = {frand(), frand(), frand(), alpha};
+
+        Vertex_array *polygon_verts = polygon_to_vertices(&polygons->data[i], colour, ctx);
+
+        for (s64 j = 0; j < polygon_verts->count; j++)  *Add(vertices) = polygon_verts->data[j];
+    }
 
     // Write vertices to file.
     write_array_to_file(vertices, "/home/jpj/src/webgl/bin/vertices");

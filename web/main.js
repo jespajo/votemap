@@ -160,4 +160,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	// For debugging.
 	window.view = view;
 	window.vertices = vertices;
+
+	// @Temporary. Whatever the first vertex is---put it in the top-left corner of the screen.
+	view[6]=-vertices[0]; view[7]=-vertices[1];
 });

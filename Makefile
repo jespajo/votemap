@@ -1,7 +1,7 @@
 MAKEFLAGS += --jobs=$(shell nproc)
 
-cc := clang
-
+#cc := clang
+cc := gcc
 fsan := -fsanitize=address,undefined
 
 cflags += -Wall -Werror
@@ -49,7 +49,6 @@ bin/%:  bin/%.o $(shared_obj);  $(cc) $^ $(lflags)
 bin/%.o:  src/%.c;  $(cc) -c $(cflags) $<
 
 tags:  $(sources);  ctags --recurse src/
-#tags:  $(sources);  ctags --recurse src/ /usr/include/postgresql/libpq-fe.h
 
 tidy:  ;  rm -f core.*
 clean:  tidy;  rm -rf bin tags
