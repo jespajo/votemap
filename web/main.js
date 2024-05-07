@@ -33,6 +33,16 @@ const FRAGMENT_SHADER_TEXT = `
 	}
 `;
 
+function xform(vec2, mat3) {
+	// xform because it's simple. We assume it's an affine transformation with uniform scale (x and y scale by the same amount).
+	const scale = mat3[0];
+	const translate = [mat3[6], mat3[7]];
+
+	const x = scale*vec2[0] + translate[0];
+	const y = scale*vec2[1] + translate[1];
+	return [x, y];
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
 	const gl = $("canvas#map").getContext("webgl");
 	const ui = $("canvas#gui").getContext("2d");
@@ -130,6 +140,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 			ui.fillStyle = '#141414';
 			ui.fillRect(0, 0, width, height);
 			ui.clearRect(10, 10, width-20, height-20);
+
+			// Draw a square in the centre of Australia?
+			{
+				const centroid = [254405, 2772229];
+				const position = xform(centroid, view);
+
+				const size = 10;
+				ui.fillStyle = 'red';
+				ui.fillRect(position[0]-size/2, position[1]-size/2, size, size);
+			}
 		}
 
 		window.requestAnimationFrame(step);
