@@ -18,5 +18,5 @@ When we're drawing on the screen, we generally like to have the origin in the to
 But we're storing these shapes in ESPG:3577, which means units are metres increasing in the north-east direction.
 Flipping the Y-axis reverses the orientations of all the rings!
 
-I'm not really sure what to do about all this.
-For now we're just rendering the map upside down.
+So here's what we're doing:
+Whenever we use the `Polygon` or `Path` types, we ensure the Y-axis increases downwards, flipping the EWKB data by multiplying the Ys by zero.

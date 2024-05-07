@@ -86,3 +86,13 @@ u8_array load_binary_file(char *file_name, Memory_Context *context)
 
     return buffer;
 }
+
+void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
+{
+    FILE *file = fopen(file_name, "wb");
+
+    u64 num_chars_written = fwrite(data, unit_size, count, file);
+    assert(num_chars_written > 0);
+
+    fclose(file);
+}

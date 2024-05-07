@@ -7,14 +7,21 @@
 #include "array.h"
 
 // @Todo move to vector.h.
-typedef struct {float v[2];}    Vector2;
-typedef struct {float v[3];}    Vector3;
-typedef struct {float v[4];}    Vector4;
-typedef struct {float m[4][4];} Matrix4;
+typedef struct {float v[2];}  Vector2;
+typedef struct {float v[3];}  Vector3;
+typedef struct {float v[4];}  Vector4;
 
+// In Path data:
+// - the y-axis increases downwards
+// - when we represent a closed shape, the first and last points are the same
 typedef Array(Vector2)  Path;
 typedef Array(Path)     Path_array;
-typedef Array(Path)     Polygon; // We follow the convention where the first ring of a polygon is the outer ring. Subsequent rings are holes.
+
+// In Polygon data:
+// - the y-axis increases downwards
+// - the first ring is the outer ring given counter-clockwise
+// - subsequent rings are holes given clockwise
+typedef Array(Path)     Polygon;
 typedef Array(Polygon)  Polygon_array;
 
 enum WKB_Byte_Order {
@@ -54,29 +61,18 @@ Vertex_array *merge_vertex_arrays(Vertex_array **arrays, s64 num_arrays, Memory_
     return merged;
 }
 
-void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
-{
-    FILE *file = fopen(file_name, "wb");
-
-    u64 num_chars_written = fwrite(data, unit_size, count, file);
-    assert(num_chars_written > 0);
-
-    fclose(file);
-}
-#define write_array_to_file(ARRAY, FILE_NAME)  \
-    write_array_to_file_((ARRAY)->data, sizeof((ARRAY)->data[0]), (ARRAY)->count, (FILE_NAME))
 
 Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
-{
 #define QueryError(...)  (Error(__VA_ARGS__), NULL)
+{
     PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
     if (PQresultStatus(result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
 
-    int column = PQfnumber(result, "polygon");
-    if (column < 0)  return QueryError("We couldn't find a \"Polygon\" column in the results.");
-
     int num_tuples = PQntuples(result);
     if (num_tuples == 0)  return QueryError("A query for polygons returned no results.");
+
+    int column = PQfnumber(result, "polygon");
+    if (column < 0)  return QueryError("We couldn't find a \"polygon\" column in the results.");
 
     Polygon_array *polygons = NewArray(polygons, context);
 
@@ -111,7 +107,10 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
                 d += sizeof(double);
 
                 // Cast doubles to floats.
-                *Add(&ring) = (Vector2){(float)x, (float)y};
+                *Add(&ring) = (Vector2){
+                    (float)x,
+                    -(float)y // Flip the y-axis.
+                };
             }
             *Add(&polygon) = ring;
         }
@@ -125,11 +124,11 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
     PQclear(result);
 
     return polygons;
-#undef QueryError
 }
+#undef QueryError
 
 bool points_are_clockwise(Vector2 *points, s64 num_points)
-// This function assumes that we're working with a bottom-left origin, with Y increasing upwards.
+// This function assumes that we're working with a TOP-left origin, with Y increasing downwards.
 {
     if (num_points < 3) {
         Error("points_are_clockwise() needs at least 3 points. We only have %ld.", num_points);
@@ -143,7 +142,7 @@ bool points_are_clockwise(Vector2 *points, s64 num_points)
     float *p = points[0].v;
     float *q = points[num_points-1].v;
     sum += (p[0] - q[0])/(p[1] + q[1]);
-    return sum < 0;
+    return sum > 0;
 }
 
 bool same_point(Vector2 p, Vector2 q)
@@ -155,7 +154,7 @@ bool same_point(Vector2 p, Vector2 q)
 
 bool is_triangle(Path triangle)
 {
-    // @Todo: Check the three points aren't colinear?
+    // @Todo: Check the three points aren't colinear.
     if (triangle.count == 3)  return true;
     if (triangle.count == 4) {
         Vector2 first = triangle.data[0];
@@ -184,20 +183,31 @@ bool point_in_triangle(Vector2 point, Path triangle)
     return !(negative && positive);
 }
 
-Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
-// Assumptions:
-// - The polygon's first ring is its outer ring with points in counter-clockwise order.
-// - Subsequent rings are holes with points in clockwise order.
-// - @Todo: Do we assume that the first and last points are the same? Not the same? Either way?
+bool is_polygon(Polygon *polygon)
+// See Polygon typedef.
 {
+    if (polygon->count < 0)  return false;
+    for (s64 i = 0; i < polygon->count; i++) {
+        Path *ring = &polygon->data[i];
+        bool clockwise = points_are_clockwise(ring->data, ring->count);
+        if (!i) {
+            if (clockwise)   return false;
+        } else {
+            if (!clockwise)  return false;
+        }
+    }
+    return true;
+}
+
+Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
+{
+    assert(is_polygon(polygon));
+
     Path_array *triangles = NewArray(triangles, ctx);
 
     // @Todo: If the polygon has holes, turn it into one big ring.
-    // But for now we'll just take the firth path, the outer ring.
+    // But for now we'll just take the outer ring and ignore holes.
     Path *ring = &polygon->data[0];
-
-    // The points as a whole should go anticlockwise.
-    assert(!points_are_clockwise(ring->data, ring->count));
 
     // This is like a circular linked list but all the links are stored in a separate array, and
     // instead of being pointers, they're the indices of the next points in the ring. This makes it
@@ -310,6 +320,7 @@ int main()
         //"SELECT ST_AsBinary(ST_GeomFromEWKB(way)) AS polygon FROM planet_osm_polygon WHERE name = 'Macquarie River' and ST_GeometryType(way) = 'ST_Polygon'");
         //"SELECT ST_AsBinary(ST_GeomFromEWKB(ST_ForcePolygonCW(way))) AS polygon FROM planet_osm_polygon WHERE ST_GeometryType(way) = 'ST_Polygon' LIMIT 500");
 
+        // Get polygons in the City of Melbourne ordered by area:
         //"SELECT ST_AsBinary(ST_GeomFromEWKB(p1.way)) AS polygon         "
         //"FROM planet_osm_polygon p1                                     "
         //"  JOIN planet_osm_polygon p2 ON ST_Within(p1.way, p2.way)      "
@@ -318,13 +329,13 @@ int main()
         //"ORDER BY ST_Area(p1.way) DESC                                  "
         //"LIMIT 500                                                      "
 
-        //"   SELECT ST_AsBinary(ST_ForcePolygonCCW(p1.way)) AS polygon                  \n"
-        "   SELECT ST_AsBinary(ST_ForcePolygonCCW(ST_SimplifyVW(p1.way, 3000))) AS polygon                  \n"
+        "   SELECT ST_AsBinary(ST_ForcePolygonCCW(p1.way)) AS polygon                  \n"
+        //"   SELECT ST_AsBinary(ST_ForcePolygonCCW(ST_SimplifyVW(p1.way, 3000))) AS polygon                  \n"
         "   FROM simplified_water_polygons p1                                          \n"
         "     JOIN planet_osm_polygon p2 ON TRUE                                       \n"
         "   WHERE p2.name = 'Australia'                                                \n"
         "   ORDER BY ST_Distance(ST_Centroid(p1.way), ST_Centroid(p2.way)) ASC         \n"
-        "   LIMIT 500                                                                  \n" 
+        "   LIMIT 450                                                                  \n"
         );
 
     Vertex_array *vertices = NewArray(vertices, ctx);
