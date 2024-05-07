@@ -1,9 +1,6 @@
-Get frontend to read vertices from file
-Output to vertex file from C program
 
-Connect to Postgis database from C
-See if you can render low-res Australia landmass from WKB
-Add pan and zoom to frontend
+Flip the Y-axis in native Polygon and Path types.
+
 
 Import old data into new Postgres database:
     Australian coastline shapefiles

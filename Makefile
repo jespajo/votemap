@@ -2,7 +2,7 @@ MAKEFLAGS += --jobs=$(shell nproc)
 
 #cc := clang
 cc := gcc
-fsan := -fsanitize=address,undefined
+#fsan := -fsanitize=address,undefined
 
 cflags += -Wall -Werror
 cflags += -Wno-unused
@@ -12,8 +12,8 @@ cflags += -MMD -MP
 cflags += -MT bin/$*.o
 cflags += -o $@
 cflags += -DDEBUG
-cflags += $(fsan)
 cflags += -I/usr/include/postgresql
+cflags += $(fsan)
 
 ifeq ($(cc),gcc)
   cflags += -Wno-missing-braces
@@ -27,6 +27,7 @@ lflags += -L/usr/local/src/postgresql-14.8/build/src/interfaces/libpq
 lflags += -L/usr/local/src/postgresql-14.8/build/src/common
 lflags += -L/usr/local/src/postgresql-14.8/build/src/port
 lflags += -Wl,-Bstatic -lpq -lpgcommon -lpgport -Wl,-Bdynamic
+lflags += -lpthread
 
 # Build targets:
 all:  bin/main

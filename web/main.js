@@ -34,14 +34,8 @@ const FRAGMENT_SHADER_TEXT = `
 `;
 
 document.addEventListener("DOMContentLoaded", async () => {
-	//
-	// Create the map.
-	//
 	const gl = $("canvas#map").getContext("webgl");
-	if (!gl) {
-		console.error("Failed to get WebGL context.");
-		return;
-	}
+	const ui = $("canvas#gui").getContext("2d");
 
 	const program = gl.createProgram();
 	{
@@ -85,13 +79,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const data     = await response.arrayBuffer();
 
 		vertices = new Float32Array(data);
-	}
-
-	// Create the UI canvas.
-	const ui = $("canvas#gui").getContext("2d");
-	if (!ui) {
-		console.error("Failed to get 2D context.");
-		return;
 	}
 
 	;(function step() {
@@ -139,9 +126,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 		{
 			ui.clearRect(0, 0, width, height);
 
+			// Draw a border.
 			ui.fillStyle = '#141414';
 			ui.fillRect(0, 0, width, height);
-
 			ui.clearRect(10, 10, width-20, height-20);
 		}
 
@@ -151,7 +138,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 	//
 	// Mouse/touch events.
 	//
-
 	window.addEventListener("wheel", event => {
 		const oldScale = view[0];
 		const newScale = view[0]*((event.deltaY > 0) ? 0.75 : 1.5);
@@ -190,6 +176,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	// For debugging.
 	window.view = view;
 	window.vertices = vertices;
+	window.ui = ui;
 
 	// @Temporary. Whatever the first vertex is---put it in the top-left corner of the screen.
 	view[6]=-vertices[0]; view[7]=-vertices[1];

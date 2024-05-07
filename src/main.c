@@ -310,13 +310,21 @@ int main()
         //"SELECT ST_AsBinary(ST_GeomFromEWKB(way)) AS polygon FROM planet_osm_polygon WHERE name = 'Macquarie River' and ST_GeometryType(way) = 'ST_Polygon'");
         //"SELECT ST_AsBinary(ST_GeomFromEWKB(ST_ForcePolygonCW(way))) AS polygon FROM planet_osm_polygon WHERE ST_GeometryType(way) = 'ST_Polygon' LIMIT 500");
 
-        "SELECT ST_AsBinary(ST_GeomFromEWKB(p1.way)) AS polygon         "
-        "FROM planet_osm_polygon p1                                     "
-        "  JOIN planet_osm_polygon p2 ON ST_Within(p1.way, p2.way)      "
-        "WHERE p2.name = 'City of Melbourne'                            "
-        "  AND ST_GeometryType(p1.way) = 'ST_Polygon'                   "
-        "ORDER BY ST_Area(p1.way) DESC                                  "
-        "LIMIT 500                                                      "
+        //"SELECT ST_AsBinary(ST_GeomFromEWKB(p1.way)) AS polygon         "
+        //"FROM planet_osm_polygon p1                                     "
+        //"  JOIN planet_osm_polygon p2 ON ST_Within(p1.way, p2.way)      "
+        //"WHERE p2.name = 'City of Melbourne'                            "
+        //"  AND ST_GeometryType(p1.way) = 'ST_Polygon'                   "
+        //"ORDER BY ST_Area(p1.way) DESC                                  "
+        //"LIMIT 500                                                      "
+
+        //"   SELECT ST_AsBinary(ST_ForcePolygonCCW(p1.way)) AS polygon                  \n"
+        "   SELECT ST_AsBinary(ST_ForcePolygonCCW(ST_SimplifyVW(p1.way, 3000))) AS polygon                  \n"
+        "   FROM simplified_water_polygons p1                                          \n"
+        "     JOIN planet_osm_polygon p2 ON TRUE                                       \n"
+        "   WHERE p2.name = 'Australia'                                                \n"
+        "   ORDER BY ST_Distance(ST_Centroid(p1.way), ST_Centroid(p2.way)) ASC         \n"
+        "   LIMIT 500                                                                  \n" 
         );
 
     Vertex_array *vertices = NewArray(vertices, ctx);
