@@ -62,8 +62,8 @@ Vertex_array *merge_vertex_arrays(Vertex_array **arrays, s64 num_arrays, Memory_
 }
 
 
-Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
 #define QueryError(...)  (Error(__VA_ARGS__), NULL)
+Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
 {
     PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
     if (PQresultStatus(result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
@@ -124,6 +124,61 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
     PQclear(result);
 
     return polygons;
+}
+Path_array *query_paths(PGconn *db, Memory_Context *context, char *query)
+// @Copypasta from query_polygons.
+{
+    PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
+    if (PQresultStatus(result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
+
+    int num_tuples = PQntuples(result);
+    if (num_tuples == 0)  return QueryError("A query for paths returned no results.");
+
+    int column = PQfnumber(result, "path");
+    if (column < 0)  return QueryError("We couldn't find a \"path\" column in the results.");
+
+    Path_array *paths = NewArray(paths, context);
+
+    for (int row = 0; row < num_tuples; row++) {
+        char *data = PQgetvalue(result, row, column);
+        char *d = data;
+
+        Path path = {.context = context};
+
+        u8 byte_order = *d;
+        d += sizeof(u8);
+        assert(byte_order == WKB_LITTLE_ENDIAN);
+
+        u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
+        d += sizeof(u32);
+        assert(wkb_type == WKB_LINESTRING);
+
+        u32 num_points;  memcpy(&num_points, d, sizeof(u32));
+        d += sizeof(u32);
+
+        while (num_points--) {
+            double x;  memcpy(&x, d, sizeof(double));
+            d += sizeof(double);
+
+            double y;  memcpy(&y, d, sizeof(double));
+            d += sizeof(double);
+
+            // Cast doubles to floats.
+            *Add(&path) = (Vector2){
+                (float)x,
+                -(float)y // Flip the y-axis.
+            };
+        }
+        *Add(paths) = path;
+
+        // Check that the number of bytes parsed by this function is equal to the Postgres reported size.
+        s64 num_bytes_parsed = d - data;
+        assert(num_bytes_parsed == PQgetlength(result, row, column));
+    }
+
+    PQclear(result);
+
+    return paths;
 }
 #undef QueryError
 
@@ -279,16 +334,16 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
     return triangles;
 }
 
-Vertex_array *polygon_to_vertices(Polygon *polygon, Vector4 colour, Memory_Context *ctx)
+Vertex_array *polygon_to_vertices(Polygon *polygon, Vector4 colour, Memory_Context *context) // @Naming draw_polygon ? fill_polygon() ??
 {
-    Vertex_array *vertices = NewArray(vertices, ctx);
+    Vertex_array *vertices = NewArray(vertices, context);
 
     float r = colour.v[0];
     float g = colour.v[1];
     float b = colour.v[2];
     float a = colour.v[3];
 
-    Path_array *triangles = triangulate_polygon(polygon, ctx);
+    Path_array *triangles = triangulate_polygon(polygon, context);
 
     for (s64 i = 0; i < triangles->count; i++) {
         Path *triangle = &triangles->data[i];
@@ -304,6 +359,39 @@ Vertex_array *polygon_to_vertices(Polygon *polygon, Vector4 colour, Memory_Conte
     return vertices;
 }
 
+float lerp(float a, float b, float t)
+{
+    return t*(1.0-a) + t*b;
+}
+
+Vertex_array *path_to_vertices(Path *path, float width, Vector4 colour, Memory_Context *context) // @Naming draw_path() ? stroke_path() ??
+{
+    Vertex_array *vertices = NewArray(vertices, context);
+
+    float r = colour.v[0];
+    float g = colour.v[1];
+    float b = colour.v[2];
+    float a = colour.v[3];
+
+    for (s64 i = 0; i < path->count-1; i++) {
+        float *p = path->data[i].v;
+        float *q = path->data[i+1].v;
+
+        //
+        // @Temporary: Draw lines as diamonds.
+        //
+        *Add(vertices) = (Vertex){p[0],       p[1],  r, g, b, a};
+        *Add(vertices) = (Vertex){q[0],       q[1],  r, g, b, a};
+        *Add(vertices) = (Vertex){p[0]+width, p[1],  r, g, b, a};
+
+        *Add(vertices) = (Vertex){q[0],       q[1],  r, g, b, a};
+        *Add(vertices) = (Vertex){p[0]+width, p[1],  r, g, b, a};
+        *Add(vertices) = (Vertex){q[0]+width, q[1],  r, g, b, a};
+    }
+
+    return vertices;
+}
+
 float frand()
 {
     return rand()/(float)RAND_MAX;
@@ -313,40 +401,43 @@ int main()
 {
     Memory_Context *ctx = new_context(NULL);
 
+    Vertex_array *vertices = NewArray(vertices, ctx);
+
     PGconn *db = PQconnectdb("postgres://postgres:postgisclarity@osm.tal/gis");
     if (PQstatus(db) != CONNECTION_OK)  Error("Database connection failed: %s", PQerrorMessage(db));
 
-    Polygon_array *polygons = query_polygons(db, ctx,
-        //"SELECT ST_AsBinary(ST_GeomFromEWKB(way)) AS polygon FROM planet_osm_polygon WHERE name = 'Macquarie River' and ST_GeometryType(way) = 'ST_Polygon'");
-        //"SELECT ST_AsBinary(ST_GeomFromEWKB(ST_ForcePolygonCW(way))) AS polygon FROM planet_osm_polygon WHERE ST_GeometryType(way) = 'ST_Polygon' LIMIT 500");
+    {
+        Polygon_array *polygons = query_polygons(db, ctx,
+            "   SELECT ST_AsBinary(ST_ForcePolygonCCW(swp.way)) AS polygon              "
+            "   FROM simplified_water_polygons swp                                      "
+            "     JOIN planet_osm_polygon pop ON TRUE                                   "
+            "   WHERE pop.name = 'Australia'                                            "
+            "   ORDER BY ST_Distance(swp.way, ST_Centroid(pop.way))                     "
+            "   LIMIT 300                                                               ");
 
-        // Get polygons in the City of Melbourne ordered by area:
-        //"SELECT ST_AsBinary(ST_GeomFromEWKB(p1.way)) AS polygon         "
-        //"FROM planet_osm_polygon p1                                     "
-        //"  JOIN planet_osm_polygon p2 ON ST_Within(p1.way, p2.way)      "
-        //"WHERE p2.name = 'City of Melbourne'                            "
-        //"  AND ST_GeometryType(p1.way) = 'ST_Polygon'                   "
-        //"ORDER BY ST_Area(p1.way) DESC                                  "
-        //"LIMIT 500                                                      "
+        for (s64 i = 0; i < polygons->count; i++) {
+            float   alpha  = 0.75;
+            Vector4 colour = {frand(), frand(), frand(), alpha};
+            Vertex_array *polygon_verts = polygon_to_vertices(&polygons->data[i], colour, ctx);
 
-        "   SELECT ST_AsBinary(ST_ForcePolygonCCW(p1.way)) AS polygon                  \n"
-        //"   SELECT ST_AsBinary(ST_ForcePolygonCCW(ST_SimplifyVW(p1.way, 3000))) AS polygon                  \n"
-        "   FROM simplified_water_polygons p1                                          \n"
-        "     JOIN planet_osm_polygon p2 ON TRUE                                       \n"
-        "   WHERE p2.name = 'Australia'                                                \n"
-        "   ORDER BY ST_Distance(ST_Centroid(p1.way), ST_Centroid(p2.way)) ASC         \n"
-        "   LIMIT 450                                                                  \n"
-        );
+            for (s64 j = 0; j < polygon_verts->count; j++)  *Add(vertices) = polygon_verts->data[j];
+        }
+    }
 
-    Vertex_array *vertices = NewArray(vertices, ctx);
+    {
+        Path_array *roads = query_paths(db, ctx,
+            "   SELECT ST_AsBinary(way) AS path   "
+            "   FROM planet_osm_roads             "
+            "   WHERE highway = 'primary'         "
+            "           ");
 
-    for (s64 i = 0; i < polygons->count; i++) {
-        float   alpha  = 0.75;
-        Vector4 colour = {frand(), frand(), frand(), alpha};
+        for (s64 i = 0; i < roads->count; i++) {
+            Vector4 colour = {frand(), frand(), frand(), 0.75};
+            float   width  = 50;
+            Vertex_array *road_verts = path_to_vertices(&roads->data[i], width, colour, ctx);
 
-        Vertex_array *polygon_verts = polygon_to_vertices(&polygons->data[i], colour, ctx);
-
-        for (s64 j = 0; j < polygon_verts->count; j++)  *Add(vertices) = polygon_verts->data[j];
+            for (s64 j = 0; j < road_verts->count; j++)  *Add(vertices) = road_verts->data[j];
+        }
     }
 
     // Write vertices to file.

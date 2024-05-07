@@ -134,19 +134,26 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // 2D canvas:
         {
+            const aust = xform([254405, 2772229], view);
+
             ui.clearRect(0, 0, width, height);
 
-            // Draw a border.
-            ui.fillStyle = '#141414';
-            ui.fillRect(0, 0, width, height);
-            ui.clearRect(10, 10, width-20, height-20);
-
             // Draw a square in the centre of Australia.
-            const centroid = [254405, 2772229];
-            const position = xform(centroid, view);
-            ui.fillStyle = 'red';
-            const size = 10;
-            ui.fillRect(position[0]-size/2, position[1]-size/2, size, size);
+            {
+                const size = 10;
+                ui.fillStyle = 'red';
+                ui.fillRect(aust[0]-size/2, aust[1]-size/2, size, size);
+            }
+
+            // Draw a border.
+            {
+                const size = 20;
+                ui.fillStyle = '#141414';
+                ui.fillRect(0, 0, width, size);
+                ui.fillRect(0, 0, size, height);
+                ui.fillRect(width-size, 0, size, height);
+                ui.fillRect(0, height-size, width, size);
+            }
         }
 
         window.requestAnimationFrame(step);
