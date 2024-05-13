@@ -33,6 +33,8 @@ s64 round_up_to_power_of_two(s64 num);
 bool is_power_of_two(s64 num);
 void log_error_(char *file, int line, char *format, ...);
 char *trim_left_(char *string, char *trim_chars, int num_trim_chars);
+float frand();
+float lerp(float a, float b, float t);
 
 #define log_error(...)  log_error_(__FILE__, __LINE__, __VA_ARGS__)
 

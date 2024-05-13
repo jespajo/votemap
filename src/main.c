@@ -1,447 +1,57 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "libpq-fe.h"
+#include "draw.h"
+#include "pg.h"
 
-#include "map.h"
-#include "array.h"
-
-// @Todo move to vector.h.
-typedef struct {float v[2];}  Vector2;
-typedef struct {float v[3];}  Vector3;
-typedef struct {float v[4];}  Vector4;
-
-// In Path data:
-// - the y-axis increases downwards
-// - when we represent a closed shape, the first and last points are the same
-typedef Array(Vector2)  Path;
-typedef Array(Path)     Path_array;
-
-// In Polygon data:
-// - the y-axis increases downwards
-// - the first ring is the outer ring given counter-clockwise
-// - subsequent rings are holes given clockwise
-typedef Array(Path)     Polygon;
-typedef Array(Polygon)  Polygon_array;
-
-enum WKB_Byte_Order {
-    WKB_BIG_ENDIAN    = 0,
-    WKB_LITTLE_ENDIAN = 1,
-};
-
-enum WKB_Geometry_Type {
-    WKB_POINT              = 1,
-    WKB_LINESTRING         = 2,
-    WKB_POLYGON            = 3,
-    WKB_MULTIPOINT         = 4,
-    WKB_MULTILINESTRING    = 5,
-    WKB_MULTIPOLYGON       = 6,
-    WKB_GEOMETRYCOLLECTION = 7,
-};
-
-struct Vertex {
-    float x, y;
-    float r, g, b, a;
-};
-typedef struct Vertex  Vertex;
-typedef Array(Vertex)  Vertex_array;
-
-Vertex_array *merge_vertex_arrays(Vertex_array **arrays, s64 num_arrays, Memory_Context *context)
-// @Speed! Slow because it copies all the data.
-// This is also something we may want to make generic later and use a macro for e.g. Merge() or Flatten().
+void add_verts(Vertex_array *array, Vertex_array *appendage)
 {
-    Vertex_array *merged = NewArray(merged, context);
-
-    for (int i = 0; i < num_arrays; i++) {
-        Vertex_array *array = arrays[i];
-
-        for (int j = 0; j < array->count; j++)  *Add(merged) = array->data[j];
+    for (s64 i = 0; i < appendage->count; i++) {
+        *Add(array) = appendage->data[i];
     }
-
-    return merged;
-}
-
-
-#define QueryError(...)  (Error(__VA_ARGS__), NULL)
-Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
-{
-    PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
-    if (PQresultStatus(result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
-
-    int num_tuples = PQntuples(result);
-    if (num_tuples == 0)  return QueryError("A query for polygons returned no results.");
-
-    int column = PQfnumber(result, "polygon");
-    if (column < 0)  return QueryError("We couldn't find a \"polygon\" column in the results.");
-
-    Polygon_array *polygons = NewArray(polygons, context);
-
-    for (int row = 0; row < num_tuples; row++) {
-        char *data = PQgetvalue(result, row, column);
-        char *d = data;
-
-        Polygon polygon = {.context = context};
-
-        u8 byte_order = *d;
-        d += sizeof(u8);
-        assert(byte_order == WKB_LITTLE_ENDIAN);
-
-        u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
-        d += sizeof(u32);
-        assert(wkb_type == WKB_POLYGON);
-
-        u32 num_rings;  memcpy(&num_rings, d, sizeof(u32));
-        d += sizeof(u32);
-
-        while (num_rings--) {
-            Path ring = {.context = context};
-
-            u32 num_points;  memcpy(&num_points, d, sizeof(u32));
-            d += sizeof(u32);
-
-            while (num_points--) {
-                double x;  memcpy(&x, d, sizeof(double));
-                d += sizeof(double);
-
-                double y;  memcpy(&y, d, sizeof(double));
-                d += sizeof(double);
-
-                // Cast doubles to floats.
-                *Add(&ring) = (Vector2){
-                    (float)x,
-                    -(float)y // Flip the y-axis.
-                };
-            }
-            *Add(&polygon) = ring;
-        }
-        *Add(polygons) = polygon;
-
-        // Check that the number of bytes parsed by this function is equal to the Postgres reported size.
-        s64 num_bytes_parsed = d - data;
-        assert(num_bytes_parsed == PQgetlength(result, row, column));
-    }
-
-    PQclear(result);
-
-    return polygons;
-}
-Path_array *query_paths(PGconn *db, Memory_Context *context, char *query)
-// @Copypasta from query_polygons.
-{
-    PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
-    if (PQresultStatus(result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
-
-    int num_tuples = PQntuples(result);
-    if (num_tuples == 0)  return QueryError("A query for paths returned no results.");
-
-    int column = PQfnumber(result, "path");
-    if (column < 0)  return QueryError("We couldn't find a \"path\" column in the results.");
-
-    Path_array *paths = NewArray(paths, context);
-
-    for (int row = 0; row < num_tuples; row++) {
-        char *data = PQgetvalue(result, row, column);
-        char *d = data;
-
-        Path path = {.context = context};
-
-        u8 byte_order = *d;
-        d += sizeof(u8);
-        assert(byte_order == WKB_LITTLE_ENDIAN);
-
-        u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
-        d += sizeof(u32);
-        assert(wkb_type == WKB_LINESTRING);
-
-        u32 num_points;  memcpy(&num_points, d, sizeof(u32));
-        d += sizeof(u32);
-
-        while (num_points--) {
-            double x;  memcpy(&x, d, sizeof(double));
-            d += sizeof(double);
-
-            double y;  memcpy(&y, d, sizeof(double));
-            d += sizeof(double);
-
-            // Cast doubles to floats.
-            *Add(&path) = (Vector2){
-                (float)x,
-                -(float)y // Flip the y-axis.
-            };
-        }
-        *Add(paths) = path;
-
-        // Check that the number of bytes parsed by this function is equal to the Postgres reported size.
-        s64 num_bytes_parsed = d - data;
-        assert(num_bytes_parsed == PQgetlength(result, row, column));
-    }
-
-    PQclear(result);
-
-    return paths;
-}
-#undef QueryError
-
-bool points_are_clockwise(Vector2 *points, s64 num_points)
-// This function assumes that we're working with a TOP-left origin, with Y increasing downwards.
-{
-    if (num_points < 3) {
-        Error("points_are_clockwise() needs at least 3 points. We only have %ld.", num_points);
-    }
-    float sum = 0;
-    for (int i = 0; i < num_points-1; i++) {
-        float *p = points[i].v;
-        float *q = points[i+1].v;
-        sum += (q[0] - p[0])/(q[1] + p[1]);
-    }
-    float *p = points[0].v;
-    float *q = points[num_points-1].v;
-    sum += (p[0] - q[0])/(p[1] + q[1]);
-    return sum > 0;
-}
-
-bool same_point(Vector2 p, Vector2 q)
-{
-    if (p.v[0] != q.v[0])  return false;
-    if (p.v[1] != q.v[1])  return false;
-    return true;
-}
-
-bool is_triangle(Path triangle)
-{
-    // @Todo: Check the three points aren't colinear.
-    if (triangle.count == 3)  return true;
-    if (triangle.count == 4) {
-        Vector2 first = triangle.data[0];
-        Vector2 last  = triangle.data[3];
-        if (same_point(first, last))  return true;
-    }
-    return false;
-}
-
-bool point_in_triangle(Vector2 point, Path triangle)
-{
-    assert(is_triangle(triangle));
-
-    float *p  = point.v;
-    float *t1 = triangle.data[0].v;
-    float *t2 = triangle.data[1].v;
-    float *t3 = triangle.data[2].v;
-
-    float d1 = (p[0] - t1[0])*(t2[1] - t1[1]) - (p[1] - t1[1])*(t2[0] - t1[0]);
-    float d2 = (p[0] - t2[0])*(t3[1] - t2[1]) - (p[1] - t2[1])*(t3[0] - t2[0]);
-    float d3 = (p[0] - t3[0])*(t1[1] - t3[1]) - (p[1] - t3[1])*(t1[0] - t3[0]);
-
-    bool negative = d1 < 0 || d2 < 0 || d3 < 0;
-    bool positive = d1 > 0 || d2 > 0 || d3 > 0;
-
-    return !(negative && positive);
-}
-
-bool is_polygon(Polygon *polygon)
-// See Polygon typedef.
-{
-    if (polygon->count < 0)  return false;
-    for (s64 i = 0; i < polygon->count; i++) {
-        Path *ring = &polygon->data[i];
-        bool clockwise = points_are_clockwise(ring->data, ring->count);
-        if (!i) {
-            if (clockwise)   return false;
-        } else {
-            if (!clockwise)  return false;
-        }
-    }
-    return true;
-}
-
-Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
-{
-    assert(is_polygon(polygon));
-
-    Path_array *triangles = NewArray(triangles, ctx);
-
-    // @Todo: If the polygon has holes, turn it into one big ring.
-    // But for now we'll just take the outer ring and ignore holes.
-    Path *ring = &polygon->data[0];
-
-    // This is like a circular linked list but all the links are stored in a separate array, and
-    // instead of being pointers, they're the indices of the next points in the ring. This makes it
-    // easy to iterate over all the points starting from any one: just call `i = next[i]` at the end
-    // of each loop until you encouter the current point again. The other advantage is that, as we
-    // "chop off ears" in the process of turning polygons into triangles, we just update the
-    // preceding index to point to the one after the removed one.
-    int *next = New(ring->count, int, ctx);
-    for (int i = 0; i < ring->count-1; i++)  next[i] = i + 1;
-    next[ring->count-1] = 0; // { 1, 2, 3, ..., 0 }
-
-    int num_triangles = ring->count-2;
-    {
-        int i1 = 0;
-        int i0 = 0;
-
-        while (triangles->count < num_triangles) {
-            int v1 = i1;
-            int v2 = next[v1];
-            int v3 = next[v2];
-
-            bool remove = true;
-
-            Path ear = {.context = ctx};
-
-            *Add(&ear) = ring->data[v1];
-            *Add(&ear) = ring->data[v2];
-            *Add(&ear) = ring->data[v3];
-            *Add(&ear) = ring->data[v1]; // Repeat the first point. @Speed, but might be useful for is_triangle verification??
-
-            if (points_are_clockwise(ear.data, 3)) {
-                // The ear is not on the outer hull.
-                remove = false;
-            } else {
-                // The ear is on the outer hull. Check all other points to see if any of them is inside this ear.
-                int i2 = next[v3];
-                while (i2 != v1) {
-                    if (point_in_triangle(ring->data[i2], ear)) {
-                        remove = false; // There is another point inside the ear.
-                        break;
-                    }
-                    i2 = next[i2];
-                }
-            }
-
-            if (!remove) {
-                i1 = v2;
-                // Make sure we don't loop around the ring forever. If there are no triangles yet, we shouldn't be back at the start where i1 == 0.
-                assert(triangles->count || i1);
-                // If we have partially triangulated, return what we've got. @Todo: Control what to return if triangulation fails with a parameter?
-                if (!(!triangles->count || i1 != i0)) {
-                    //Error("Partial triangulation. Used %d out of %d vertices.", triangles->count, ring->count); // @Fixme.
-                    return triangles;
-                }
-                continue;
-            }
-
-            // Off with the ear!
-
-            *Add(triangles) = ear;
-
-            next[v1] = v3;
-            i1       = v3;
-            i0       = v3;
-        }
-    }
-
-    assert(triangles->count == num_triangles);
-    return triangles;
-}
-
-Vertex_array *polygon_to_vertices(Polygon *polygon, Vector4 colour, Memory_Context *context) // @Naming draw_polygon ? fill_polygon() ??
-{
-    Vertex_array *vertices = NewArray(vertices, context);
-
-    float r = colour.v[0];
-    float g = colour.v[1];
-    float b = colour.v[2];
-    float a = colour.v[3];
-
-    Path_array *triangles = triangulate_polygon(polygon, context);
-
-    for (s64 i = 0; i < triangles->count; i++) {
-        Path *triangle = &triangles->data[i];
-
-        for (int j = 0; j < 3; j++) {
-            float x = triangle->data[j].v[0];
-            float y = triangle->data[j].v[1];
-
-            *Add(vertices) = (Vertex){x, y, r, g, b, a};
-        }
-    }
-
-    return vertices;
-}
-
-float lerp(float a, float b, float t)
-{
-    return t*(1.0-a) + t*b;
-}
-
-Vertex_array *path_to_vertices(Path *path, float width, Vector4 colour, Memory_Context *context) // @Naming draw_path() ? stroke_path() ??
-{
-    Vertex_array *vertices = NewArray(vertices, context);
-
-    float r = colour.v[0];
-    float g = colour.v[1];
-    float b = colour.v[2];
-    float a = colour.v[3];
-
-    for (s64 i = 0; i < path->count-1; i++) {
-        float *p = path->data[i].v;
-        float *q = path->data[i+1].v;
-
-        //
-        // @Temporary: Draw lines as diamonds.
-        //
-        *Add(vertices) = (Vertex){p[0],       p[1],  r, g, b, a};
-        *Add(vertices) = (Vertex){q[0],       q[1],  r, g, b, a};
-        *Add(vertices) = (Vertex){p[0]+width, p[1],  r, g, b, a};
-
-        *Add(vertices) = (Vertex){q[0],       q[1],  r, g, b, a};
-        *Add(vertices) = (Vertex){p[0]+width, p[1],  r, g, b, a};
-        *Add(vertices) = (Vertex){q[0]+width, q[1],  r, g, b, a};
-    }
-
-    return vertices;
-}
-
-float frand()
-{
-    return rand()/(float)RAND_MAX;
 }
 
 int main()
 {
     Memory_Context *ctx = new_context(NULL);
 
-    Vertex_array *vertices = NewArray(vertices, ctx);
-
     PGconn *db = PQconnectdb("postgres://postgres:postgisclarity@osm.tal/gis");
     if (PQstatus(db) != CONNECTION_OK)  Error("Database connection failed: %s", PQerrorMessage(db));
 
-    {
-        Polygon_array *polygons = query_polygons(db, ctx,
-            "   SELECT ST_AsBinary(ST_ForcePolygonCCW(swp.way)) AS polygon              "
-            "   FROM simplified_water_polygons swp                                      "
-            "     JOIN planet_osm_polygon pop ON TRUE                                   "
-            "   WHERE pop.name = 'Australia'                                            "
-            "   ORDER BY ST_Distance(swp.way, ST_Centroid(pop.way))                     "
-            "   LIMIT 300                                                               ");
+    Vertex_array *verts = NewArray(verts, ctx);
 
-        for (s64 i = 0; i < polygons->count; i++) {
-            float   alpha  = 0.75;
-            Vector4 colour = {frand(), frand(), frand(), alpha};
-            Vertex_array *polygon_verts = polygon_to_vertices(&polygons->data[i], colour, ctx);
+    Polygon_array *polygons = query_polygons(db, ctx,
+        "   SELECT ST_AsBinary(ST_ForcePolygonCCW(swp.way)) AS polygon              "
+        "   FROM simplified_water_polygons swp                                      "
+        "     JOIN planet_osm_polygon pop ON TRUE                                   "
+        "   WHERE pop.name = 'Australia'                                            "
+        "   ORDER BY ST_Distance(swp.way, ST_Centroid(pop.way))                     "
+        "   LIMIT 300                                                               "
+        );
+    for (s64 i = 0; i < polygons->count; i++) {
+        float   alpha  = 0.75;
+        Vector4 colour = {frand(), frand(), frand(), alpha};
 
-            for (s64 j = 0; j < polygon_verts->count; j++)  *Add(vertices) = polygon_verts->data[j];
-        }
+        Vertex_array *polygon_verts = draw_polygon(&polygons->data[i], colour, ctx);
+
+        add_verts(verts, polygon_verts);
     }
 
-    {
-        Path_array *roads = query_paths(db, ctx,
+    Path_array *paths = query_paths(db, ctx,
             "   SELECT ST_AsBinary(way) AS path   "
             "   FROM planet_osm_roads             "
             "   WHERE highway = 'primary'         "
-            "           ");
+        );
+    for (s64 i = 0; i < paths->count; i++) {
+        Vector4 colour = {1.0, 1.0, 1.0, 1.0};
+        float   width  = 20;
 
-        for (s64 i = 0; i < roads->count; i++) {
-            Vector4 colour = {frand(), frand(), frand(), 0.75};
-            float   width  = 50;
-            Vertex_array *road_verts = path_to_vertices(&roads->data[i], width, colour, ctx);
+        Vertex_array *path_verts = draw_path(&paths->data[i], width, colour, ctx);
 
-            for (s64 j = 0; j < road_verts->count; j++)  *Add(vertices) = road_verts->data[j];
-        }
+        add_verts(verts, path_verts);
     }
 
-    // Write vertices to file.
-    write_array_to_file(vertices, "/home/jpj/src/webgl/bin/vertices");
+    write_array_to_file(verts, "/home/jpj/src/webgl/bin/vertices");
 
     PQfinish(db);
     free_context(ctx);

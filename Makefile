@@ -1,4 +1,4 @@
-MAKEFLAGS += --jobs=$(shell nproc)
+#MAKEFLAGS += --jobs=$(shell nproc)
 
 #cc := clang
 cc := gcc
@@ -35,8 +35,9 @@ lflags += -lpthread
 all:  bin/main
 all:  tags
 
-# Run targets:
+## Run targets:
 all:  ; bin/main
+
 
 sources    := $(shell find src -type f)
 non_mains  := $(shell grep -L '^int main' $(sources))

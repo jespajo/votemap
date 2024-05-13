@@ -52,3 +52,13 @@ char *trim_left_(char *string, char *trim_chars, int num_trim_chars)
     }
     return string;
 }
+
+float frand()
+{
+    return rand()/(float)RAND_MAX;
+}
+
+float lerp(float a, float b, float t)
+{
+    return (1.0-a)*t + b*t;
+}
