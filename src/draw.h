@@ -1,7 +1,6 @@
 #ifndef DRAW_H_INCLUDED
 #define DRAW_H_INCLUDED
 
-#include "array.h"
 #include "shapes.h"
 
 // This type is closely linked with the vertex shader in web/script.js.

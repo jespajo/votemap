@@ -34,12 +34,15 @@ const FRAGMENT_SHADER_TEXT = `
 `;
 
 function xform(vec2, mat3) {
-    // xform because it's simple. We assume it's an affine transformation with uniform scale (x and y scale by the same amount).
+    // Called xform because it's simple. Although we pass this function a full 3x3 matrix (column-major order),
+    // we only use three values from this matrix. The top-left value is taken as the scale, which is assumed
+    // to be uniform for x and y. Then we apply the x and y translations. @Hack.
     const scale = mat3[0];
     const translate = [mat3[6], mat3[7]];
 
     const x = scale*vec2[0] + translate[0];
     const y = scale*vec2[1] + translate[1];
+
     return [x, y];
 }
 
@@ -95,14 +98,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         //
         // Update variables.
         //
+
         const width  = Math.floor(document.body.clientWidth);
         const height = Math.floor(document.body.clientHeight);
 
         const proj = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
         {
             // Transform from pixel space to UV space. Flip the y-axis for top-left origin.
-            proj[0] =  2/width;   // X scale.
-            proj[4] = -2/height;  // Y scale.
+            proj[0] =  2/width;     // X scale.
+            proj[4] = -2/height;    // Y scale.
             proj[6] = -1;           // X translate.
             proj[7] =  1;           // Y translate.
         }
@@ -110,6 +114,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         //
         // Draw the page.
         //
+
         $$("canvas").forEach(canvas => {
             canvas.width  = width;
             canvas.height = height;

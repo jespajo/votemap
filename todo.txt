@@ -1,7 +1,3 @@
-
-Flip the Y-axis in native Polygon and Path types.
-
-
 Import old data into new Postgres database:
     Australian coastline shapefiles
     Electoral districts shapefiles

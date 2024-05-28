@@ -1,3 +1,6 @@
+#ifndef PG_H_INCLUDED
+#define PG_H_INCLUDED
+
 #include "libpq-fe.h"
 
 #include "shapes.h"
@@ -19,3 +22,5 @@ enum WKB_Geometry_Type {
 
 Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query);
 Path_array *query_paths(PGconn *db, Memory_Context *context, char *query);
+
+#endif // PG_H_INCLUDED

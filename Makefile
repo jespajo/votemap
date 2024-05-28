@@ -35,7 +35,7 @@ lflags += -lpthread
 all:  bin/main
 all:  tags
 
-## Run targets:
+# Run targets:
 all:  ; bin/main
 
 
