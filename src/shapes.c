@@ -28,7 +28,7 @@ bool points_are_clockwise(Vector2 *points, s64 num_points)
 bool is_polygon(Polygon *polygon)
 // See Polygon typedef.
 {
-    if (polygon->count < 0)  return false;
+    if (polygon->count < 0)  return false; // @Fixme: Should this be <= ?
     for (s64 i = 0; i < polygon->count; i++) {
         Path *ring = &polygon->data[i];
         bool clockwise = points_are_clockwise(ring->data, ring->count);

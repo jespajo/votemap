@@ -21,8 +21,6 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
         char *data = PQgetvalue(result, row, column);
         char *d = data;
 
-        Polygon polygon = {.context = context};
-
         u8 byte_order = *d;
         d += sizeof(u8);
         assert(byte_order == WKB_LITTLE_ENDIAN);
@@ -42,6 +40,8 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
         }
 
         while (num_polygons--) {
+            Polygon polygon = {.context = context};
+
             if (wkb_type == WKB_MULTIPOLYGON) {
                 // It's a multipolygon. We need to parse the byte order and data type again for each polygon.
                 // This is ugly, particularly the reuse of the byte_order and wkb_type variables. @Cleanup.

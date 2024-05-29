@@ -4,13 +4,6 @@
 #include "draw.h"
 #include "pg.h"
 
-void add_verts(Vertex_array *array, Vertex_array *appendage)
-{
-    for (s64 i = 0; i < appendage->count; i++) {
-        *Add(array) = appendage->data[i];
-    }
-}
-
 int main()
 {
     Memory_Context *ctx = new_context(NULL);
@@ -21,9 +14,9 @@ int main()
     Vertex_array *verts = NewArray(verts, ctx);
 
     Polygon_array *polygons = query_polygons(db, ctx,
-        "   SELECT ST_AsBinary(ST_ForcePolygonCCW(ST_Simplify(geom, 3000))) AS polygon      "
-        "   FROM aust_coast                                                                 "
-        "   where feat_code = 'mainland'                                                    "
+        "   SELECT ST_AsBinary(ST_ForcePolygonCCW(ST_Simplify(ST_Union(geom), 3000))) AS polygon    "
+        "   FROM aust_coast                                                                         "
+        "   WHERE feat_code = 'mainland'                                                            "
         );
     for (s64 i = 0; i < polygons->count; i++) {
         float   alpha  = 0.75;

@@ -52,3 +52,10 @@ Vertex_array *draw_polygon(Polygon *polygon, Vector4 colour, Memory_Context *con
 
     return vertices;
 }
+
+void add_verts(Vertex_array *array, Vertex_array *appendage)
+{
+    for (s64 i = 0; i < appendage->count; i++) {
+        *Add(array) = appendage->data[i];
+    }
+}
