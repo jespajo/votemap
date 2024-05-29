@@ -1,3 +1,10 @@
-Import old data into new Postgres database:
-    Australian coastline shapefiles
-    Electoral districts shapefiles
+Add electoral districts shapefiles to database
+Add XML vote data to database
+
+Figure out URL path structure
+    bounds
+    zoom level
+    layer identifier
+Figure out how many zoom levels you want to have
+
+Turn main() into a CGI script
