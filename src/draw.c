@@ -1,3 +1,5 @@
+#include <math.h>
+
 #include "draw.h"
 
 Vertex_array *draw_path(Path *path, float width, Vector4 colour, Memory_Context *context)
@@ -13,16 +15,37 @@ Vertex_array *draw_path(Path *path, float width, Vector4 colour, Memory_Context 
         float *p = path->data[i].v;
         float *q = path->data[i+1].v;
 
-        //
-        // @Temporary: Draw lines as diamonds.
-        //
-        *Add(vertices) = (Vertex){p[0],       p[1],  r, g, b, a};
-        *Add(vertices) = (Vertex){q[0],       q[1],  r, g, b, a};
-        *Add(vertices) = (Vertex){p[0]+width, p[1],  r, g, b, a};
+        float dx = q[0] - p[0];
+        float dy = q[1] - p[1];
 
-        *Add(vertices) = (Vertex){q[0],       q[1],  r, g, b, a};
-        *Add(vertices) = (Vertex){p[0]+width, p[1],  r, g, b, a};
-        *Add(vertices) = (Vertex){q[0]+width, q[1],  r, g, b, a};
+        // Find the four corners of the rectangle.
+        Vector2 p1, p2, q1, q2;
+        if (dx == 0) {
+            p1 = (Vector2){p[0] - width/2, p[1]};
+            p2 = (Vector2){p[0] + width/2, p[1]};
+            q1 = (Vector2){q[0] - width/2, q[1]};
+            q2 = (Vector2){q[0] + width/2, q[1]};
+        } else {
+            float slope = dy/dx;
+            float theta = atanf(slope);
+
+            float x_offset = (width/2)*sinf(theta);
+            float y_offset = (width/2)*cosf(theta);
+
+            p1 = (Vector2){p[0] - x_offset, p[1] + y_offset};
+            p2 = (Vector2){p[0] + x_offset, p[1] - y_offset};
+            q1 = (Vector2){q[0] - x_offset, q[1] + y_offset};
+            q2 = (Vector2){q[0] + x_offset, q[1] - y_offset};
+        }
+
+        // Add the vertices.
+        *Add(vertices) = (Vertex){p1.v[0], p1.v[1],  r, g, b, a};
+        *Add(vertices) = (Vertex){p2.v[0], p2.v[1],  r, g, b, a};
+        *Add(vertices) = (Vertex){q1.v[0], q1.v[1],  r, g, b, a};
+
+        *Add(vertices) = (Vertex){q1.v[0], q1.v[1],  r, g, b, a};
+        *Add(vertices) = (Vertex){q2.v[0], q2.v[1],  r, g, b, a};
+        *Add(vertices) = (Vertex){p2.v[0], p2.v[1],  r, g, b, a};
     }
 
     return vertices;
