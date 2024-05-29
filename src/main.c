@@ -20,7 +20,7 @@ int main()
         );
     for (s64 i = 0; i < polygons->count; i++) {
         float   alpha  = 0.75;
-        Vector4 colour = {frand(), frand(), frand(), alpha};
+        Vector4 colour = {0.95, 0.95, 0.95, 1.0}; // Land colour: off-white.
 
         Vertex_array *polygon_verts = draw_polygon(&polygons->data[i], colour, ctx);
 

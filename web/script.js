@@ -124,7 +124,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         {
             gl.viewport(0, 0, width, height);
 
-            gl.clearColor(0.0, 0.0, 0.0, 1.0);
+            gl.clearColor(0.75, 0.75, 0.75, 1.0); // Background colour (same as water): light grey.
             gl.clear(gl.COLOR_BUFFER_BIT);
 
             gl.useProgram(program);
@@ -139,15 +139,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // 2D canvas:
         {
-            const aust = xform([254405, 2772229], view);
-
             ui.clearRect(0, 0, width, height);
 
             // Draw a square in the centre of Australia.
             {
+                const austCentre = xform([254405, 2772229], view);
+
                 const size = 10;
                 ui.fillStyle = 'red';
-                ui.fillRect(aust[0]-size/2, aust[1]-size/2, size, size);
+                ui.fillRect(austCentre[0]-size/2, austCentre[1]-size/2, size, size);
             }
 
             // Draw a border.
@@ -202,11 +202,32 @@ document.addEventListener("DOMContentLoaded", async () => {
         mouseY = event.clientY;
     });
 
+    // When the page loads, fit Australia on the screen.
+    {
+        const austBox = {x1: -1863361, y1: 1168642, x2: 2087981, y2: 4840595};
+
+        const austWidth  = austBox.x2 - austBox.x1;
+        const austHeight = austBox.y2 - austBox.y1;
+
+        const screenWidth  = document.body.clientWidth;
+        const screenHeight = document.body.clientHeight;
+
+        const austRatio   = austWidth/austHeight;
+        const screenRatio = screenWidth/screenHeight;
+
+        const scale = (austRatio < screenRatio)
+            ? 0.9*(screenHeight/austHeight) // The screen is wider than Australia.
+            : 0.9*(screenWidth/austWidth);  // The screen is taller than Australia.
+        view[0] = view[4] = scale;
+
+        const translateX = -scale*austBox.x1 + (screenWidth - scale*austWidth)/2;
+        const translateY = -scale*austBox.y1 + (screenHeight - scale*austHeight)/2;
+        view[6] = translateX;
+        view[7] = translateY;
+    }
+
     // For debugging.
     window.view = view;
     window.vertices = vertices;
     window.ui = ui;
-
-    // @Temporary. Whatever the first vertex is---put it in the top-left corner of the screen.
-    view[6]=-vertices[0]; view[7]=-vertices[1];
 });
