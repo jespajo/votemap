@@ -55,6 +55,9 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
                     u32 num_rings;  memcpy(&num_rings, d, sizeof(u32));
                     d += sizeof(u32);
 
+                    // Ignore polygons without any rings.
+                    if (!num_rings)  continue;
+
                     for (u32 ring_index = 0; ring_index < num_rings; ring_index += 1) {
                         Path ring = {.context = context};
 
@@ -75,6 +78,9 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
                             };
                         }
 
+                        // Ensure the first ring is counter-clockwise and subsequent rings are clockwise.
+                        if (!ring_index ^ !points_are_clockwise(ring.data, ring.count))  reverse_array(&ring);
+
                         *Add(&polygon) = ring;
                     }
 
@@ -85,7 +91,7 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
             }
         }
 
-        // Check that the number of bytes parsed by this function is equal to the Postgres reported size.
+        // Check the number of bytes parsed is equal to the Postgres-reported size of the geometry column.
         assert(d - data == num_bytes);
     }
 
@@ -100,15 +106,18 @@ Path_array *query_paths(PGconn *db, Memory_Context *context, char *query)
     PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
     if (PQresultStatus(result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
 
-    int num_tuples = PQntuples(result);
-    if (num_tuples == 0)  return QueryError("A query for paths returned no results.");
+    int num_rows = PQntuples(result);
+    if (num_rows == 0)  return QueryError("A query for paths returned no results.");
 
     int column = PQfnumber(result, "path");
     if (column < 0)  return QueryError("We couldn't find a \"path\" column in the results.");
 
     Path_array *paths = NewArray(paths, context);
 
-    for (int row = 0; row < num_tuples; row++) {
+    for (int row = 0; row < num_rows; row++) {
+        int num_bytes = PQgetlength(result, row, column);
+        if (!num_bytes)  continue;
+
         char *data = PQgetvalue(result, row, column);
         char *d = data;
 
@@ -140,9 +149,8 @@ Path_array *query_paths(PGconn *db, Memory_Context *context, char *query)
         }
         *Add(paths) = path;
 
-        // Check that the number of bytes parsed by this function is equal to the Postgres reported size.
-        s64 num_bytes_parsed = d - data;
-        assert(num_bytes_parsed == PQgetlength(result, row, column));
+        // Check the number of bytes parsed is equal to the Postgres-reported size of the geometry column.
+        assert(d - data == num_bytes);
     }
 
     PQclear(result);

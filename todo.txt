@@ -1,5 +1,21 @@
-Add electoral districts shapefiles to database
-Add XML vote data to database
+Add electoral district shapefiles to database
+Don't let Voronoi polygons cross electoral district boundaries
+
+Add zoom control to mobile
+Add rotation to mobile
+
+Add JSON module to src/
+Output canvas markup in JSON format and draw it on screen
+
+Add XML vote data/election info to database
+
+Create materialised views for efficient access to the XML data
+    tables:
+        booths
+        districts
+        candidates
+        votes (first preferences)
+        votes (two-party-preferred)
 
 Figure out URL path structure
     bounds

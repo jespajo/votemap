@@ -43,43 +43,48 @@ void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memor
     return data;
 }
 
-
-char_array load_text_file(char *file_name, Memory_Context *context)
+char_array *load_text_file(char *file_name, Memory_Context *context)
 {
-    char_array buffer = {.context = context};
+    char_array *buffer = NewArray(buffer, context);
 
     FILE *file = fopen(file_name, "r");
-    assert(file || !"Couldn't open file");
+    if (!file) {
+        Error("Couldn't open file %s.", file_name);
+        return NULL;
+    }
 
     while (true) {
         int c = fgetc(file);
         if (c == EOF)  break;
 
         // @Memory: This doubles the buffer when needed.
-        *Add(&buffer) = (char)c;
+        *Add(buffer) = (char)c;
     }
 
-    *Add(&buffer) = '\0';
-    buffer.count -= 1;
+    *Add(buffer) = '\0';
+    buffer->count -= 1;
 
     fclose(file);
 
     return buffer;
 }
 
-u8_array load_binary_file(char *file_name, Memory_Context *context)
+u8_array *load_binary_file(char *file_name, Memory_Context *context)
 {
-    u8_array buffer = {.context = context};
+    u8_array *buffer = NewArray(buffer, context);
 
     FILE *file = fopen(file_name, "rb");
-    assert(file || !"Couldn't open file");
+    if (!file) {
+        Error("Couldn't open file %s.", file_name);
+        return NULL;
+    }
 
     while (true) {
         int c = fgetc(file);
         if (c == EOF)  break;
 
         // @Memory: This doubles the buffer when needed.
-        *Add(&buffer) = (u8)c;
+        *Add(buffer) = (u8)c;
     }
 
     fclose(file);
@@ -95,4 +100,33 @@ void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
     assert(num_chars_written > 0);
 
     fclose(file);
+}
+
+void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_Context *context)
+// Reverse an array's data in place.
+{
+    assert(data);
+    assert(context);
+
+    // We can't reverse arrays with 0 or 1 elements.
+    if (count <= 1)  return;
+
+    // We need a temporary buffer the size of one element in the array. If the array has any spare
+    // space after its data, we'll use that. If not, we'll allocate a temporary buffer, though we
+    // won't bother to free it later. @Memory
+    void *tmp;
+    if (count < limit)  tmp = (u8 *)data + count*unit_size;
+    else                tmp = alloc(context, 1, unit_size);
+
+    for (s64 i = 0; i < count/2; i++) {
+        void *first = (u8 *)data + i*unit_size;
+        void *last  = (u8 *)data + (count-1-i)*unit_size;
+
+        memcpy(tmp,   first, unit_size);
+        memcpy(first, last,  unit_size);
+        memcpy(last,  tmp,   unit_size);
+    }
+
+    // This is not necessary, but may help prevent confusion when debugging.
+    memset(tmp, 0, unit_size);
 }

@@ -13,55 +13,18 @@ int main()
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    // Draw land.
-    Polygon_array *land_polygons = query_polygons(db, ctx,
-        "   SELECT ST_AsBinary(ST_ForcePolygonCCW(ST_Simplify(ST_Union(geom), 3000))) AS polygon    "
-        "   FROM aust_coast                                                                         "
-        "   WHERE feat_code = 'mainland'                                                            "
-        );
-    for (s64 i = 0; i < land_polygons->count; i++) {
-        Vector4 colour = {0.95, 0.95, 0.95, 1.0}; // Land colour: off-white.
+    // Draw a Voronoi diagram of polling booth locations in Australia.
 
-        Vertex_array *polygon_verts = draw_polygon(&land_polygons->data[i], colour, ctx);
+    char_array *query = load_text_file("queries/booths.sql", ctx);
 
-        add_verts(verts, polygon_verts);
-    }
+    Polygon_array *polygons = query_polygons(db, ctx, query->data);
 
-    // Draw lakes.
-    Polygon_array *water_polygons = query_polygons(db, ctx,
-        "   SELECT *                                                                        "
-        "   FROM (                                                                          "
-        "       SELECT ST_AsBinary(ST_ForcePolygonCCW(ST_Simplify(way, 3000))) AS polygon   "
-        "       FROM planet_osm_polygon                                                     "
-        "       WHERE \"natural\" = 'water'                                                 "
-        "         AND way_area > 1000000                                                    "
-        "     ) t                                                                           "
-        "   WHERE polygon IS NOT NULL                                                       "
-        );
-    for (s64 i = 0; i < water_polygons->count; i++) {
-        Vector4 colour = {0.75, 0.75, 0.75, 1.0}; // Water colour: light grey.
+    for (s64 i = 0; i < polygons->count; i++) {
+        Vector4 colour = {frand(), frand(), frand(), 1.0};
 
-        Vertex_array *polygon_verts = draw_polygon(&water_polygons->data[i], colour, ctx);
+        Vertex_array *polygon_verts = draw_polygon(&polygons->data[i], colour, ctx);
 
         add_verts(verts, polygon_verts);
-    }
-
-    // Draw rivers.
-    Path_array *river_paths = query_paths(db, ctx,
-        " select *                                               "
-        " from (                                                 "
-        "     select st_asbinary(st_simplify(way, 3000)) as path "
-        "     from planet_osm_line                               "
-        "     where waterway = 'river'                           "
-        "   ) t                                                  "
-        " where path is not null                                 "
-        );
-    for (s64 i = 0; i < river_paths->count; i++) {
-        Vector4 colour = {0.75, 0.75, 0.75, 1.0}; // Water colour: light grey.
-
-        Vertex_array *path_verts = draw_path(&river_paths->data[i], 100, colour, ctx);
-
-        add_verts(verts, path_verts);
     }
 
     write_array_to_file(verts, "/home/jpj/src/webgl/bin/vertices");
