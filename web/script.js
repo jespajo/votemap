@@ -178,42 +178,65 @@ document.addEventListener("DOMContentLoaded", async () => {
         const width  = Math.floor(document.body.clientWidth);
         const height = Math.floor(document.body.clientHeight);
 
-        // Handle user events on the map.
+        // Handle mouse/touch events on the map.
         {
-            const [ptr0, ptr1]   = input.pointers;
-            const [lock0, lock1] = map.pointerLocks;
-            const ct             = map.currentTransform;
+            const ptr  = input.pointers;
+            const lock = map.pointerLocks;
+            const ct   = map.currentTransform;
 
-            if (ptr0.down) {
-                if (!lock0.locked) {
-                    lock0.locked = true;
+            for (let i = 0; i < 2; i++) {
+                if (ptr[i].down) {
+                    if (!lock[i].locked) {
+                        lock[i].locked = true;
 
-                    lock0.x = (ptr0.x - ct.translate.x)/ct.scale;
-                    lock0.y = (ptr0.y - ct.translate.y)/ct.scale;
+                        lock[i].x = (ptr[i].x - ct.translate.x)/ct.scale;
+                        lock[i].y = (ptr[i].y - ct.translate.y)/ct.scale;
+                    }
+                } else {
+                    lock[i].locked = false;
                 }
+            }
+
+            if (lock[0].locked && lock[1].locked) {
+                // Two fingers are currently moving the map.
+                const mapDistanceX = lock[1].x - lock[0].x;
+                const mapDistanceY = lock[1].y - lock[0].y;
+                const mapDistance  = Math.hypot(mapDistanceX, mapDistanceY);
+
+                const screenDistanceX = ptr[1].x - ptr[0].x;
+                const screenDistanceY = ptr[1].y - ptr[0].y;
+                const screenDistance  = Math.hypot(screenDistanceX, screenDistanceY);
+
+                ct.scale = screenDistance/mapDistance;
+
+                ct.translate.x = ptr[0].x - ct.scale*lock[0].x;
+                ct.translate.y = ptr[0].y - ct.scale*lock[0].y;
             } else {
-                lock0.locked = false;
+                for (let i = 0; i < 2; i++) {
+                    if (lock[i].locked && !lock[1-i].locked) {
+                        ct.translate.x += ptr[i].x - (ct.scale*lock[i].x + ct.translate.x); // @Cleanup: Wait, do we need translate twice here? Can we use = instead of += ?
+                        ct.translate.y += ptr[i].y - (ct.scale*lock[i].y + ct.translate.y);
+                    }
+                }
             }
-
-            if (lock0.locked) {
-                ct.translate.x += ptr0.x - (ct.scale*lock0.x + ct.translate.x);
-                ct.translate.y += ptr0.y - (ct.scale*lock0.y + ct.translate.y);
-            }
-
-
-            if (input.scroll) {
-                const originX = (ptr0.x - ct.translate.x)/ct.scale;
-                const originY = (ptr0.y - ct.translate.y)/ct.scale;
-
-                ct.scale *= (input.scroll < 0) ? 1.5 : 0.75;
-
-                ct.translate.x = ptr0.x - ct.scale*originX;
-                ct.translate.y = ptr0.y - ct.scale*originY;
-
-                // We've consumed the scroll!
-                input.scroll = 0;
-            } 
         }
+
+        // Handle scroll.
+        if (input.scroll) {
+            const mouse = input.pointers[0];
+            const ct    = map.currentTransform;
+
+            const originX = (mouse.x - ct.translate.x)/ct.scale;
+            const originY = (mouse.y - ct.translate.y)/ct.scale;
+
+            ct.scale *= (input.scroll < 0) ? 1.5 : 0.75;
+
+            ct.translate.x = mouse.x - ct.scale*originX;
+            ct.translate.y = mouse.y - ct.scale*originY;
+
+            // We've consumed the scroll!
+            input.scroll = 0;
+        } 
 
         const proj = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
         {
