@@ -99,52 +99,57 @@ document.addEventListener("DOMContentLoaded", async () => {
     const input = {
         // pointer[0] is the mouse or the first finger to touch the screen. pointer[1] is the second finger.
         pointers: [ // X and Y are in screen coordinates.
-            {down: false, x: 0, y: 0},
-            {down: false, x: 0, y: 0, id: 0},
+            {id: 0, down: false, x: 0, y: 0},
+            {id: 0, down: false, x: 0, y: 0},
         ], 
 
         // +1 for scroll down, -1 for scroll up. @Todo: Scroll sensitivity? Horizontal scroll?
         scroll: 0,
     };
     window.addEventListener("pointerdown", event => {
-        const [ptr0, ptr1] = input.pointers;
+        for (let i = 0; i < 2; i++) {
+            const ptr = input.pointers[i];
 
-        if (event.isPrimary) {
-            // The user has pressed the mouse or touched the screen with one finger.
-            ptr0.down = true;
-            ptr0.x    = event.clientX;
-            ptr0.y    = event.clientY;
-        } else if (!ptr1.down) {
-            // The user has touched the screen with a second finger. (If ptr1 had been down, this
-            // event would be a third finger, which we ignore.)
-            ptr1.id   = event.pointerId;
-            ptr1.down = true;
-            ptr1.x    = event.clientX;
-            ptr1.y    = event.clientY;
+            if (ptr.down)  continue;
+
+            ptr.id   = event.pointerId;
+            ptr.down = true;
+            ptr.x    = event.clientX;
+            ptr.y    = event.clientY;
+
+            break;
         }
     });
     window.addEventListener("pointerup", event => {
-        const [ptr0, ptr1] = input.pointers;
+        for (let i = 0; i < 2; i++) {
+            const ptr = input.pointers[i];
 
-        if (event.isPrimary) {
-            ptr0.down = false;
-            ptr0.x    = event.clientX;
-            ptr0.y    = event.clientY;
-        } else if (ptr1.down && ptr1.id == event.pointerId) {
-            ptr1.down = false;
-            ptr1.x    = event.clientX;
-            ptr1.y    = event.clientY;
+            if (ptr.id !== event.pointerId)  continue;
+
+            ptr.down = false;
+            ptr.x    = event.clientX; // @Cleanup: Necessary?
+            ptr.y    = event.clientY; // @Cleanup: Necessary?
+
+            break;
         }
     });
     window.addEventListener("pointermove", event => {
         const [ptr0, ptr1] = input.pointers;
 
-        if (event.isPrimary) {
+        if (!ptr0.down && !ptr1.down) {
             ptr0.x = event.clientX;
             ptr0.y = event.clientY;
-        } else if (ptr1.down && ptr1.id == event.pointerId) {
-            ptr1.x = event.clientX;
-            ptr1.y = event.clientY;
+        } else {
+            for (let i = 0; i < 2; i++) {
+                const ptr = input.pointers[i];
+
+                if (ptr.id !== event.pointerId)  continue;
+
+                ptr.x = event.clientX;
+                ptr.y = event.clientY;
+
+                break;
+            }
         }
     });
     window.addEventListener("wheel", event => {
@@ -214,8 +219,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             } else {
                 for (let i = 0; i < 2; i++) {
                     if (lock[i].locked && !lock[1-i].locked) {
-                        ct.translate.x += ptr[i].x - (ct.scale*lock[i].x + ct.translate.x); // @Cleanup: Wait, do we need translate twice here? Can we use = instead of += ?
-                        ct.translate.y += ptr[i].y - (ct.scale*lock[i].y + ct.translate.y);
+                        ct.translate.x = ptr[i].x - ct.scale*lock[i].x;
+                        ct.translate.y = ptr[i].y - ct.scale*lock[i].y;
+
+                        break;
                     }
                 }
             }
