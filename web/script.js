@@ -85,8 +85,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     const u_proj = gl.getUniformLocation(program, "u_proj"); // Transforms pixel space to UV space. Only changes when the screen dimensions change.
     const u_view = gl.getUniformLocation(program, "u_view"); // Applies current pan/zoom. User-controlled.
 
-    const view = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
-
     let vertices; {
         const response = await fetch("../bin/vertices");
         const data     = await response.arrayBuffer();
@@ -94,13 +92,128 @@ document.addEventListener("DOMContentLoaded", async () => {
         vertices = new Float32Array(data);
     }
 
+    //
+    // Handle user input.
+    //
+
+    const input = {
+        // pointer[0] is the mouse or the first finger to touch the screen. pointer[1] is the second finger.
+        pointers: [ // X and Y are in screen coordinates.
+            {down: false, x: 0, y: 0},
+            {down: false, x: 0, y: 0, id: 0},
+        ], 
+
+        // +1 for scroll down, -1 for scroll up. @Todo: Scroll sensitivity? Horizontal scroll?
+        scroll: 0,
+    };
+    window.addEventListener("pointerdown", event => {
+        const [ptr0, ptr1] = input.pointers;
+
+        if (event.isPrimary) {
+            // The user has pressed the mouse or touched the screen with one finger.
+            ptr0.down = true;
+            ptr0.x    = event.clientX;
+            ptr0.y    = event.clientY;
+        } else if (!ptr1.down) {
+            // The user has touched the screen with a second finger. (If ptr1 had been down, this
+            // event would be a third finger, which we ignore.)
+            ptr1.id   = event.pointerId;
+            ptr1.down = true;
+            ptr1.x    = event.clientX;
+            ptr1.y    = event.clientY;
+        }
+    });
+    window.addEventListener("pointerup", event => {
+        const [ptr0, ptr1] = input.pointers;
+
+        if (event.isPrimary) {
+            ptr0.down = false;
+            ptr0.x    = event.clientX;
+            ptr0.y    = event.clientY;
+        } else if (ptr1.down && ptr1.id == event.pointerId) {
+            ptr1.down = false;
+            ptr1.x    = event.clientX;
+            ptr1.y    = event.clientY;
+        }
+    });
+    window.addEventListener("pointermove", event => {
+        const [ptr0, ptr1] = input.pointers;
+
+        if (event.isPrimary) {
+            ptr0.x = event.clientX;
+            ptr0.y = event.clientY;
+        } else if (ptr1.down && ptr1.id == event.pointerId) {
+            ptr1.x = event.clientX;
+            ptr1.y = event.clientY;
+        }
+    });
+    window.addEventListener("wheel", event => {
+        input.scroll = (event.deltaY < 0) ? -1 : 1;
+    }, {passive: true});
+
+    // Map state variables:
+    const map = {
+        currentTransform: {
+            scale:     1,
+            rotate:    0, // The angle, in radians, of a counter-clockwise rotation.
+            translate: {x: 0, y: 0},
+        },
+
+        // When the user presses their mouse down on the map, we lock the mouse position to its
+        // current location on the map. On a touchscreen, the user can use up to two fingers.
+        pointerLocks: [  // X and Y are in map coordinates.
+            {locked: false, x: 0, y: 0},
+            {locked: false, x: 0, y: 0},
+        ],
+    };
+
+    //
+    // The main loop (runs once per frame):
+    //
     ;(function step() {
         //
-        // Update variables.
+        // Update state.
         //
 
         const width  = Math.floor(document.body.clientWidth);
         const height = Math.floor(document.body.clientHeight);
+
+        // Handle user events on the map.
+        {
+            const [ptr0, ptr1]   = input.pointers;
+            const [lock0, lock1] = map.pointerLocks;
+            const ct             = map.currentTransform;
+
+            if (ptr0.down) {
+                if (!lock0.locked) {
+                    lock0.locked = true;
+
+                    lock0.x = (ptr0.x - ct.translate.x)/ct.scale;
+                    lock0.y = (ptr0.y - ct.translate.y)/ct.scale;
+                }
+            } else {
+                lock0.locked = false;
+            }
+
+            if (lock0.locked) {
+                ct.translate.x += ptr0.x - (ct.scale*lock0.x + ct.translate.x);
+                ct.translate.y += ptr0.y - (ct.scale*lock0.y + ct.translate.y);
+            }
+
+
+            if (input.scroll) {
+                const originX = (ptr0.x - ct.translate.x)/ct.scale;
+                const originY = (ptr0.y - ct.translate.y)/ct.scale;
+
+                ct.scale *= (input.scroll < 0) ? 1.5 : 0.75;
+
+                ct.translate.x = ptr0.x - ct.scale*originX;
+                ct.translate.y = ptr0.y - ct.scale*originY;
+
+                // We've consumed the scroll!
+                input.scroll = 0;
+            } 
+        }
 
         const proj = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
         {
@@ -109,6 +222,16 @@ document.addEventListener("DOMContentLoaded", async () => {
             proj[4] = -2/height;    // Y scale.
             proj[6] = -1;           // X translate.
             proj[7] =  1;           // Y translate.
+        }
+
+        const view = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
+        {
+            const {scale, rotate, translate} = map.currentTransform;
+
+            view[0] = scale;
+            view[4] = scale;
+            view[6] = translate.x;
+            view[7] = translate.y;
         }
 
         //
@@ -164,44 +287,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         window.requestAnimationFrame(step);
     })();
 
-    //
-    // Mouse/touch events.
-    //
-    window.addEventListener("wheel", event => {
-        const oldScale = view[0];
-        const newScale = view[0]*((event.deltaY > 0) ? 0.75 : 1.5);
-
-        const originX = (event.clientX - view[6])/oldScale;
-        const originY = (event.clientY - view[7])/oldScale;
-
-        view[0] = newScale;
-        view[4] = newScale;
-
-        view[6] = event.clientX - originX*newScale;
-        view[7] = event.clientY - originY*newScale;
-    }, {passive: true});
-
-    let dragging = false;
-    let mouseX = 0;
-    let mouseY = 0;
-    window.addEventListener("pointerdown", event => {
-        dragging = true;
-        mouseX = event.clientX;
-        mouseY = event.clientY;
-    });
-    window.addEventListener("pointerup", event => {
-        dragging = false;
-    });
-    window.addEventListener("pointermove", event => {
-        if (!dragging)  return;
-
-        view[6] += (event.clientX - mouseX);
-        view[7] += (event.clientY - mouseY);
-
-        mouseX = event.clientX;
-        mouseY = event.clientY;
-    });
-
     // When the page loads, fit Australia on the screen.
     {
         const austBox = {x1: -1863361, y1: 1168642, x2: 2087981, y2: 4840595};
@@ -215,19 +300,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         const austRatio   = austWidth/austHeight;
         const screenRatio = screenWidth/screenHeight;
 
-        const scale = (austRatio < screenRatio)
-            ? 0.9*(screenHeight/austHeight) // The screen is wider than Australia.
-            : 0.9*(screenWidth/austWidth);  // The screen is taller than Australia.
-        view[0] = view[4] = scale;
+        const ct = map.currentTransform;
 
-        const translateX = -scale*austBox.x1 + (screenWidth - scale*austWidth)/2;
-        const translateY = -scale*austBox.y1 + (screenHeight - scale*austHeight)/2;
-        view[6] = translateX;
-        view[7] = translateY;
+        if (austRatio < screenRatio) {
+            // The screen is wider than Australia.
+            ct.scale = 0.9*(screenHeight/austHeight);
+        } else {
+            // The screen is taller than Australia.
+            ct.scale = 0.9*(screenWidth/austWidth);  
+        }
+
+        ct.translate.x = -ct.scale*austBox.x1 + (screenWidth - ct.scale*austWidth)/2;
+        ct.translate.y = -ct.scale*austBox.y1 + (screenHeight - ct.scale*austHeight)/2;
     }
-
-    // For debugging.
-    window.view = view;
-    window.vertices = vertices;
-    window.ui = ui;
 });

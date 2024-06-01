@@ -1,8 +1,8 @@
-Add electoral district shapefiles to database
-Don't let Voronoi polygons cross electoral district boundaries
-
 Add zoom control to mobile
 Add rotation to mobile
+
+Add electoral district shapefiles to database
+Don't let Voronoi polygons cross electoral district boundaries
 
 Add JSON module to src/
 Output canvas markup in JSON format and draw it on screen
