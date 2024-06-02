@@ -34,37 +34,41 @@ const FRAGMENT_SHADER_TEXT = `
 `;
 
 function xform(transform, vec2) {
-    const {scale, rotate, translate} = transform;
+    const {scale, rotate, translateX, translateY} = transform;
     const [x0, y0] = vec2;
 
     const sin = Math.sin(rotate);
     const cos = Math.cos(rotate);
 
-    const x1 = scale*(x0*cos + y0*sin) + translate.x;
-    const y1 = scale*(y0*cos - x0*sin) + translate.y;
+    const x1 = scale*(x0*cos + y0*sin) + translateX;
+    const y1 = scale*(y0*cos - x0*sin) + translateY;
 
     return [x1, y1];
 }
 
 function inverseXform(transform, vec2) {
-    const {scale, rotate, translate} = transform;
+    const {scale, rotate, translateX, translateY} = transform;
     const [x0, y0] = vec2;
 
     const sin = Math.sin(rotate);
     const cos = Math.cos(rotate);
 
-    // @Todo: Simpler way!!
+    // @Todo: Simpler way?!?!
     const det = scale*scale*(cos*cos + sin*sin);
     if (det == 0)  throw new Error();
 
-    const x1 = x0 - translate.x;
-    const y1 = y0 - translate.y;
+    const x1 = x0 - translateX;
+    const y1 = y0 - translateY;
 
     // @Cleanup: Redundant scale on numerator and denom.
     const x2 = (scale/det)*(x1*cos - y1*sin);
     const y2 = (scale/det)*(x1*sin + y1*cos);
 
     return [x2, y2];
+}
+
+function lerp(a, b, t) {
+    return (1-t)*a + t*b;
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -180,9 +184,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Map state variables:
     const map = {
         currentTransform: {
-            scale:     1,
-            rotate:    0, // The angle, in radians, of a counter-clockwise rotation.
-            translate: {x: 0, y: 0},
+            scale:      1,
+            rotate:     0, // The angle, in radians, of a counter-clockwise rotation.
+            translateX: 0,
+            translateY: 0,
         },
 
         // When the user presses their mouse down on the map, we lock the mouse position to its
@@ -191,15 +196,29 @@ document.addEventListener("DOMContentLoaded", async () => {
             {locked: false, x: 0, y: 0},
             {locked: false, x: 0, y: 0},
         ],
+
+        // Members of the animations array might look like this:
+        //     {
+        //         target:     "scale",
+        //         startTime:  <time stamp>
+        //         endTime:    <time stamp>
+        //         start:      1.0,
+        //         end:        3.0,
+        //     }
+        animations: [],
     };
+
+    let currentTime = document.timeline.currentTime;
 
     //
     // The main loop (runs once per frame):
     //
-    ;(function step() {
+    ;(function step(time) {
         //
         // Update state.
         //
+        const timeDelta = time - currentTime;
+        currentTime = time;
 
         const width  = Math.floor(document.body.clientWidth);
         const height = Math.floor(document.body.clientHeight);
@@ -268,15 +287,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 const lockScreenCoords = xform(ct, [lock[0].x, lock[0].y]);
 
-                ct.translate.x += ptr[0].x - lockScreenCoords[0];
-                ct.translate.y += ptr[0].y - lockScreenCoords[1];
+                ct.translateX += ptr[0].x - lockScreenCoords[0];
+                ct.translateY += ptr[0].y - lockScreenCoords[1];
             } else {
                 for (let i = 0; i < 2; i++) {
                     if (lock[i].locked && !lock[1-i].locked) {
                         const lockScreenCoords = xform(ct, [lock[i].x, lock[i].y]);
 
-                        ct.translate.x += ptr[i].x - lockScreenCoords[0];
-                        ct.translate.y += ptr[i].y - lockScreenCoords[1];
+                        ct.translateX += ptr[i].x - lockScreenCoords[0];
+                        ct.translateY += ptr[i].y - lockScreenCoords[1];
 
                         break;
                     }
@@ -289,16 +308,63 @@ document.addEventListener("DOMContentLoaded", async () => {
             const mouse = input.pointers[0];
             const ct    = map.currentTransform;
 
-            const originX = (mouse.x - ct.translate.x)/ct.scale;
-            const originY = (mouse.y - ct.translate.y)/ct.scale;
+            const origin = inverseXform(ct, [mouse.x, mouse.y]);
 
-            ct.scale *= (input.scroll < 0) ? 1.5 : 0.75;
+            const newTransform = {
+                scale:      ct.scale * ((input.scroll < 0) ? 1.5 : 0.75),
+                rotate:     ct.rotate,
+                translateX: 0,
+                translateY: 0,
+            };
 
-            ct.translate.x = mouse.x - ct.scale*originX;
-            ct.translate.y = mouse.y - ct.scale*originY;
+            // @Naming: These variables. Call them something like "error", "correction", "offset"?
+            const originScreenCoords = xform(newTransform, origin);
+
+            newTransform.translateX += mouse.x - originScreenCoords[0];
+            newTransform.translateY += mouse.y - originScreenCoords[1];
+
+            // Remove any animations in progress. The effect of this is that if the user is
+            // scrolling really fast, they interrupt their own animations and the resulting zoom is
+            // slower when it should be faster. @Todo: Compound these scrolls somehow.
+            map.animations.length = 0;
+
+            for (const target of ["scale", "translateX", "translateY"]) {
+                const duration = 100;
+
+                const animation = {
+                    target:    target,
+                    startTime: currentTime,
+                    endTime:   currentTime + duration,
+                    start:     ct[target],
+                    end:       newTransform[target],
+                };
+                map.animations.unshift(animation);
+            }
 
             // We've consumed the scroll!
             input.scroll = 0;
+        }
+
+        // Compute animations.
+        {
+            // Iterate in reverse so we can delete items within the loop. Note that this means that
+            // if we want two animations to play in order, we should add them with Array.unshift().
+            for (let i = map.animations.length-1; i >= 0; i--) {
+                const {target, startTime, endTime, start, end} = map.animations[i];
+
+                // Skip animations that haven't started yet.
+                if (currentTime < startTime)  continue;
+
+                if (currentTime >= endTime) {
+                    map.currentTransform[target] = end;
+
+                    map.animations.splice(i, 1); // Remove animations once complete.
+                } else {
+                    const t = (currentTime - startTime)/(endTime - startTime);
+
+                    map.currentTransform[target] = lerp(start, end, t);
+                }
+            }
         }
 
         const proj = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
@@ -312,7 +378,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         const view = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
         {
-            const {scale, rotate, translate} = map.currentTransform;
+            const {scale, rotate, translateX, translateY} = map.currentTransform;
 
             const cos = Math.cos(rotate);
             const sin = Math.sin(rotate);
@@ -321,8 +387,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             view[1] = -scale*sin;
             view[3] = scale*sin;
             view[4] = scale*cos;
-            view[6] = translate.x;
-            view[7] = translate.y;
+            view[6] = translateX;
+            view[7] = translateY;
         }
 
         //
@@ -391,7 +457,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             ct.scale = 0.9*(screenWidth/austWidth);
         }
 
-        ct.translate.x = -ct.scale*austBox.x1 + (screenWidth - ct.scale*austWidth)/2;
-        ct.translate.y = -ct.scale*austBox.y1 + (screenHeight - ct.scale*austHeight)/2;
+        ct.translateX = -ct.scale*austBox.x1 + (screenWidth - ct.scale*austWidth)/2;
+        ct.translateY = -ct.scale*austBox.y1 + (screenHeight - ct.scale*austHeight)/2;
     }
+
+    // For debugging:
+    window.map = map;
 });
