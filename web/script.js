@@ -33,17 +33,38 @@ const FRAGMENT_SHADER_TEXT = `
     }
 `;
 
-function xform(vec2, mat3) {
-    // Called xform because it's simple. Although we pass this function a full 3x3 matrix (column-major order),
-    // we only use three values from this matrix. The top-left value is taken as the scale, which is assumed
-    // to be uniform for x and y. Then we apply the x and y translations. @Hack.
-    const scale = mat3[0];
-    const translate = [mat3[6], mat3[7]];
+function xform(transform, vec2) {
+    const {scale, rotate, translate} = transform;
+    const [x0, y0] = vec2;
 
-    const x = scale*vec2[0] + translate[0];
-    const y = scale*vec2[1] + translate[1];
+    const sin = Math.sin(rotate);
+    const cos = Math.cos(rotate);
 
-    return [x, y];
+    const x1 = scale*(x0*cos + y0*sin) + translate.x;
+    const y1 = scale*(y0*cos - x0*sin) + translate.y;
+
+    return [x1, y1];
+}
+
+function inverseXform(transform, vec2) {
+    const {scale, rotate, translate} = transform;
+    const [x0, y0] = vec2;
+
+    const sin = Math.sin(rotate);
+    const cos = Math.cos(rotate);
+
+    // @Todo: Simpler way!!
+    const det = scale*scale*(cos*cos + sin*sin);
+    if (det == 0)  throw new Error();
+
+    const x1 = x0 - translate.x;
+    const y1 = y0 - translate.y;
+
+    // @Cleanup: Redundant scale on numerator and denom.
+    const x2 = (scale/det)*(x1*cos - y1*sin);
+    const y2 = (scale/det)*(x1*sin + y1*cos);
+
+    return [x2, y2];
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -101,7 +122,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         pointers: [ // X and Y are in screen coordinates.
             {id: 0, down: false, x: 0, y: 0},
             {id: 0, down: false, x: 0, y: 0},
-        ], 
+        ],
 
         // +1 for scroll down, -1 for scroll up. @Todo: Scroll sensitivity? Horizontal scroll?
         scroll: 0,
@@ -194,8 +215,10 @@ document.addEventListener("DOMContentLoaded", async () => {
                     if (!lock[i].locked) {
                         lock[i].locked = true;
 
-                        lock[i].x = (ptr[i].x - ct.translate.x)/ct.scale;
-                        lock[i].y = (ptr[i].y - ct.translate.y)/ct.scale;
+                        const pointerMapCoords = inverseXform(ct, [ptr[i].x, ptr[i].y]);
+
+                        lock[i].x = pointerMapCoords[0];
+                        lock[i].y = pointerMapCoords[1];
                     }
                 } else {
                     lock[i].locked = false;
@@ -204,6 +227,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             if (lock[0].locked && lock[1].locked) {
                 // Two fingers are currently moving the map.
+
+                // Find scale:
                 const mapDistanceX = lock[1].x - lock[0].x;
                 const mapDistanceY = lock[1].y - lock[0].y;
                 const mapDistance  = Math.hypot(mapDistanceX, mapDistanceY);
@@ -214,13 +239,44 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 ct.scale = screenDistance/mapDistance;
 
-                ct.translate.x = ptr[0].x - ct.scale*lock[0].x;
-                ct.translate.y = ptr[0].y - ct.scale*lock[0].y;
+                // Find rotation:
+                // @Bug: The below calculations break when d == 0 and maybe other times?
+                let mapAngle; {
+                    const dx = mapDistanceX;
+                    const dy = mapDistanceY;
+                    const d  = mapDistance;
+
+                    if      (dy >= 0 && dx > 0)  mapAngle = Math.asin(dy/d);                 // Q1
+                    else if (dy >= 0 && dx < 0)  mapAngle = Math.acos(dy/d) + Math.PI/2;     // Q2
+                    else if (dy <= 0 && dx < 0)  mapAngle = Math.asin(-dy/d) + Math.PI;      // Q3
+                    else                         mapAngle = Math.acos(-dy/d) + 3*Math.PI/2;  // Q4
+                }
+                let screenAngle; {
+                    const dx = screenDistanceX;
+                    const dy = screenDistanceY;
+                    const d  = screenDistance;
+
+                    if      (dy >= 0 && dx > 0)  screenAngle = Math.asin(dy/d);                 // Q1
+                    else if (dy >= 0 && dx < 0)  screenAngle = Math.acos(dy/d) + Math.PI/2;     // Q2
+                    else if (dy <= 0 && dx < 0)  screenAngle = Math.asin(-dy/d) + Math.PI;      // Q3
+                    else                         screenAngle = Math.acos(-dy/d) + 3*Math.PI/2;  // Q4
+                }
+
+                ct.rotate = mapAngle - screenAngle;
+
+                // Find translation:
+
+                const lockScreenCoords = xform(ct, [lock[0].x, lock[0].y]);
+
+                ct.translate.x += ptr[0].x - lockScreenCoords[0];
+                ct.translate.y += ptr[0].y - lockScreenCoords[1];
             } else {
                 for (let i = 0; i < 2; i++) {
                     if (lock[i].locked && !lock[1-i].locked) {
-                        ct.translate.x = ptr[i].x - ct.scale*lock[i].x;
-                        ct.translate.y = ptr[i].y - ct.scale*lock[i].y;
+                        const lockScreenCoords = xform(ct, [lock[i].x, lock[i].y]);
+
+                        ct.translate.x += ptr[i].x - lockScreenCoords[0];
+                        ct.translate.y += ptr[i].y - lockScreenCoords[1];
 
                         break;
                     }
@@ -243,7 +299,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             // We've consumed the scroll!
             input.scroll = 0;
-        } 
+        }
 
         const proj = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
         {
@@ -258,8 +314,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         {
             const {scale, rotate, translate} = map.currentTransform;
 
-            view[0] = scale;
-            view[4] = scale;
+            const cos = Math.cos(rotate);
+            const sin = Math.sin(rotate);
+
+            view[0] = scale*cos;
+            view[1] = -scale*sin;
+            view[3] = scale*sin;
+            view[4] = scale*cos;
             view[6] = translate.x;
             view[7] = translate.y;
         }
@@ -296,21 +357,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             // Draw a square in the centre of Australia.
             {
-                const austCentre = xform([254405, 2772229], view);
+                const austCentre = xform(map.currentTransform, [254405, 2772229]);
 
                 const size = 10;
-                ui.fillStyle = 'red';
+                ui.fillStyle = 'blue';
                 ui.fillRect(austCentre[0]-size/2, austCentre[1]-size/2, size, size);
-            }
-
-            // Draw a border.
-            {
-                const size = 20;
-                ui.fillStyle = '#141414';
-                ui.fillRect(0, 0, width, size);
-                ui.fillRect(0, 0, size, height);
-                ui.fillRect(width-size, 0, size, height);
-                ui.fillRect(0, height-size, width, size);
             }
         }
 
@@ -337,7 +388,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             ct.scale = 0.9*(screenHeight/austHeight);
         } else {
             // The screen is taller than Australia.
-            ct.scale = 0.9*(screenWidth/austWidth);  
+            ct.scale = 0.9*(screenWidth/austWidth);
         }
 
         ct.translate.x = -ct.scale*austBox.x1 + (screenWidth - ct.scale*austWidth)/2;

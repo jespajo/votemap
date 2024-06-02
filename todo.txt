@@ -1,5 +1,4 @@
-Add zoom control to mobile
-Add rotation to mobile
+Animate mouse wheel zoom
 
 Add electoral district shapefiles to database
 Don't let Voronoi polygons cross electoral district boundaries
