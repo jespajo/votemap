@@ -1,4 +1,4 @@
-Animate mouse wheel zoom
+When animating scale, don't lerp(). Why does it look wrong?
 
 Add electoral district shapefiles to database
 Don't let Voronoi polygons cross electoral district boundaries

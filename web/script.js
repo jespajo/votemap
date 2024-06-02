@@ -71,6 +71,23 @@ function lerp(a, b, t) {
     return (1-t)*a + t*b;
 }
 
+function fitBox(inner, outer) {
+    // Return the transform (applied to the inner box) required to fit the inner box in the centre
+    // of the outer box. The boxes are of the form {x, y, width, height}.
+    const transform = {scale: 1, rotate: 0, translateX: 0, translateY: 0};
+
+    const innerRatio = inner.width/inner.height;
+    const outerRatio = outer.width/outer.height;
+
+    if (innerRatio < outerRatio)  transform.scale = outer.height/inner.height;
+    else                          transform.scale = outer.width/inner.width;
+
+    transform.translateX = -transform.scale*inner.x + (outer.width - transform.scale*inner.width)/2;
+    transform.translateY = -transform.scale*inner.y + (outer.height - transform.scale*inner.height)/2;
+
+    return transform;
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
     const gl = $("canvas#map").getContext("webgl");
     const ui = $("canvas#gui").getContext("2d");
@@ -130,6 +147,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // +1 for scroll down, -1 for scroll up. @Todo: Scroll sensitivity? Horizontal scroll?
         scroll: 0,
+
+        pressed: {}, // E.g. {a: true, b: true}. Hence this needs to be reset each frame.
     };
     window.addEventListener("pointerdown", event => {
         for (let i = 0; i < 2; i++) {
@@ -180,6 +199,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     window.addEventListener("wheel", event => {
         input.scroll = (event.deltaY < 0) ? -1 : 1;
     }, {passive: true});
+    window.addEventListener("keydown", event => {
+        input.pressed[event.key] = true; // @Temporary.
+    });
 
     // Map state variables:
     const map = {
@@ -284,7 +306,6 @@ document.addEventListener("DOMContentLoaded", async () => {
                 ct.rotate = mapAngle - screenAngle;
 
                 // Find translation:
-
                 const lockScreenCoords = xform(ct, [lock[0].x, lock[0].y]);
 
                 ct.translateX += ptr[0].x - lockScreenCoords[0];
@@ -338,11 +359,43 @@ document.addEventListener("DOMContentLoaded", async () => {
                     start:     ct[target],
                     end:       newTransform[target],
                 };
+
                 map.animations.unshift(animation);
             }
 
             // We've consumed the scroll!
             input.scroll = 0;
+        }
+
+        // Handle keyboard presses.
+        {
+            // When the user presses "0", fit Australia to the screen.
+            if (input.pressed["0"]) {
+                // Delete pending animations.
+                map.animations.length = 0;
+
+                // @Cleanup. Factor into "fit australia to screen" function? We currently also do this on page load.
+                const aust   = {x: -1863361, y: 1168642, width: 3951342, height: 3671953};
+                const screen = {x: 0,        y: 0,       width: width,   height: height};
+
+                const newTransform = fitBox(aust, screen);
+
+                for (const target of ["scale", "translateX", "translateY"]) {
+                    const duration = 500;
+
+                    const animation = {
+                        target:    target,
+                        startTime: currentTime,
+                        endTime:   currentTime + duration,
+                        start:     map.currentTransform[target],
+                        end:       newTransform[target],
+                    };
+
+                    map.animations.unshift(animation);
+                }
+
+                delete input.pressed["0"];
+            }
         }
 
         // Compute animations.
@@ -426,7 +479,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 const austCentre = xform(map.currentTransform, [254405, 2772229]);
 
                 const size = 10;
-                ui.fillStyle = 'blue';
+                ui.fillStyle = 'black';
                 ui.fillRect(austCentre[0]-size/2, austCentre[1]-size/2, size, size);
             }
         }
@@ -436,29 +489,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // When the page loads, fit Australia on the screen.
     {
-        const austBox = {x1: -1863361, y1: 1168642, x2: 2087981, y2: 4840595};
+        const aust   = {x: -1863361, y: 1168642, width: 3951342,                   height: 3671953};
+        const screen = {x: 0,        y: 0,       width: document.body.clientWidth, height: document.body.clientHeight};
 
-        const austWidth  = austBox.x2 - austBox.x1;
-        const austHeight = austBox.y2 - austBox.y1;
-
-        const screenWidth  = document.body.clientWidth;
-        const screenHeight = document.body.clientHeight;
-
-        const austRatio   = austWidth/austHeight;
-        const screenRatio = screenWidth/screenHeight;
-
-        const ct = map.currentTransform;
-
-        if (austRatio < screenRatio) {
-            // The screen is wider than Australia.
-            ct.scale = 0.9*(screenHeight/austHeight);
-        } else {
-            // The screen is taller than Australia.
-            ct.scale = 0.9*(screenWidth/austWidth);
-        }
-
-        ct.translateX = -ct.scale*austBox.x1 + (screenWidth - ct.scale*austWidth)/2;
-        ct.translateY = -ct.scale*austBox.y1 + (screenHeight - ct.scale*austHeight)/2;
+        map.currentTransform = fitBox(aust, screen);
     }
 
     // For debugging:
