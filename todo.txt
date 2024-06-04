@@ -1,9 +1,15 @@
+Front end: instead of lerp, interpolate in a way that "feels" linear.
+
 Front end: Fix scroll. Say we want scrolling from min zoom (whole of Australia view) to max zoom (1 pizel = 3 metres) to take about as long as it takes to scroll a moderately long blog post (4--8 times the height of the screen, say). Then actually use the event.deltaY property to figure out how far we've "scrolled" and set that as the target scale (lerp, basically).
 
 Set up caching at the C-program level of SQL results.
 
+Add electorate outlines to Voronoi map.
+
 Add JSON module to src/
-Output canvas markup in JSON format and draw it on screen
+Output canvas markup in JSON format and draw it on screen.
+
+Make Voronoi map visualise real vote data instead of random colours.
 
 Write up database schema plan docs/database.txt
 
@@ -36,7 +42,3 @@ Figure out how many zoom levels you want to have e.g.
     etc.
 
 Turn main() into a CGI script
-
-Front end: Change animations so that instead of scale, translate, etc., being separately targetable by an animation, each object in the animations array must have completely specified transforms for the start and end of its animation. This simplifies things a lot because then we don't need to worry about deleting elements from the array dynamically and other bullshit. Only one animation can run at a time. Each loop we just look at the first item in the array and pop off the front item when it's finished.
-
-Front end: instead of lerp, interpolate in a way that "feels" linear.

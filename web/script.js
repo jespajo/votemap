@@ -71,6 +71,10 @@ function lerp(a, b, t) {
     return (1-t)*a + t*b;
 }
 
+function clone(object) {
+    return JSON.parse(JSON.stringify(object));
+}
+
 function fitBox(inner, outer) {
     // Return the transform (applied to the inner box) required to fit the inner box in the centre
     // of the outer box. The boxes are of the form {x, y, width, height}.
@@ -219,14 +223,13 @@ document.addEventListener("DOMContentLoaded", async () => {
             {locked: false, x: 0, y: 0},
         ],
 
-        // Members of the animations array might look like this:
-        //     {
-        //         target:     "scale",
-        //         startTime:  <time stamp>
-        //         endTime:    <time stamp>
-        //         start:      1.0,
-        //         end:        3.0,
-        //     }
+        // Members of the animations array look like this:
+        //  {
+        //      startTime:  <time stamp>
+        //      endTime:    <time stamp>
+        //      start:      {scale: 1, rotate: 0, translateX: 0, translateY: 0},
+        //      end:        {scale: 3, rotate: 0, translateX: 0, translateY: 0},
+        //  }
         animations: [],
     };
 
@@ -349,19 +352,14 @@ document.addEventListener("DOMContentLoaded", async () => {
             // slower when it should be faster. @Todo: Compound these scrolls somehow.
             map.animations.length = 0;
 
-            for (const target of ["scale", "translateX", "translateY"]) {
-                const duration = 100;
+            const duration = 100;
 
-                const animation = {
-                    target:    target,
-                    startTime: currentTime,
-                    endTime:   currentTime + duration,
-                    start:     ct[target],
-                    end:       newTransform[target],
-                };
-
-                map.animations.unshift(animation);
-            }
+            map.animations.push({
+                startTime: currentTime,
+                endTime:   currentTime + duration,
+                start:     clone(ct),
+                end:       newTransform,
+            });
 
             // We've consumed the scroll!
             input.scroll = 0;
@@ -371,52 +369,51 @@ document.addEventListener("DOMContentLoaded", async () => {
         {
             // When the user presses "0", fit Australia to the screen.
             if (input.pressed["0"]) {
-                // Delete pending animations.
-                map.animations.length = 0;
-
-                // @Cleanup. Factor into "fit australia to screen" function? We currently also do this on page load.
+                // @Cleanup. We currently also do this on page load.
                 const aust   = {x: -1863361, y: 1168642, width: 3951342, height: 3671953};
                 const screen = {x: 0,        y: 0,       width: width,   height: height};
 
                 const newTransform = fitBox(aust, screen);
 
-                for (const target of ["scale", "translateX", "translateY"]) {
-                    const duration = 500;
+                // Delete any pending animations.
+                map.animations.length = 0;
 
-                    const animation = {
-                        target:    target,
-                        startTime: currentTime,
-                        endTime:   currentTime + duration,
-                        start:     map.currentTransform[target],
-                        end:       newTransform[target],
-                    };
+                const duration = 500;
 
-                    map.animations.unshift(animation);
-                }
+                map.animations.push({
+                    startTime: currentTime,
+                    endTime:   currentTime + duration,
+                    start:     clone(map.currentTransform),
+                    end:       newTransform,
+                });
 
+                // We've consumed this key press.
                 delete input.pressed["0"];
             }
         }
 
-        // Compute animations.
+        // Apply animations.
         {
-            // Iterate in reverse so we can delete items within the loop. Note that this means that
-            // if we want two animations to play in order, we should add them with Array.unshift().
-            for (let i = map.animations.length-1; i >= 0; i--) {
-                const {target, startTime, endTime, start, end} = map.animations[i];
+            while (map.animations.length) {
+                const {startTime, endTime, start, end} = map.animations[0];
+                const ct = map.currentTransform;
 
-                // Skip animations that haven't started yet.
-                if (currentTime < startTime)  continue;
+                if (currentTime < startTime)  break;
 
-                if (currentTime >= endTime) {
-                    map.currentTransform[target] = end;
+                const keys = ["scale", "rotate", "translateX", "translateY"];
 
-                    map.animations.splice(i, 1); // Remove animations once complete.
-                } else {
+                if (currentTime < endTime) {
                     const t = (currentTime - startTime)/(endTime - startTime);
 
-                    map.currentTransform[target] = lerp(start, end, t);
+                    for (const key of keys)  ct[key] = lerp(start[key], end[key], t);
+
+                    break; // The first animation is ongoing, so we don't need to check the next one.
                 }
+
+                // The first animation has completed.
+                for (const key of keys)  ct[key] = end[key];
+
+                map.animations.shift(); // Remove the first animation (and check the next one).
             }
         }
 
