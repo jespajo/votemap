@@ -94,6 +94,7 @@ function fitBox(inner, outer) {
 
 function combineBoxes(a, b) {
 // If one of the boxes contains the other, return the larger box (the actual object, not a copy of it).
+// @Cleanup: All this would be less tedious if we made common use of 'box' vs 'rect' and actually used boxes.
     const ax1 = a.x;
     const ay1 = a.y;
     const ax2 = a.x + a.width;
@@ -412,6 +413,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         screenBounds = {x: x1, y: y1, width: x2-x1, height: y2-y1};
                     }
 
+                    // @Todo: Expand the combined box by 10%.
                     const combined = combineBoxes(targetBox, screenBounds);
 
                     // It's a simple transition if one of the boxes contains the other.
@@ -420,20 +422,20 @@ document.addEventListener("DOMContentLoaded", async () => {
                     if (simple) {
                         const duration = 1000;
 
-                        const screen   = {x: 0, y: 0, width, height};
+                        const screen = {x: 0, y: 0, width, height};
+                        const newTransform = fitBox(targetBox, screen);
 
                         map.animations.length = 0;
                         map.animations.push({
                             startTime: currentTime,
                             endTime:   currentTime + duration,
                             start:     clone(map.currentTransform),
-                            end:       fitBox(targetBox, screen),
+                            end:       newTransform,
                         });
                     } else {
                         const durations = [1000, 1000];
 
                         const screen = {x: 0, y: 0, width, height};
-
                         const transform1 = fitBox(combined, screen);
 
                         map.animations.length = 0;
@@ -451,7 +453,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         });
                     }
 
-                    // We've consumed this key press.
+                    // We've consumed this key press. @Cleanup: Clear this per frame.
                     delete input.pressed[key];
                 }
             }
@@ -465,17 +467,32 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 if (currentTime < startTime)  break;
 
-                const keys = ["scale", "rotate", "translateX", "translateY"];
-
                 if (currentTime < endTime) {
+                    const keys = ["rotate", "translateX", "translateY"];
+
                     const t = (currentTime - startTime)/(endTime - startTime);
 
-                    for (const key of keys)  ct[key] = lerp(start[key], end[key], t);
+                    if (end.scale === start.scale) {
+                        keys.push("scale");
+                        for (const key of keys)  ct[key] = lerp(start[key], end[key], t);
+                    } else {
+                        // @Speed: Store exp0 and exp1 on the animation object.
+                        const exp0 = Math.log2(start.scale);
+                        const exp1 = Math.log2(end.scale);
+                        const exp  = lerp(exp0, exp1, t);
+
+                        ct.scale = Math.pow(2, exp);
+
+                        const t2 = (ct.scale - start.scale)/(end.scale - start.scale);
+
+                        for (const key of keys)  ct[key] = lerp(start[key], end[key], t2);
+                    }
 
                     break; // The first animation is ongoing, so we don't need to check the next one.
                 }
 
                 // The first animation has completed.
+                const keys = ["scale", "rotate", "translateX", "translateY"];
                 for (const key of keys)  ct[key] = end[key];
 
                 map.animations.shift(); // Remove the first animation (and check the next one).
@@ -538,11 +555,33 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             // Draw a square in the centre of Australia.
             {
-                const austCentre = xform(map.currentTransform, [254405, 2772229]);
-
                 const size = 10;
+                const austCentre = xform(map.currentTransform, [254405, 2772229]);
                 ui.fillStyle = 'black';
                 ui.fillRect(austCentre[0]-size/2, austCentre[1]-size/2, size, size);
+            }
+
+            // Draw the map's current transform.
+            {
+                const textHeight = 16;
+                ui.font = textHeight + 'px sans serif';
+
+                let textY = height - textHeight;
+
+                for (const target of ["translateY", "translateX", "rotate", "scale"]) {
+                    const label = target + ': ' + map.currentTransform[target];
+
+                    const textWidth = 200;
+                    const textX = width - textWidth;
+
+                    ui.fillStyle = 'rgba(255,255,255,0.9)';
+                    ui.fillRect(textX, textY, textWidth, textHeight);
+
+                    ui.fillStyle = 'black';
+                    ui.fillText(label, textX, textY + textHeight - 4);
+
+                    textY -= textHeight;
+                }
             }
         }
 
