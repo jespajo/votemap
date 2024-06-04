@@ -1,25 +1,42 @@
-When animating scale, don't lerp(). Why does it look wrong?
+Front end: Fix scroll. Say we want scrolling from min zoom (whole of Australia view) to max zoom (1 pizel = 3 metres) to take about as long as it takes to scroll a moderately long blog post (4--8 times the height of the screen, say). Then actually use the event.deltaY property to figure out how far we've "scrolled" and set that as the target scale (lerp, basically).
 
-Add electoral district shapefiles to database
-Don't let Voronoi polygons cross electoral district boundaries
+Set up caching at the C-program level of SQL results.
 
 Add JSON module to src/
 Output canvas markup in JSON format and draw it on screen
 
-Add XML vote data/election info to database
+Write up database schema plan docs/database.txt
 
-Create materialised views for efficient access to the XML data
-    tables:
-        booths
-        districts
-        candidates
-        votes (first preferences)
-        votes (two-party-preferred)
+Upload XML files to database
+    polling booth info
+    candidate info
+    vote data
+    election info
+
+Create materialised views for efficient access to the XML data??
+    booths
+    districts
+    candidates
+    votes (first preferences)
+    votes (two-party-preferred)
 
 Figure out URL path structure
     bounds
     zoom level
     layer identifier
-Figure out how many zoom levels you want to have
+
+Figure out how many zoom levels you want to have e.g.
+    zoom level 0    320 px = 4000 km
+                      1 px = 12.5 km
+    zoom level 1      1 px =  6.3 km
+    zoom level 2      1 px =  3.1 km
+    zoom level 3      1 px =  1.6 km
+    zoom level 4      1 px =  780 m
+    zoom level 5      1 px =  390 m
+    etc.
 
 Turn main() into a CGI script
+
+Front end: Change animations so that instead of scale, translate, etc., being separately targetable by an animation, each object in the animations array must have completely specified transforms for the start and end of its animation. This simplifies things a lot because then we don't need to worry about deleting elements from the array dynamically and other bullshit. Only one animation can run at a time. Each loop we just look at the first item in the array and pop off the front item when it's finished.
+
+Front end: instead of lerp, interpolate in a way that "feels" linear.

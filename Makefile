@@ -8,12 +8,12 @@ cflags += -Wall -Werror
 cflags += -Wno-unused
 cflags += -std=c99 # The lack of -pedantic allows anonymous unions in structs.
 cflags += -g3
-#cflags += -O2
+cflags += -O2
 cflags += -MMD -MP
 cflags += -MT bin/$*.o
 cflags += -o $@
-cflags += -DDEBUG
-#cflags += -DNDEBUG
+#cflags += -DDEBUG
+cflags += -DNDEBUG
 cflags += -I/usr/include/postgresql
 cflags += $(fsan)
 
