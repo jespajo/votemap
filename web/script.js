@@ -76,8 +76,8 @@ function clone(object) {
 }
 
 function fitBox(inner, outer) {
-    // Return the transform (applied to the inner box) required to fit the inner box in the centre
-    // of the outer box. The boxes are of the form {x, y, width, height}.
+// Return the transform (applied to the inner box) required to fit the inner box in the centre
+// of the outer box. The boxes are of the form {x, y, width, height}.
     const transform = {scale: 1, rotate: 0, translateX: 0, translateY: 0};
 
     const innerRatio = inner.width/inner.height;
@@ -90,6 +90,33 @@ function fitBox(inner, outer) {
     transform.translateY = -transform.scale*inner.y + (outer.height - transform.scale*inner.height)/2;
 
     return transform;
+}
+
+function combineBoxes(a, b) {
+// If one of the boxes contains the other, return the larger box (the actual object, not a copy of it).
+    const ax1 = a.x;
+    const ay1 = a.y;
+    const ax2 = a.x + a.width;
+    const ay2 = a.y + a.height;
+
+    const bx1 = b.x;
+    const by1 = b.y;
+    const bx2 = b.x + b.width;
+    const by2 = b.y + b.height;
+
+    if (ax1 < bx1) {
+        if ((ay1 < by1) && (ax2 > bx2) && (ay2 > by2))  return a;
+    } else {
+        if ((by1 < ay1) && (bx2 > ax2) && (by2 > ay2))  return b;
+    }
+
+    const x = (ax1 < bx1) ? ax1 : bx1;
+    const y = (ay1 < by1) ? ay1 : by1;
+
+    const width  = ((ax2 > bx2) ? ax2 : bx2) - x;
+    const height = ((ay2 > by2) ? ay2 : by2) - y;
+
+    return {x, y, width, height};
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -367,28 +394,66 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // Handle keyboard presses.
         {
-            // When the user presses "0", fit Australia to the screen.
-            if (input.pressed["0"]) {
-                // @Cleanup. We currently also do this on page load.
-                const aust   = {x: -1863361, y: 1168642, width: 3951342, height: 3671953};
-                const screen = {x: 0,        y: 0,       width: width,   height: height};
+            // @Temporary: When the user presses certain numbers, animate the map to show different locations.
+            const aust = {x: -1863361, y: 1168642, width: 3951342, height: 3671953};
+            const melb = {x:  1140377, y: 4187714, width:    8624, height:    8663};
+            const syd  = {x:  1757198, y: 3827047, width:    5905, height:    7899};
 
-                const newTransform = fitBox(aust, screen);
+            const boxes = {'0': aust, '1': melb, '2': syd};
 
-                // Delete any pending animations.
-                map.animations.length = 0;
+            for (const key of Object.keys(boxes)) {
+                if (input.pressed[key]) {
+                    const targetBox = boxes[key];
 
-                const duration = 500;
+                    let screenBounds; { // Get the screen in map coordinates.
+                        const [x1, y1] = inverseXform(map.currentTransform, [0, 0]);
+                        const [x2, y2] = inverseXform(map.currentTransform, [width, height]);
 
-                map.animations.push({
-                    startTime: currentTime,
-                    endTime:   currentTime + duration,
-                    start:     clone(map.currentTransform),
-                    end:       newTransform,
-                });
+                        screenBounds = {x: x1, y: y1, width: x2-x1, height: y2-y1};
+                    }
 
-                // We've consumed this key press.
-                delete input.pressed["0"];
+                    const combined = combineBoxes(targetBox, screenBounds);
+
+                    // It's a simple transition if one of the boxes contains the other.
+                    const simple = (combined === screenBounds) || (combined === screenBounds);
+
+                    if (simple) {
+                        const duration = 1000;
+
+                        const screen   = {x: 0, y: 0, width, height};
+
+                        map.animations.length = 0;
+                        map.animations.push({
+                            startTime: currentTime,
+                            endTime:   currentTime + duration,
+                            start:     clone(map.currentTransform),
+                            end:       fitBox(targetBox, screen),
+                        });
+                    } else {
+                        const durations = [1000, 1000];
+
+                        const screen = {x: 0, y: 0, width, height};
+
+                        const transform1 = fitBox(combined, screen);
+
+                        map.animations.length = 0;
+                        map.animations.push({
+                            startTime: currentTime,
+                            endTime:   currentTime + durations[0],
+                            start:     clone(map.currentTransform),
+                            end:       transform1,
+                        });
+                        map.animations.push({
+                            startTime: currentTime + durations[0],
+                            endTime:   currentTime + durations[0] + durations[1],
+                            start:     transform1,
+                            end:       fitBox(targetBox, screen),
+                        });
+                    }
+
+                    // We've consumed this key press.
+                    delete input.pressed[key];
+                }
             }
         }
 

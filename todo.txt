@@ -1,4 +1,8 @@
+web/script.js: create 'rect' and 'box' types.
+
 Front end: instead of lerp, interpolate in a way that "feels" linear.
+
+Update firewall to allow public access to tmp:8006. Also see if we can improve the nginx proxy?
 
 Front end: Fix scroll. Say we want scrolling from min zoom (whole of Australia view) to max zoom (1 pizel = 3 metres) to take about as long as it takes to scroll a moderately long blog post (4--8 times the height of the screen, say). Then actually use the event.deltaY property to figure out how far we've "scrolled" and set that as the target scale (lerp, basically).
 
