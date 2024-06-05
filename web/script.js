@@ -289,8 +289,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         const timeDelta = time - currentTime;
         currentTime = time;
 
-        const windowWidth  = Math.floor(document.body.clientWidth);
-        const windowHeight = Math.floor(document.body.clientHeight);
+        const windowWidth  = document.body.clientWidth;
+        const windowHeight = document.body.clientHeight;
 
         // Handle mouse/touch events on the map.
         {
@@ -535,8 +535,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             // Transform from pixel space to UV space. Flip the y-axis for top-left origin.
             proj[0] =  2/windowWidth;     // X scale.
             proj[4] = -2/windowHeight;    // Y scale.
-            proj[6] = -1;           // X translate.
-            proj[7] =  1;           // Y translate.
+            proj[6] = -1;                 // X translate.
+            proj[7] =  1;                 // Y translate.
         }
 
         const view = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
@@ -558,14 +558,19 @@ document.addEventListener("DOMContentLoaded", async () => {
         // Draw the page.
         //
 
+        const dpr = window.devicePixelRatio || 1;
+
         $$("canvas").forEach(canvas => {
-            canvas.width  = windowWidth;
-            canvas.height = windowHeight;
+            canvas.width  = Math.floor(dpr*windowWidth);
+            canvas.height = Math.floor(dpr*windowHeight);
+
+            canvas.style.width  = windowWidth + "px";
+            canvas.style.height = windowHeight + "px";
         });
 
         // WebGL canvas:
         {
-            gl.viewport(0, 0, windowWidth, windowHeight);
+            gl.viewport(0, 0, dpr*windowWidth, dpr*windowHeight);
 
             gl.clearColor(0.75, 0.75, 0.75, 1.0); // Background colour (same as water): light grey.
             gl.clear(gl.COLOR_BUFFER_BIT);
@@ -582,6 +587,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // 2D canvas:
         {
+            ui.scale(dpr, dpr);
             ui.clearRect(0, 0, windowWidth, windowHeight);
 
             // Draw a square in the centre of Australia.
@@ -628,5 +634,5 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     // For debugging:
-    window.map = map;
+    Object.assign(window, {map, gl, ui});
 });
