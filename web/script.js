@@ -229,14 +229,23 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     });
     window.addEventListener("wheel", event => {
-        input.scroll = (event.deltaY < 0) ? -1 : 1;
+        input.scroll = event.deltaY;
     }, {passive: true});
     window.addEventListener("keydown", event => {
         input.pressed[event.key] = true; // @Temporary.
     });
 
-    // Map state variables:
     const map = {
+        //
+        // Map constants:
+        //
+        minScale:  0.0001,
+        maxScale:  0.5,
+        maxScroll: 8000, // How far you have to scroll (in "pixels") to go from the minimum to maximum scale.
+
+        //
+        // Map state variables:
+        //
         currentTransform: {
             scale:      1,
             rotate:     0, // The angle, in radians, of a counter-clockwise rotation.
@@ -245,7 +254,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         },
 
         // When the user presses their mouse down on the map, we lock the mouse position to its
-        // current location on the map. On a touchscreen, the user can use up to two fingers.
+        // current location on the map. On a touchscreen, we do this with up to two fingers.
         pointerLocks: [  // X and Y are in map coordinates.
             {locked: false, x: 0, y: 0},
             {locked: false, x: 0, y: 0},
@@ -257,8 +266,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         //      endTime:    <time stamp>
         //      start:      {scale: 1, rotate: 0, translateX: 0, translateY: 0},
         //      end:        {scale: 3, rotate: 0, translateX: 0, translateY: 0},
+        //      scroll?:    true,
         //  }
         animations: [],
+
+        // This value represents how far the user has scrolled in "pixels", if you imagine the map
+        // is a normal web page where, as you scroll, the map goes from minimum to maximum zoom.
+        // This value is only valid if there is currently a scroll animation happening. Otherwise it
+        // must be recalculated from map.currentTransform.scale.
+        scrollOffset: 0,
     };
 
     let currentTime = document.timeline.currentTime;
@@ -357,39 +373,51 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // Handle scroll.
         if (input.scroll) {
-            const mouse = input.pointers[0];
-            const ct    = map.currentTransform;
+            const {minScale, maxScale, maxScroll} = map;
+            const ct = map.currentTransform;
 
+            const exp0 = Math.log2(minScale); // @Speed.
+            const exp1 = Math.log2(maxScale); // @Speed.
+
+            if (!map.animations.length || !map.animations[0].scroll) {
+                // There is not currently a scroll animation happening, so we can't trust the
+                // map.scrollOffset variable. Calculate it again based on the current scale.
+                const exp = Math.log2(ct.scale); // @Fixme: What if this is outside our expected range?
+                const t   = (exp - exp0)/(exp1 - exp0);
+
+                map.scrollOffset = maxScroll*t;
+            }
+
+            map.scrollOffset -= input.scroll;
+            if (map.scrollOffset < 0)               map.scrollOffset = 0;
+            else if (map.scrollOffset > maxScroll)  map.scrollOffset = maxScroll;
+
+            const t   = map.scrollOffset/maxScroll;
+            const exp = lerp(exp0, exp1, t);
+
+            const newTransform = clone(ct);
+            newTransform.scale = Math.pow(2, exp);
+
+            const mouse  = input.pointers[0];
             const origin = inverseXform(ct, [mouse.x, mouse.y]);
-
-            const newTransform = {
-                scale:      ct.scale * ((input.scroll < 0) ? 1.5 : 0.75),
-                rotate:     ct.rotate,
-                translateX: 0,
-                translateY: 0,
-            };
 
             // @Naming: These variables. Call them something like "error", "correction", "offset"?
             const originScreenCoords = xform(newTransform, origin);
-
             newTransform.translateX += mouse.x - originScreenCoords[0];
             newTransform.translateY += mouse.y - originScreenCoords[1];
 
-            // Remove any animations in progress. The effect of this is that if the user is
-            // scrolling really fast, they interrupt their own animations and the resulting zoom is
-            // slower when it should be faster. @Todo: Compound these scrolls somehow.
-            map.animations.length = 0;
-
             const duration = 100;
 
+            map.animations.length = 0;
             map.animations.push({
                 startTime: currentTime,
                 endTime:   currentTime + duration,
                 start:     clone(ct),
                 end:       newTransform,
+                scroll:    true, // A special flag just for scroll-zoom animations, so we know we can trust map.scrollOffset.
             });
 
-            // We've consumed the scroll!
+            // We've consumed the scroll! @Todo: Reset per frame.
             input.scroll = 0;
         }
 
@@ -433,7 +461,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                             end:       newTransform,
                         });
                     } else {
-                        const durations = [1000, 1000];
+                        const durations = [750, 750];
 
                         const screen = {x: 0, y: 0, width, height};
                         const transform1 = fitBox(combined, screen);
