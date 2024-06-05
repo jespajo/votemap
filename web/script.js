@@ -301,12 +301,15 @@ document.addEventListener("DOMContentLoaded", async () => {
             for (let i = 0; i < 2; i++) {
                 if (ptr[i].down) {
                     if (!lock[i].locked) {
+                        // The user has just pressed the mouse or touched the screen.
                         lock[i].locked = true;
 
                         const pointerMapCoords = inverseXform(ct, [ptr[i].x, ptr[i].y]);
 
                         lock[i].x = pointerMapCoords[0];
                         lock[i].y = pointerMapCoords[1];
+
+                        map.animations.length = 0; // Cancel any current animations.
                     }
                 } else {
                     lock[i].locked = false;
