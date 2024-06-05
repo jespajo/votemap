@@ -171,17 +171,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     //
 
     const input = {
-        // pointer[0] is the mouse or the first finger to touch the screen. pointer[1] is the second finger.
-        pointers: [ // X and Y are in screen coordinates.
-            {id: 0, down: false, x: 0, y: 0},
+        // pointer[0] is the mouse, or the first finger to touch the screen. pointer[1] is the second finger.
+        pointers: [
+            {id: 0, down: false, x: 0, y: 0}, // X and Y are in screen coordinates.
             {id: 0, down: false, x: 0, y: 0},
         ],
 
-        // +1 for scroll down, -1 for scroll up. @Todo: Scroll sensitivity? Horizontal scroll?
-        scroll: 0,
+        scroll: 0, // The deltaY of wheel events.
 
-        pressed: {}, // E.g. {a: true, b: true}. Hence this needs to be reset each frame.
+        pressed: {}, // E.g. {a: true, b: true}.
     };
+
     window.addEventListener("pointerdown", event => {
         for (let i = 0; i < 2; i++) {
             const ptr = input.pointers[i];
@@ -289,8 +289,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         const timeDelta = time - currentTime;
         currentTime = time;
 
-        const width  = Math.floor(document.body.clientWidth);
-        const height = Math.floor(document.body.clientHeight);
+        const windowWidth  = Math.floor(document.body.clientWidth);
+        const windowHeight = Math.floor(document.body.clientHeight);
 
         // Handle mouse/touch events on the map.
         {
@@ -436,7 +436,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                     let screenBounds; { // Get the screen in map coordinates.
                         const [x1, y1] = inverseXform(map.currentTransform, [0, 0]);
-                        const [x2, y2] = inverseXform(map.currentTransform, [width, height]);
+                        const [x2, y2] = inverseXform(map.currentTransform, [windowWidth, windowHeight]);
 
                         screenBounds = {x: x1, y: y1, width: x2-x1, height: y2-y1};
                     }
@@ -450,7 +450,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     if (simple) {
                         const duration = 1000;
 
-                        const screen = {x: 0, y: 0, width, height};
+                        const screen = {x: 0, y: 0, width: windowWidth, height: windowHeight};
                         const newTransform = fitBox(targetBox, screen);
 
                         map.animations.length = 0;
@@ -463,7 +463,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     } else {
                         const durations = [750, 750];
 
-                        const screen = {x: 0, y: 0, width, height};
+                        const screen = {x: 0, y: 0, width: windowWidth, height: windowHeight};
                         const transform1 = fitBox(combined, screen);
 
                         map.animations.length = 0;
@@ -530,8 +530,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         const proj = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
         {
             // Transform from pixel space to UV space. Flip the y-axis for top-left origin.
-            proj[0] =  2/width;     // X scale.
-            proj[4] = -2/height;    // Y scale.
+            proj[0] =  2/windowWidth;     // X scale.
+            proj[4] = -2/windowHeight;    // Y scale.
             proj[6] = -1;           // X translate.
             proj[7] =  1;           // Y translate.
         }
@@ -556,13 +556,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         //
 
         $$("canvas").forEach(canvas => {
-            canvas.width  = width;
-            canvas.height = height;
+            canvas.width  = windowWidth;
+            canvas.height = windowHeight;
         });
 
         // WebGL canvas:
         {
-            gl.viewport(0, 0, width, height);
+            gl.viewport(0, 0, windowWidth, windowHeight);
 
             gl.clearColor(0.75, 0.75, 0.75, 1.0); // Background colour (same as water): light grey.
             gl.clear(gl.COLOR_BUFFER_BIT);
@@ -579,7 +579,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // 2D canvas:
         {
-            ui.clearRect(0, 0, width, height);
+            ui.clearRect(0, 0, windowWidth, windowHeight);
 
             // Draw a square in the centre of Australia.
             {
@@ -591,24 +591,24 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             // Draw the map's current transform.
             {
-                const textHeight = 16;
-                ui.font = textHeight + 'px sans serif';
+                const height = 16;
+                ui.font = height + 'px sans serif';
+                ui.textBaseline = "top";
 
-                let textY = height - textHeight;
+                let y = windowHeight - height;
 
                 for (const target of ["translateY", "translateX", "rotate", "scale"]) {
                     const label = target + ': ' + map.currentTransform[target];
-
-                    const textWidth = 200;
-                    const textX = width - textWidth;
+                    const width = 200;
+                    const x     = windowWidth - width;
 
                     ui.fillStyle = 'rgba(255,255,255,0.9)';
-                    ui.fillRect(textX, textY, textWidth, textHeight);
+                    ui.fillRect(x, y, width, height);
 
                     ui.fillStyle = 'black';
-                    ui.fillText(label, textX, textY + textHeight - 4);
+                    ui.fillText(label, x, y);
 
-                    textY -= textHeight;
+                    y -= height;
                 }
             }
         }
