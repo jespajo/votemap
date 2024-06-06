@@ -1,11 +1,8 @@
-Add parameters to SQL interface.
-
 Add JSON module to src/
 Output canvas markup in JSON format and draw it on screen.
 
-Write up database schema plan docs/database.txt
-
-Upload XML files to database
+Write up database schema plan docs/database.txt.
+Upload XML files to database:
     polling booth info
     candidate info
     vote data

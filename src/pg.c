@@ -219,7 +219,8 @@ Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_Co
 }
 
 static Postgres_result *query_database_uncached(PGconn *db, char *query, string_array *params, Memory_Context *context)
-// Actually query the database and parse the result into a Postgres_result.  // This is called by query_database.
+// Actually query the database and parse the result into a Postgres_result.
+// This is called by query_database.
 {
     Memory_Context *ctx = context;
 
@@ -227,13 +228,13 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
 
     // Make the query.
     PGresult *query_result; {
-        int param_count = 0;
+        int num_params = 0;
         char const *const *param_data = NULL;
         if (params) {
-            param_count = params->count;
-            param_data  = (char const *const *)params->data;
+            num_params = params->count;
+            param_data = (char const *const *)params->data;
         }
-        query_result = PQexecParams(db, query, param_count, NULL, param_data, NULL, NULL, 1);
+        query_result = PQexecParams(db, query, num_params, NULL, param_data, NULL, NULL, 1);
 
         if (PQresultStatus(query_result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
     }
@@ -307,7 +308,20 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
         }
         d += query_length;
 
-        // @Fixme!: Add query parameters.
+        s32 num_params;  memcpy(&num_params, d, sizeof(s32));
+        d += sizeof(s32);
+        if (params)  assert(params->count == num_params);
+        else         assert(num_params == 0);
+
+        for (int i = 0; i < num_params; i++) {
+            s32 param_length;  memcpy(&param_length, d, sizeof(s32));
+            d += sizeof(s32);
+
+            assert(param_length == strlen(params->data[i]));
+            assert(!memcmp(d, params->data[i], param_length));
+
+            d += param_length + 1;
+        }
 
         s32 num_columns;  memcpy(&num_columns, d, sizeof(s32));
         d += sizeof(s32);
@@ -373,9 +387,21 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
 
     for (int i = 0; i < query_length; i++)  *Add(cache_file) = query[i];
 
-    s32 num_rows    = result->count;
-    s32 num_columns = result->data[0]->count;
+    s32 num_params = 0;
+    if (params)  num_params = params->count;
+    add_s32(cache_file, num_params);
 
+    for (int i = 0; i < num_params; i++) {
+        char *param = params->data[i];
+
+        s32 param_length = strlen(param);
+        add_s32(cache_file, param_length);
+
+        for (int j = 0; j < param_length; j++)  *Add(cache_file) = param[j];
+        *Add(cache_file) = '\0';
+    }
+
+    s32 num_columns = result->data[0]->count;
     add_s32(cache_file, num_columns);
 
     for (int i = 0; i < num_columns; i++) {
@@ -388,6 +414,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
         *Add(cache_file) = '\0';
     }
 
+    s32 num_rows = result->count;
     add_s32(cache_file, num_rows);
 
     for (int i = 0; i < num_rows; i++) {
@@ -409,6 +436,5 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
     // Return the result.
     return result;
 }
-
 
 #undef QueryError
