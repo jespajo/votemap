@@ -14,6 +14,7 @@
 //      char_array merge_strings(char_array2 string_array);
 //
 
+#include <errno.h> // For diagnosing file read/write errors.
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -44,12 +45,13 @@ void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memor
 }
 
 char_array *load_text_file(char *file_name, Memory_Context *context)
+// Return NULL if the file can't be opened.
 {
     char_array *buffer = NewArray(buffer, context);
 
     FILE *file = fopen(file_name, "r");
     if (!file) {
-        Error("Couldn't open file %s.", file_name);
+        Log("Couldn't open file %s.", file_name);
         return NULL;
     }
 
@@ -70,12 +72,13 @@ char_array *load_text_file(char *file_name, Memory_Context *context)
 }
 
 u8_array *load_binary_file(char *file_name, Memory_Context *context)
+// Return NULL if the file can't be opened.
 {
     u8_array *buffer = NewArray(buffer, context);
 
     FILE *file = fopen(file_name, "rb");
     if (!file) {
-        Error("Couldn't open file %s.", file_name);
+        Log("Couldn't open file %s.", file_name);
         return NULL;
     }
 
@@ -95,6 +98,12 @@ u8_array *load_binary_file(char *file_name, Memory_Context *context)
 void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
 {
     FILE *file = fopen(file_name, "wb");
+    
+    if (!file) {
+        char *reason = "";
+        if (errno == 2)  reason = "Does that directory exist?";
+        Error("Couldn't create file %s. %s", file_name, reason);
+    }
 
     u64 num_chars_written = fwrite(data, unit_size, count, file);
     assert(num_chars_written > 0);

@@ -1,8 +1,9 @@
-#include <stdio.h>
 #include <string.h>
 
 #include "draw.h"
 #include "pg.h"
+#include "map.h"
+#include "strings.h"
 
 int main()
 {
@@ -20,7 +21,8 @@ int main()
     Polygon_array *polygons = query_polygons(db, ctx, query->data);
 
     for (s64 i = 0; i < polygons->count; i++) {
-        Vector4 colour = {frand(), frand(), frand(), 1.0};
+        float   shade  = frand();
+        Vector4 colour = {0.1*shade, shade, 0.4*shade, 1.0};
 
         Vertex_array *polygon_verts = draw_polygon(&polygons->data[i], colour, ctx);
 

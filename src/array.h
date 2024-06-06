@@ -13,7 +13,8 @@
 
 typedef Array(char)   char_array;
 typedef Array(u8)     u8_array;
-typedef Array(char_array *)  char_array2; // @Cleanup. Is it kind of weird that it's an array of pointers?
+typedef Array(char_array *)  char_array2;
+typedef Array(char *)        string_array; // An array of null-terminated strings.
 
 void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memory_Context *context);
 char_array *load_text_file(char *file_name, Memory_Context *context);

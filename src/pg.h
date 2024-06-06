@@ -3,6 +3,7 @@
 
 #include "libpq-fe.h"
 
+#include "map.h"
 #include "shapes.h"
 
 enum WKB_Byte_Order {
@@ -20,7 +21,11 @@ enum WKB_Geometry_Type {
     WKB_GEOMETRYCOLLECTION = 7,
 };
 
+typedef Dict(u8_array *)    Result_row;
+typedef Array(Result_row *) Postgres_result;
+
 Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query);
 Path_array *query_paths(PGconn *db, Memory_Context *context, char *query);
+Postgres_result *query_database_cached(PGconn *db, char *query, Memory_Context *context);
 
 #endif // PG_H_INCLUDED

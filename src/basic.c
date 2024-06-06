@@ -62,3 +62,14 @@ float lerp(float a, float b, float t)
 {
     return (1.0-a)*t + b*t;
 }
+
+void Log(char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+
+    fprintf(stdout, "\n");
+    fflush(stdout);
+}

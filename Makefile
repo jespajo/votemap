@@ -39,7 +39,6 @@ all:  tags
 # Run targets:
 all:  ; bin/main
 
-
 sources    := $(shell find src -type f)
 non_mains  := $(shell grep -L '^int main' $(sources))
 shared_obj := $(patsubst src/%.c,bin/%.o,$(filter %.c,$(non_mains)))
@@ -55,7 +54,7 @@ bin/%.o:  src/%.c;  $(cc) -c $(cflags) $<
 
 tags:  $(sources);  ctags --recurse src/
 
-tidy:  ;  rm -f core.*
+tidy:  ;  rm -f core.* /tmp/*.pgcache
 clean:  tidy;  rm -rf bin tags
 
 bin/%.d: ;

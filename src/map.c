@@ -12,7 +12,7 @@
 
 u64 hash_seed = 0x70710678;
 
-static u64 hash_bytes(void *p, u64 size)
+u64 hash_bytes(void *p, u64 size)
 // Sean Barrett's version of SipHash. Plus it won't return zero.
 {
     u64 seed = hash_seed;
@@ -93,7 +93,7 @@ static u64 hash_bytes(void *p, u64 size)
     return (v0) ? v0 : 1;
 }
 
-static u64 hash_string(char *string)
+u64 hash_string(char *string)
 // Thomas Wang's mix function. Also won't return zero.
 {
     u64 seed = hash_seed;
