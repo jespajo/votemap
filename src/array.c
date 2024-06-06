@@ -97,8 +97,10 @@ u8_array *load_binary_file(char *file_name, Memory_Context *context)
 
 void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
 {
+    if (!count)  Error("You probably don't want to write an empty array to %s.", file_name);
+
     FILE *file = fopen(file_name, "wb");
-    
+
     if (!file) {
         char *reason = "";
         if (errno == 2)  reason = "Does that directory exist?";

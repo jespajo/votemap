@@ -87,7 +87,7 @@ Postgres_result *query_database_cached(PGconn *db, char *query, Memory_Context *
     char magic_number[] = "PG$$";
 
     Memory_Context *ctx = context;
-    
+
     Postgres_result *result = New(Postgres_result, ctx);
 
     u64 query_hash = hash_query(query);
@@ -146,7 +146,7 @@ Postgres_result *query_database_cached(PGconn *db, char *query, Memory_Context *
                 char *field = fields->data[j];
 
                 u8_array *cell = NewArray(cell, ctx);
-                
+
                 s32 cell_size;  memcpy(&cell_size, d, sizeof(s32));
                 d += sizeof(s32);
 
@@ -246,94 +246,105 @@ Postgres_result *query_database_cached(PGconn *db, char *query, Memory_Context *
     return result;
 }
 
+void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
+// data is a pointer to EWKB geometries. Like strtod, if end_data is not NULL, it is the address
+// where this function will save a pointer to the byte after the last byte of data parsed.
+{
+    Memory_Context *ctx = result->context;
+
+    u8 *d = data;
+
+    s64 num_geometries = 1;
+
+    while (num_geometries > 0) {
+        num_geometries -= 1;
+
+        u8 byte_order = *d;
+        d += sizeof(u8);
+        assert(byte_order == WKB_LITTLE_ENDIAN);
+
+        u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
+        d += sizeof(u32);
+
+        switch (wkb_type) {
+            case WKB_GEOMETRYCOLLECTION:
+            case WKB_MULTIPOLYGON:;
+                // We treat GeometryCollections and MultiPolygons the same: we just add to the
+                // number of extra geometries to expect in the results. This means we'll accept
+                // technically invalid data such as GeometryCollections inside MultiPolygons.
+                // Since we're just consuming this data from Postgres, I don't think we need to
+                // be strict about making sure it's well-formed.
+                u32 num_extra;  memcpy(&num_extra, d, sizeof(u32));
+                d += sizeof(u32);
+
+                num_geometries += num_extra;
+                continue;
+            case WKB_POLYGON:;
+                Polygon polygon = {.context = ctx};
+
+                u32 num_rings;  memcpy(&num_rings, d, sizeof(u32));
+                d += sizeof(u32);
+
+                // Ignore polygons without any rings.
+                if (!num_rings)  continue;
+
+                for (u32 ring_index = 0; ring_index < num_rings; ring_index += 1) {
+                    Path ring = {.context = ctx};
+
+                    u32 num_points;  memcpy(&num_points, d, sizeof(u32));
+                    d += sizeof(u32);
+
+                    for (u32 point_index = 0; point_index < num_points; point_index += 1) {
+                        double x;  memcpy(&x, d, sizeof(double));
+                        d += sizeof(double);
+
+                        double y;  memcpy(&y, d, sizeof(double));
+                        d += sizeof(double);
+
+                        // Cast doubles to floats.
+                        *Add(&ring) = (Vector2){
+                            (float)x,
+                            -(float)y // Flip the y-axis.
+                        };
+                    }
+
+                    // Ensure the first ring is counter-clockwise and subsequent rings are clockwise.
+                    if (!ring_index ^ !points_are_clockwise(ring.data, ring.count))  reverse_array(&ring);
+
+                    *Add(&polygon) = ring;
+                }
+
+                *Add(result) = polygon;
+                break;
+            default:
+                Error("Unexpected wkb_type: %d.", wkb_type);
+        }
+    }
+
+    if (end_data)  *end_data = d;
+}
+
 Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
 {
     Postgres_result *rows = query_database_cached(db, query, context);
 
     if (!rows->count)  return QueryError("A query for polygons returned no results.");
 
-    Polygon_array *polygons = NewArray(polygons, context);
+    Polygon_array *result = NewArray(result, context);
 
     for (s64 i = 0; i < rows->count; i++) {
         Result_row *row = rows->data[i];
 
         u8_array *cell = *Get(row, "polygon");
-
         if (!cell)  return QueryError("Couldn't find a \"polygon\" column in the results.");
 
-        u8 *d = cell->data;
+        u8 *end_data = NULL;
+        parse_polygons(cell->data, result, &end_data);
 
-        s64 num_geometries = 1;
-
-        while (num_geometries > 0) {
-            num_geometries -= 1;
-
-            u8 byte_order = *d;
-            d += sizeof(u8);
-            assert(byte_order == WKB_LITTLE_ENDIAN);
-
-            u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
-            d += sizeof(u32);
-
-            switch (wkb_type) {
-                case WKB_GEOMETRYCOLLECTION:
-                case WKB_MULTIPOLYGON:;
-                    // We treat GeometryCollections and MultiPolygons the same: we just add to the
-                    // number of extra geometries to expect in the results. This means we'll accept
-                    // technically invalid data such as GeometryCollections inside MultiPolygons.
-                    // Since we're just consuming this data from Postgres, I don't think we need to
-                    // be strict about making sure it's well-formed.
-                    u32 num_extra;  memcpy(&num_extra, d, sizeof(u32));
-                    d += sizeof(u32);
-
-                    num_geometries += num_extra;
-                    continue;
-                case WKB_POLYGON:;
-                    Polygon polygon = {.context = context};
-
-                    u32 num_rings;  memcpy(&num_rings, d, sizeof(u32));
-                    d += sizeof(u32);
-
-                    // Ignore polygons without any rings.
-                    if (!num_rings)  continue;
-
-                    for (u32 ring_index = 0; ring_index < num_rings; ring_index += 1) {
-                        Path ring = {.context = context};
-
-                        u32 num_points;  memcpy(&num_points, d, sizeof(u32));
-                        d += sizeof(u32);
-
-                        for (u32 point_index = 0; point_index < num_points; point_index += 1) {
-                            double x;  memcpy(&x, d, sizeof(double));
-                            d += sizeof(double);
-
-                            double y;  memcpy(&y, d, sizeof(double));
-                            d += sizeof(double);
-
-                            // Cast doubles to floats.
-                            *Add(&ring) = (Vector2){
-                                (float)x,
-                                -(float)y // Flip the y-axis.
-                            };
-                        }
-
-                        // Ensure the first ring is counter-clockwise and subsequent rings are clockwise.
-                        if (!ring_index ^ !points_are_clockwise(ring.data, ring.count))  reverse_array(&ring);
-
-                        *Add(&polygon) = ring;
-                    }
-
-                    *Add(polygons) = polygon;
-                    break;
-                default:
-                    Error("Unexpected wkb_type: %d.", wkb_type);
-            }
-        }
-
-        assert(d - cell->data == cell->count);
+        assert(end_data - cell->data == cell->count);
     }
 
-    return polygons;
+    return result;
 }
 
 //

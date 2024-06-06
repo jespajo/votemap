@@ -37,7 +37,7 @@ all:  bin/main
 all:  tags
 
 # Run targets:
-all:  ; bin/main
+#all:  ; bin/main
 
 sources    := $(shell find src -type f)
 non_mains  := $(shell grep -L '^int main' $(sources))
@@ -54,8 +54,9 @@ bin/%.o:  src/%.c;  $(cc) -c $(cflags) $<
 
 tags:  $(sources);  ctags --recurse src/
 
-tidy:  ;  rm -f core.* /tmp/*.pgcache
-clean:  tidy;  rm -rf bin tags
+tidy:           ;  rm -f core.*
+pgcache-clean:  ;  rm -f /tmp/*.pgcache
+clean:      tidy;  rm -rf bin tags
 
 bin/%.d: ;
 include $(deps)
