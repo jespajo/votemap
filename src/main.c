@@ -18,7 +18,7 @@ int main()
     {
         char *query = load_text_file("queries/booths.sql", ctx)->data;
 
-        Polygon_array *polygons = query_polygons(db, ctx, query);
+        Polygon_array *polygons = query_polygons(db, query, NULL, ctx);
 
         for (s64 i = 0; i < polygons->count; i++) {
             float   shade  = frand();
@@ -35,12 +35,16 @@ int main()
         char *query =
         "   select st_asbinary(st_force2d(t.geom)) as path"
         "   from ("
-        "       select (st_dump(st_boundary(st_simplify(geom, 100.0)))).geom as geom"
+        "       select (st_dump(st_boundary(st_simplify(geom, $1::float)))).geom as geom"
         "       from federal_boundaries_2022"
         "     ) as t"
         ;
 
-        Path_array *paths = query_paths(db, ctx, query);
+        string_array params = {.context = ctx};
+
+        *Add(&params) = "100.0";
+
+        Path_array *paths = query_paths(db, query, &params, ctx);
 
         for (s64 i = 0; i < paths->count; i++) {
             Vector4 colour = {0.9, 0.9, 0.9, 1.0};

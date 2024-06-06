@@ -24,8 +24,10 @@ enum WKB_Geometry_Type {
 typedef Dict(u8_array *)    Result_row;
 typedef Array(Result_row *) Postgres_result;
 
-Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query);
-Path_array *query_paths(PGconn *db, Memory_Context *context, char *query);
-Postgres_result *query_database_cached(PGconn *db, char *query, Memory_Context *context);
+void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data);
+Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Memory_Context *context);
+void parse_paths(u8 *data, Path_array *result, u8 **end_data);
+Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_Context *context);
+Postgres_result *query_database(PGconn *db, char *query, string_array *params, Memory_Context *context);
 
 #endif // PG_H_INCLUDED

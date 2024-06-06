@@ -1,9 +1,7 @@
-Add electorate outlines to Voronoi map.
+Add parameters to SQL interface.
 
 Add JSON module to src/
 Output canvas markup in JSON format and draw it on screen.
-
-Make Voronoi map visualise real vote data instead of random colours.
 
 Write up database schema plan docs/database.txt
 
@@ -12,6 +10,8 @@ Upload XML files to database
     candidate info
     vote data
     election info
+
+Make Voronoi map visualise real vote data instead of random colours.
 
 Create materialised views for efficient access to the XML data??
     booths
@@ -35,4 +35,8 @@ Figure out how many zoom levels you want to have e.g.
     zoom level 5      1 px =  390 m
     etc.
 
-Turn main() into a CGI script
+Get main() to call a function that returns different verts depending on bounds, zoom level and layer.
+
+Get JavaScript just to request based on the current zoom level when you press a key.
+
+Turn main() into a CGI script that parses this and returns the verts to the web browser.

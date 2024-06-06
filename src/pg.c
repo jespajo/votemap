@@ -5,9 +5,13 @@
 
 #define QueryError(...)  (Error(__VA_ARGS__), NULL)
 
-static u64 hash_query(char *query)
+static u64 hash_query(char *query, string_array *params)
 {
     u64 hash = hash_string(query);
+
+    if (params) {
+        for (int i = 0; i < params->count; i++)  hash ^= hash_string(params->data[i]);
+    }
 
     return hash;
 }
@@ -21,171 +25,6 @@ static void add_s32(u8_array *array, s32 number)
     }
     memcpy(array->data + array->count, &number, sizeof(s32));
     array->count = new_count;
-}
-
-Postgres_result *query_database_cached(PGconn *db, char *query, Memory_Context *context)
-{
-    char cache_dir[]    = "/tmp"; // @Todo: Create our own directory for cache files.
-    char magic_number[] = "PG$$";
-
-    Memory_Context *ctx = context;
-
-    Postgres_result *result = New(Postgres_result, ctx);
-
-    u64 query_hash = hash_query(query);
-
-    char *cache_file_name = get_string(ctx, "%s/%x.pgcache", cache_dir, query_hash)->data;
-
-    u8_array *cache_file = load_binary_file(cache_file_name, ctx);
-
-    if (cache_file) {
-        Log("Cache file found.");
-        //
-        // Read the cache file.
-        //
-        u8 *d = cache_file->data;
-
-        if (memcmp(d, magic_number, lengthof(magic_number))) {
-            return QueryError("We did not find the magic number in %s.", cache_file_name);
-        }
-        d += lengthof(magic_number);
-
-        s32 query_length;  memcpy(&query_length, d, sizeof(s32));
-        d += sizeof(s32);
-
-        if (query_length != strlen(query) || memcmp(query, d, query_length)) {
-            // There has been a hash collision resulting in two different queries with the same cache file name.
-            // This is unlikely. For now, throw an error. Deal with it later if it ever happens.
-            return QueryError("The current query does not match the one in %s.", cache_file_name);
-        }
-        d += query_length;
-
-        s32 num_columns;  memcpy(&num_columns, d, sizeof(s32));
-        d += sizeof(s32);
-
-        string_array *fields = NewArray(fields, ctx);
-
-        for (int i = 0; i < num_columns; i++) {
-            s32 num_chars;  memcpy(&num_chars, d, sizeof(s32));
-            d += sizeof(s32);
-
-            // Just take a pointer to the file data for now. We don't need to copy the name because
-            // fields doesn't survive this function.
-            *Add(fields) = (char *)d;
-            d += num_chars;
-
-            assert(*d == '\0'); // The field names are zero-terminated.
-            d += 1;
-        }
-
-        s32 num_rows;  memcpy(&num_rows, d, sizeof(s32));
-        d += sizeof(s32);
-
-        for (int i = 0; i < num_rows; i++) {
-            Result_row *row = NewDict(row, ctx);
-
-            for (s32 j = 0; j < num_columns; j++) {
-                char *field = fields->data[j];
-
-                u8_array *cell = NewArray(cell, ctx);
-
-                s32 cell_size;  memcpy(&cell_size, d, sizeof(s32));
-                d += sizeof(s32);
-
-                for (int k = 0; k < cell_size; k++)  *Add(cell) = d[k];
-                d += cell_size;
-
-                *Set(row, field) = cell;
-            }
-
-            *Add(result) = row;
-        }
-
-        s64 num_bytes_parsed = d - cache_file->data;
-        assert(num_bytes_parsed == cache_file->count);
-
-        return result;
-    }
-
-    Log("No cache file found. Making query.");
-
-    // Make the query.
-    PGresult *query_result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
-    if (PQresultStatus(query_result) != PGRES_TUPLES_OK) {
-        return QueryError("Query failed: %s", PQerrorMessage(db));
-    }
-
-    // Parse the result.
-    int num_rows    = PQntuples(query_result);
-    int num_columns = PQnfields(query_result);
-
-    string_array *fields = NewArray(fields, ctx);
-    for (int i = 0; i < num_columns; i++)  *Add(fields) = PQfname(query_result, i);
-
-    for (int i = 0; i < num_rows; i++) {
-        Result_row *row = NewDict(row, ctx);
-
-        for (int j = 0; j < num_columns; j++) {
-            char *field = fields->data[j];
-            char *data  = PQgetvalue(query_result, i, j);
-            int   size  = PQgetlength(query_result, i, j);
-
-            u8_array *cell = NewArray(cell, ctx);
-
-            for (int k = 0; k < size; k++)  *Add(cell) = (u8)data[k];
-
-            *Set(row, field) = cell;
-        }
-
-        *Add(result) = row;
-    }
-
-    //
-    // Write the result to a cache file.
-    //
-    cache_file = NewArray(cache_file, ctx);
-
-    for (int i = 0; i < lengthof(magic_number); i++)  *Add(cache_file) = magic_number[i];
-
-    s32 query_length = strlen(query);
-    add_s32(cache_file, query_length);
-
-    for (int i = 0; i < query_length; i++)  *Add(cache_file) = query[i];
-
-    add_s32(cache_file, num_columns);
-
-    for (int i = 0; i < num_columns; i++) {
-        char *field = fields->data[i];
-        int  length = strlen(field);
-
-        add_s32(cache_file, length);
-
-        for (int j = 0; j < length; j++)  *Add(cache_file) = field[j];
-        *Add(cache_file) = '\0';
-    }
-
-    add_s32(cache_file, num_rows);
-
-    for (int i = 0; i < num_rows; i++) {
-        Result_row *row = result->data[i];
-
-        for (s32 j = 0; j < num_columns; j++) {
-            char *field = fields->data[j];
-
-            u8_array *cell = *Get(row, field);
-
-            add_s32(cache_file, (s32)cell->count);
-
-            for (int k = 0; k < cell->count; k++)  *Add(cache_file) = cell->data[k];
-        }
-    }
-
-    write_array_to_file(cache_file, cache_file_name);
-
-    PQclear(query_result);
-
-    // Return the result.
-    return result;
 }
 
 void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
@@ -265,9 +104,9 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
     if (end_data)  *end_data = d;
 }
 
-Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
+Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Memory_Context *context)
 {
-    Postgres_result *rows = query_database_cached(db, query, context);
+    Postgres_result *rows = query_database(db, query, params, context);
     if (!rows->count)  return QueryError("A query for polygons returned no results.");
 
     Polygon_array *result = NewArray(result, context);
@@ -356,9 +195,9 @@ void parse_paths(u8 *data, Path_array *result, u8 **end_data)
     if (end_data)  *end_data = d;
 }
 
-Path_array *query_paths(PGconn *db, Memory_Context *context, char *query)
+Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_Context *context)
 {
-    Postgres_result *rows = query_database_cached(db, query, context);
+    Postgres_result *rows = query_database(db, query, params, context);
 
     if (!rows->count)  return QueryError("A query for paths returned no results.");
 
@@ -378,5 +217,198 @@ Path_array *query_paths(PGconn *db, Memory_Context *context, char *query)
 
     return result;
 }
+
+static Postgres_result *query_database_uncached(PGconn *db, char *query, string_array *params, Memory_Context *context)
+// Actually query the database and parse the result into a Postgres_result.  // This is called by query_database.
+{
+    Memory_Context *ctx = context;
+
+    Postgres_result *result = NewArray(result, ctx);
+
+    // Make the query.
+    PGresult *query_result; {
+        int param_count = 0;
+        char const *const *param_data = NULL;
+        if (params) {
+            param_count = params->count;
+            param_data  = (char const *const *)params->data;
+        }
+        query_result = PQexecParams(db, query, param_count, NULL, param_data, NULL, NULL, 1);
+
+        if (PQresultStatus(query_result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
+    }
+
+    // Parse the result.
+    int num_rows    = PQntuples(query_result);
+    int num_columns = PQnfields(query_result);
+
+    string_array *fields = NewArray(fields, ctx);
+    for (int i = 0; i < num_columns; i++)  *Add(fields) = PQfname(query_result, i);
+
+    for (int i = 0; i < num_rows; i++) {
+        Result_row *row = NewDict(row, ctx);
+
+        for (int j = 0; j < num_columns; j++) {
+            char *field = fields->data[j];
+            char *data  = PQgetvalue(query_result, i, j);
+            int   size  = PQgetlength(query_result, i, j);
+
+            u8_array *cell = NewArray(cell, ctx);
+
+            for (int k = 0; k < size; k++)  *Add(cell) = (u8)data[k];
+
+            *Set(row, field) = cell;
+        }
+
+        *Add(result) = row;
+    }
+
+    PQclear(query_result);
+
+    return result;
+}
+
+Postgres_result *query_database(PGconn *db, char *query, string_array *params, Memory_Context *context)
+// Parameters are string literals. Cast them in your queries: SELECT $1::int;
+// This function is mostly concerned with caching the results of query_database_uncached().
+{
+    char cache_dir[]    = "/tmp"; // @Todo: Create our own directory for cache files.
+    char magic_number[] = "PG$$";
+
+    Memory_Context *ctx = context;
+
+    Postgres_result *result = New(Postgres_result, ctx);
+
+    u64 query_hash = hash_query(query, params);
+
+    char *cache_file_name = get_string(ctx, "%s/%x.pgcache", cache_dir, query_hash)->data;
+
+    u8_array *cache_file = load_binary_file(cache_file_name, ctx);
+
+    if (cache_file) {
+        Log("Found cache file %s.", cache_file_name);
+        //
+        // Read the cache file.
+        //
+        u8 *d = cache_file->data;
+
+        if (memcmp(d, magic_number, lengthof(magic_number))) {
+            return QueryError("We did not find the magic number in %s.", cache_file_name);
+        }
+        d += lengthof(magic_number);
+
+        s32 query_length;  memcpy(&query_length, d, sizeof(s32));
+        d += sizeof(s32);
+
+        if (query_length != strlen(query) || memcmp(query, d, query_length)) {
+            // There has been a hash collision resulting in two different queries with the same cache file name.
+            // This is unlikely. For now, throw an error. Deal with it later if it ever happens.
+            return QueryError("The current query does not match the one in %s.", cache_file_name);
+        }
+        d += query_length;
+
+        // @Fixme!: Add query parameters.
+
+        s32 num_columns;  memcpy(&num_columns, d, sizeof(s32));
+        d += sizeof(s32);
+
+        string_array *fields = NewArray(fields, ctx);
+
+        for (int i = 0; i < num_columns; i++) {
+            s32 num_chars;  memcpy(&num_chars, d, sizeof(s32));
+            d += sizeof(s32);
+
+            // Just take a pointer to the file data for now. We don't need to copy the name because
+            // fields doesn't survive this function.
+            *Add(fields) = (char *)d;
+            d += num_chars;
+
+            assert(*d == '\0'); // The field names are zero-terminated.
+            d += 1;
+        }
+
+        s32 num_rows;  memcpy(&num_rows, d, sizeof(s32));
+        d += sizeof(s32);
+
+        for (int i = 0; i < num_rows; i++) {
+            Result_row *row = NewDict(row, ctx);
+
+            for (s32 j = 0; j < num_columns; j++) {
+                char *field = fields->data[j];
+
+                u8_array *cell = NewArray(cell, ctx);
+
+                s32 cell_size;  memcpy(&cell_size, d, sizeof(s32));
+                d += sizeof(s32);
+
+                for (int k = 0; k < cell_size; k++)  *Add(cell) = d[k];
+                d += cell_size;
+
+                *Set(row, field) = cell;
+            }
+
+            *Add(result) = row;
+        }
+
+        s64 num_bytes_parsed = d - cache_file->data;
+        assert(num_bytes_parsed == cache_file->count);
+
+        return result;
+    }
+
+    Log("No cache file found. Making query.");
+
+    // Make the query and parse the result.
+    result = query_database_uncached(db, query, params, ctx);
+
+    //
+    // Write the result to a cache file.
+    //
+    cache_file = NewArray(cache_file, ctx);
+
+    for (int i = 0; i < lengthof(magic_number); i++)  *Add(cache_file) = magic_number[i];
+
+    s32 query_length = strlen(query);
+    add_s32(cache_file, query_length);
+
+    for (int i = 0; i < query_length; i++)  *Add(cache_file) = query[i];
+
+    s32 num_rows    = result->count;
+    s32 num_columns = result->data[0]->count;
+
+    add_s32(cache_file, num_columns);
+
+    for (int i = 0; i < num_columns; i++) {
+        char *field = result->data[0]->keys[i];
+        int  length = strlen(field);
+
+        add_s32(cache_file, length);
+
+        for (int j = 0; j < length; j++)  *Add(cache_file) = field[j];
+        *Add(cache_file) = '\0';
+    }
+
+    add_s32(cache_file, num_rows);
+
+    for (int i = 0; i < num_rows; i++) {
+        Result_row *row = result->data[i];
+
+        for (s32 j = 0; j < num_columns; j++) {
+            char *field = result->data[i]->keys[j];
+
+            u8_array *cell = *Get(row, field);
+
+            add_s32(cache_file, (s32)cell->count);
+
+            for (int k = 0; k < cell->count; k++)  *Add(cache_file) = cell->data[k];
+        }
+    }
+
+    write_array_to_file(cache_file, cache_file_name);
+
+    // Return the result.
+    return result;
+}
+
 
 #undef QueryError
