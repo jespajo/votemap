@@ -5,64 +5,6 @@
 
 #define QueryError(...)  (Error(__VA_ARGS__), NULL)
 
-Path_array *query_paths(PGconn *db, Memory_Context *context, char *query) // Soon @Deprecated: doesn't cache, unlike the new query_polygons.
-// Old @Copypasta from query_polygons().
-{
-    PGresult *result = PQexecParams(db, query, 0, NULL, NULL, NULL, NULL, 1);
-    if (PQresultStatus(result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
-
-    int num_rows = PQntuples(result);
-    if (num_rows == 0)  return QueryError("A query for paths returned no results.");
-
-    int column = PQfnumber(result, "path");
-    if (column < 0)  return QueryError("We couldn't find a \"path\" column in the results.");
-
-    Path_array *paths = NewArray(paths, context);
-
-    for (int row = 0; row < num_rows; row++) {
-        int num_bytes = PQgetlength(result, row, column);
-        if (!num_bytes)  continue;
-
-        char *data = PQgetvalue(result, row, column);
-        char *d = data;
-
-        Path path = {.context = context};
-
-        u8 byte_order = *d;
-        d += sizeof(u8);
-        assert(byte_order == WKB_LITTLE_ENDIAN);
-
-        u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
-        d += sizeof(u32);
-        assert(wkb_type == WKB_LINESTRING);
-
-        u32 num_points;  memcpy(&num_points, d, sizeof(u32));
-        d += sizeof(u32);
-
-        while (num_points--) {
-            double x;  memcpy(&x, d, sizeof(double));
-            d += sizeof(double);
-
-            double y;  memcpy(&y, d, sizeof(double));
-            d += sizeof(double);
-
-            // Cast doubles to floats.
-            *Add(&path) = (Vector2){
-                (float)x,
-                -(float)y // Flip the y-axis.
-            };
-        }
-        *Add(paths) = path;
-
-        // Check the number of bytes parsed is equal to the Postgres-reported size of the geometry column.
-        assert(d - data == num_bytes);
-    }
-
-    PQclear(result);
-
-    return paths;
-}
-
 static u64 hash_query(char *query)
 {
     u64 hash = hash_string(query);
@@ -251,7 +193,6 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
 // where this function will save a pointer to the byte after the last byte of data parsed.
 {
     Memory_Context *ctx = result->context;
-
     u8 *d = data;
 
     s64 num_geometries = 1;
@@ -327,7 +268,6 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
 Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
 {
     Postgres_result *rows = query_database_cached(db, query, context);
-
     if (!rows->count)  return QueryError("A query for polygons returned no results.");
 
     Polygon_array *result = NewArray(result, context);
@@ -373,5 +313,70 @@ Polygon_array *query_polygons(PGconn *db, Memory_Context *context, char *query)
 //         }
 //         printf("}\n");
 //     }
+//
+
+void parse_paths(u8 *data, Path_array *result, u8 **end_data)
+// data is a pointer to EWKB geometries. Like strtod, if end_data is not NULL, it is the address
+// where this function will save a pointer to the byte after the last byte of data parsed.
+{
+    Memory_Context *ctx = result->context;
+    u8 *d = data;
+
+    {
+        Path path = {.context = ctx};
+
+        u8 byte_order = *d;
+        d += sizeof(u8);
+        assert(byte_order == WKB_LITTLE_ENDIAN);
+
+        u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
+        d += sizeof(u32);
+        assert(wkb_type == WKB_LINESTRING); // @Todo: Be more flexible. Polygons can be parsed as paths. Only points can't.
+
+        u32 num_points;  memcpy(&num_points, d, sizeof(u32));
+        d += sizeof(u32);
+
+        while (num_points--) {
+            double x;  memcpy(&x, d, sizeof(double));
+            d += sizeof(double);
+
+            double y;  memcpy(&y, d, sizeof(double));
+            d += sizeof(double);
+
+            // Cast doubles to floats.
+            *Add(&path) = (Vector2){
+                (float)x,
+                -(float)y // Flip the y-axis.
+            };
+        }
+
+        *Add(result) = path;
+    }
+
+    if (end_data)  *end_data = d;
+}
+
+Path_array *query_paths(PGconn *db, Memory_Context *context, char *query)
+{
+    Postgres_result *rows = query_database_cached(db, query, context);
+
+    if (!rows->count)  return QueryError("A query for paths returned no results.");
+
+    Path_array *result = NewArray(result, context);
+
+    for (s64 i = 0; i < rows->count; i++) {
+        Result_row *row = rows->data[i];
+
+        u8_array *cell = *Get(row, "path");
+        if (!cell)  return QueryError("Couldn't find a \"path\" column in the results.");
+
+        u8 *end_data = NULL;
+        parse_paths(cell->data, result, &end_data);
+
+        assert(end_data - cell->data == cell->count);
+    }
+
+    return result;
+}
 
 #undef QueryError
