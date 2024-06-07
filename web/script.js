@@ -468,6 +468,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                         const screen = {x: 0, y: 0, width: windowWidth, height: windowHeight};
                         const transform1 = fitBox(combined, screen);
+                        const transform2 = fitBox(targetBox, screen);
 
                         map.animations.length = 0;
                         map.animations.push({
@@ -480,7 +481,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                             startTime: currentTime + durations[0],
                             endTime:   currentTime + durations[0] + durations[1],
                             start:     transform1,
-                            end:       fitBox(targetBox, screen),
+                            end:       transform2,
                         });
                     }
 
@@ -580,6 +581,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             gl.uniformMatrix3fv(u_proj, false, proj);
             gl.uniformMatrix3fv(u_view, false, view);
 
+            // @Speed: We only want to re-buffer the vertices if they've changed.
+            // This seems to be especially important for performance on Firefox.
             gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
 
             gl.drawArrays(gl.TRIANGLES, 0, vertices.length/6); // 6 is the number of floats per vertex attribute.

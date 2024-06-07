@@ -1,43 +1,20 @@
 with booth_nodes as (
   select unnest(
-      xpath(
-        '/aec:MediaFeed/aec:PollingDistrictList/aec:PollingDistrict/aec:PollingPlaces/aec:PollingPlace',
-        xmldata,
-        '{{"aec","http://www.aec.gov.au/xml/schema/mediafeed"}}'
-      )
+      xpath('/aec:MediaFeed/aec:PollingDistrictList/aec:PollingDistrict/aec:PollingPlaces/aec:PollingPlace', xmldata, $1)
     ) as xmldata
   from polls_2022_federal
 ),
 booths as (
-  select (
-      xpath(
-        '/aec:PollingPlace/aec:PollingPlaceIdentifier/@Id',
-        booth_nodes.xmldata,
-        '{{"aec","http://www.aec.gov.au/xml/schema/mediafeed"}}'
-      )
-    ) [1]::text::integer as id,
-    (
-      xpath(
-        '/aec:PollingPlace/aec:PollingPlaceIdentifier/@Name',
-        booth_nodes.xmldata,
-        '{{"aec","http://www.aec.gov.au/xml/schema/mediafeed"}}'
-      )
-    ) [1]::text as name,
-    (
-      xpath(
-        '/aec:PollingPlace/eml:PhysicalLocation/eml:Address/xal:PostalServiceElements/xal:AddressLatitude/text()',
-        booth_nodes.xmldata,
-        '{{"aec","http://www.aec.gov.au/xml/schema/mediafeed"},{"eml","urn:oasis:names:tc:evs:schema:eml"},{"xal","urn:oasis:names:tc:ciq:xsdschema:xAL:2.0"}}'
-      )
-    ) [1]::text::numeric as lat,
-    (
-      xpath(
-        '/aec:PollingPlace/eml:PhysicalLocation/eml:Address/xal:PostalServiceElements/xal:AddressLongitude/text()',
-        booth_nodes.xmldata,
-        '{{"aec","http://www.aec.gov.au/xml/schema/mediafeed"},{"eml","urn:oasis:names:tc:evs:schema:eml"},{"xal","urn:oasis:names:tc:ciq:xsdschema:xAL:2.0"}}'
-      )
-    ) [1]::text::numeric as lon
-  from booth_nodes
+  select
+    (xpath('/aec:PollingPlace/aec:PollingPlaceIdentifier/@Id',       t.xmldata, $1))[1]::text::integer as id,
+    (xpath('/aec:PollingPlace/aec:PollingPlaceIdentifier/@Name',     t.xmldata, $1))[1]::text          as name,
+    (xpath('/xal:PostalServiceElements/xal:AddressLatitude/text()',  t.address, $1))[1]::text::numeric as lat,
+    (xpath('/xal:PostalServiceElements/xal:AddressLongitude/text()', t.address, $1))[1]::text::numeric as lon
+  from (
+      select xmldata,
+        (xpath('/aec:PollingPlace/eml:PhysicalLocation/eml:Address/xal:PostalServiceElements', xmldata, $1))[1] as address
+      from booth_nodes
+    ) t
 ),
 projected as (
   select

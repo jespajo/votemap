@@ -18,7 +18,10 @@ int main()
     {
         char *query = load_text_file("queries/booths.sql", ctx)->data;
 
-        Polygon_array *polygons = query_polygons(db, query, NULL, ctx);
+        string_array *params = NewArray(params, ctx);
+        *Add(params) = "{{\"aec\",\"http://www.aec.gov.au/xml/schema/mediafeed\"},{\"eml\",\"urn:oasis:names:tc:evs:schema:eml\"},{\"xal\",\"urn:oasis:names:tc:ciq:xsdschema:xAL:2.0\"}}";
+
+        Polygon_array *polygons = query_polygons(db, query, params, ctx);
 
         for (s64 i = 0; i < polygons->count; i++) {
             float   shade  = frand();
@@ -30,27 +33,23 @@ int main()
         }
     }
 
-    // Draw electorate boundaries.
+    // Draw electorate boundaries as a topology.
     {
-        char *query =
-        "   select st_asbinary(st_force2d(t.geom)) as path"
-        "   from ("
-        "       select (st_dump(st_boundary(st_simplify(geom, $1::float)))).geom as geom"
-        "       from federal_boundaries_2022"
-        "     ) as t"
-        ;
+        char *query = load_text_file("queries/topology.sql", ctx)->data;
 
-        string_array params = {.context = ctx};
+        string_array *params = NewArray(params, ctx);
 
-        *Add(&params) = "100.0";
+        float line_width = 100.0;
 
-        Path_array *paths = query_paths(db, query, &params, ctx);
+        *Add(params) = get_string(ctx, "%f", line_width)->data;
+
+        Path_array *paths = query_paths(db, query, params, ctx);
 
         for (s64 i = 0; i < paths->count; i++) {
             Vector4 colour = {0.9, 0.9, 0.9, 1.0};
             float   width  = 50;
 
-            Vertex_array *path_verts = draw_path(&paths->data[i], 50, colour, ctx);
+            Vertex_array *path_verts = draw_path(&paths->data[i], line_width, colour, ctx);
 
             add_verts(verts, path_verts);
         }
