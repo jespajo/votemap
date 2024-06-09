@@ -21,11 +21,7 @@ typedef Array(Path)     Path_array;
 typedef Array(Path)     Polygon;
 typedef Array(Polygon)  Polygon_array;
 
-bool same_point(Vector2 p, Vector2 q);
 bool points_are_clockwise(Vector2 *points, s64 num_points);
-bool is_polygon(Polygon *polygon);
-bool is_triangle(Path triangle);
-bool point_in_triangle(Vector2 point, Path triangle);
-Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx);
+Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context);
 
 #endif // SHAPES_H_INCLUDED

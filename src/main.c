@@ -14,8 +14,8 @@ int main()
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    float tolerance = 100.0; // "Pixel width in metres".
-    //float tolerance = 50.0; // Fails! @Bug.
+    float tolerance = 2000.0; // "Pixel width in metres".
+    //float tolerance = 50.0; // No longer fails!
 
     // Draw electorate boundaries as polygons.
     {
@@ -41,30 +41,30 @@ int main()
         }
     }
 
-    // Draw electorate boundaries as lines.
-    {
-        char *query =
-        "  select st_asbinary(t.geom) as path                      "
-        "  from (                                                  "
-        "      select st_simplify(geom, $1::float) as geom         "
-        "      from electorates_22_topo.edge_data                  "
-        "    ) t                                                   ";
-
-        string_array *params = NewArray(params, ctx);
-
-        *Add(params) = get_string(ctx, "%f", tolerance)->data;
-
-        Path_array *paths = query_paths(db, query, params, ctx);
-
-        for (s64 i = 0; i < paths->count; i++) {
-            Vector4 colour = {0.9, 0.9, 0.9, 1.0};
-            float   width  = tolerance/8;
-
-            Vertex_array *path_verts = draw_path(&paths->data[i], width, colour, ctx);
-
-            add_verts(verts, path_verts);
-        }
-    }
+//    // Draw electorate boundaries as lines.
+//    {
+//        char *query =
+//        "  select st_asbinary(t.geom) as path                      "
+//        "  from (                                                  "
+//        "      select st_simplify(geom, $1::float) as geom         "
+//        "      from electorates_22_topo.edge_data                  "
+//        "    ) t                                                   ";
+//
+//        string_array *params = NewArray(params, ctx);
+//
+//        *Add(params) = get_string(ctx, "%f", tolerance)->data;
+//
+//        Path_array *paths = query_paths(db, query, params, ctx);
+//
+//        for (s64 i = 0; i < paths->count; i++) {
+//            Vector4 colour = {0.9, 0.9, 0.9, 1.0};
+//            float   width  = tolerance/8;
+//
+//            Vertex_array *path_verts = draw_path(&paths->data[i], width, colour, ctx);
+//
+//            add_verts(verts, path_verts);
+//        }
+//    }
 
     write_array_to_file(verts, "/home/jpj/src/webgl/bin/vertices");
 

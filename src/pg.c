@@ -58,7 +58,7 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
                 d += sizeof(u32);
 
                 num_geometries += num_extra;
-                continue;
+                break;
             case WKB_POLYGON:;
                 Polygon polygon = {.context = ctx};
 
@@ -66,7 +66,7 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
                 d += sizeof(u32);
 
                 // Ignore polygons without any rings.
-                if (!num_rings)  continue;
+                if (!num_rings)  break;
 
                 for (u32 ring_index = 0; ring_index < num_rings; ring_index += 1) {
                     Path ring = {.context = ctx};

@@ -1,12 +1,10 @@
-Triangulation improvements:
-    1. Performance.
-    2. Correctness. (The last three points get left sometimes, plus other failures.)
-
-Redo the Voronoi diagram with topological data.
-Finish writing docs/topology.md.
+draw_path(): Make adjoining lines' vertices connect.
 
 Add JSON module to src/
 Output map labels in JSON format and draw them on screen.
+
+Redo the Voronoi diagram with topological data.
+Finish writing docs/topology.md.
 
 Write up database schema plan docs/database.txt.
 Upload XML files to database:

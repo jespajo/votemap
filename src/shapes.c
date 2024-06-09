@@ -1,47 +1,54 @@
 #include "shapes.h"
 
-bool same_point(Vector2 p, Vector2 q)
+static bool same_point(Vector2 p, Vector2 q)
 {
     if (p.v[0] != q.v[0])  return false;
     if (p.v[1] != q.v[1])  return false;
     return true;
 }
 
-bool points_are_clockwise(Vector2 *points, s64 num_points)
-// This function assumes that we're working with a TOP-left origin, with Y increasing downwards.
+static float clockwise_value(Vector2 *points, s64 num_points)
 {
-    if (num_points < 3) {
-        Error("points_are_clockwise() needs at least 3 points. We only have %ld.", num_points);
-    }
+    assert(num_points >= 3);
+
     float sum = 0;
-    for (int i = 0; i < num_points-1; i++) {
-        float *p = points[i].v;
-        float *q = points[i+1].v;
-        sum += (q[0] - p[0])/(q[1] + p[1]);
+    for (int i = 0; i < num_points; i++) {
+        float x1 = points[i].v[0];
+        float y1 = points[i].v[1];
+        float x2 = points[(i+1) % num_points].v[0];
+        float y2 = points[(i+1) % num_points].v[1];
+
+        sum += (x2 - x1)/(y1 + y2);
     }
-    float *p = points[0].v;
-    float *q = points[num_points-1].v;
-    sum += (p[0] - q[0])/(p[1] + q[1]);
-    return sum > 0;
+    return sum;
 }
 
-bool is_polygon(Polygon *polygon)
+bool points_are_clockwise(Vector2 *points, s64 num_points) //@Naming are_points_clockwise
+{
+    return clockwise_value(points, num_points) < 0;
+}
+
+bool points_are_anticlockwise(Vector2 *points, s64 num_points)
+{
+    return clockwise_value(points, num_points) >= 0;//@Todo: Why?
+}
+
+static bool is_polygon(Polygon *polygon)
 // See Polygon typedef.
 {
-    if (polygon->count < 0)  return false; // @Fixme: Should this be <= ?
+    if (polygon->count < 0)  return false; // Should this be <= ? @Todo
     for (s64 i = 0; i < polygon->count; i++) {
         Path *ring = &polygon->data[i];
-        bool clockwise = points_are_clockwise(ring->data, ring->count);
         if (!i) {
-            if (clockwise)   return false;
+            if (points_are_clockwise(ring->data, ring->count-1))      return false;
         } else {
-            if (!clockwise)  return false;
+            if (points_are_anticlockwise(ring->data, ring->count-1))  return false;
         }
     }
     return true;
 }
 
-bool is_triangle(Path triangle)
+static bool is_triangle(Path triangle)
 {
     // @Todo: Check the three points aren't colinear.
     if (triangle.count == 3)  return true;
@@ -53,19 +60,17 @@ bool is_triangle(Path triangle)
     return false;
 }
 
-bool point_in_triangle(Vector2 point, Path triangle)
+static bool point_in_triangle(Vector2 point, Vector2 *triangle)
 {
-    assert(is_triangle(triangle));
-
     // If the point is the same as one of the triangle's points, it's not considered in the triangle.
     for (int i = 0; i < 3; i++) {
-        if (same_point(triangle.data[i], point))  return false;
+        if (same_point(triangle[i], point))  return false;
     }
 
     float *p  = point.v;
-    float *t1 = triangle.data[0].v;
-    float *t2 = triangle.data[1].v;
-    float *t3 = triangle.data[2].v;
+    float *t1 = triangle[0].v;
+    float *t2 = triangle[1].v;
+    float *t3 = triangle[2].v;
 
     float d1 = (p[0] - t1[0])*(t2[1] - t1[1]) - (p[1] - t1[1])*(t2[0] - t1[0]);
     float d2 = (p[0] - t2[0])*(t3[1] - t2[1]) - (p[1] - t2[1])*(t3[0] - t2[0]);
@@ -77,9 +82,10 @@ bool point_in_triangle(Vector2 point, Path triangle)
     return !(negative && positive);
 }
 
-Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
+Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context)
 {
     assert(is_polygon(polygon));
+    Memory_Context *ctx = context;
 
     Path_array *triangles = NewArray(triangles, ctx);
 
@@ -87,72 +93,76 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
     // But for now we'll just take the outer ring and ignore holes.
     Path *ring = &polygon->data[0];
 
-    // This is like a circular linked list but all the links are stored in a separate array, and
-    // instead of being pointers, they're the indices of the next points in the ring. This makes it
-    // easy to iterate over all the points starting from any one: just call `i = next[i]` at the end
-    // of each loop until you encouter the current point again. The other advantage is that, as we
-    // "chop off ears" in the process of turning polygons into triangles, we just update the
-    // preceding index to point to the one after the removed one.
-    int *next = New(ring->count, int, ctx);
-    for (int i = 0; i < ring->count-1; i++)  next[i] = i + 1;
-    next[ring->count-1] = 0; // { 1, 2, 3, ..., 0 }
-
-    int num_triangles = ring->count-2;
+    //
+    // This is like a circular linked list, except the links are indices instead of pointers, and the
+    // data and links are stored in separate arrays. So:
+    //
+    //      Vector2 *point = ring->data[point_index];
+    //
+    //      int next_point_index = links[point_index];
+    //      Vector2  *next_point = ring->data[next_point_index];
+    //
+    // When we "chop off an ear", we'll update a single link to cut out the removed point.
+    //
+    int *links = New(ring->count, int, ctx);
     {
-        int i1 = 0;
-        int i0 = 0;
-
-        while (triangles->count < num_triangles) {
-            int v1 = i1;
-            int v2 = next[v1];
-            int v3 = next[v2];
-
-            bool remove = true;
-
-            Path ear = {.context = ctx}; // @Speed!: Wait... you create this even if you're not going to use it?? Jeez, no wonder this is so slow.
-
-            *Add(&ear) = ring->data[v1];
-            *Add(&ear) = ring->data[v2];
-            *Add(&ear) = ring->data[v3];
-            *Add(&ear) = ring->data[v1]; // Repeat the first point. @Speed, but might be useful for is_triangle verification??
-
-            if (points_are_clockwise(ear.data, 3)) {
-                // The ear is not on the outer hull.
-                remove = false;
-            } else {
-                // The ear is on the outer hull. Check all other points to see if any of them is inside this ear.
-                int i2 = next[v3];
-                while (i2 != v1) {
-                    if (point_in_triangle(ring->data[i2], ear)) {
-                        remove = false; // There is another point inside the ear.
-                        break;
-                    }
-                    i2 = next[i2];
-                }
-            }
-
-            if (!remove) {
-                i1 = v2;
-                // Make sure we don't loop around the ring forever. If there are no triangles yet, we shouldn't be back at the start where i1 == 0.
-                assert(triangles->count || i1);
-                // If we have partially triangulated, return what we've got. @Todo: Control what to return if triangulation fails with a parameter?
-                if (!(!triangles->count || i1 != i0)) {
-                    Log("Partial triangulation. Used %d out of %d vertices.", triangles->count, ring->count); // @Fixme.
-                    return triangles;
-                }
-                continue;
-            }
-
-            // Off with the ear!
-
-            *Add(triangles) = ear;
-
-            next[v1] = v3;
-            i1       = v3;
-            i0       = v3;
-        }
+        for (int i = 0; i < ring->count-1; i++)  links[i] = i + 1;
+        links[ring->count-1] = 0; // { 1, 2, 3, ..., 0 }
     }
 
-    assert(triangles->count == num_triangles);
+    int current_point_index =  0;
+    int halt_point_index    = -1; // If >= 0, means "we've tried this point index already"
+
+    while (triangles->count < ring->count-2) {
+        int i0 = current_point_index;
+        int i1 = links[current_point_index];
+        int i2 = links[links[current_point_index]];
+
+        Vector2 tri[3] = {ring->data[i0], ring->data[i1], ring->data[i2]};
+
+        if (points_are_anticlockwise(tri, 3)) {
+            // The ear is on the outer hull. Check whether any other point is inside this ear.
+            int i = links[i2];
+
+            while (i != i0) {
+                if (point_in_triangle(ring->data[i], tri))  break;
+                i = links[i];
+            }
+
+            if (i == i0) {
+                // None of the other points are inside. Off with the ear!
+                links[i0] = i2;
+
+                Path *ear = Add(triangles);
+                *ear = (Path){.context = ctx};
+                for (int j = 0; j < 3; j++)  *Add(ear) = tri[j];
+
+                current_point_index = i2;
+                halt_point_index    = -1;
+
+                continue;
+            }
+        }
+
+        // We won't remove this triangle.
+
+        if (halt_point_index < 0)  halt_point_index = current_point_index;
+
+        current_point_index = i1;
+        if (current_point_index != halt_point_index)  continue;
+
+        if (triangles->count == ring->count-3) {
+            // Sometimes the last three points aren't in anticlockwise order for reasons unknown and we end up here.
+            // We don't need to fix the triangles because they're on their way to becoming GPU fodder.
+            Path *final = Add(triangles);
+            *final = (Path){.context = ctx};
+            for (int i = 0; i < 3; i++)   *Add(final) = tri[i];
+            break;
+        }
+
+        Log("Partial triangulation: %d out of %d triangles created.", triangles->count, ring->count-2);
+        break;
+    }
+
     return triangles;
 }
