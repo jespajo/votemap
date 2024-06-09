@@ -89,7 +89,9 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
                     }
 
                     // Ensure the first ring is counter-clockwise and subsequent rings are clockwise.
-                    if (!ring_index ^ !points_are_clockwise(ring.data, ring.count))  reverse_array(&ring);
+                    if (!ring_index) {if (points_are_clockwise(ring.data, ring.count))      reverse_array(&ring);}
+                    else             {if (points_are_anticlockwise(ring.data, ring.count))  reverse_array(&ring);}
+                    // @Todo: What if the determinant is 0?
 
                     *Add(&polygon) = ring;
                 }

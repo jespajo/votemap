@@ -14,8 +14,7 @@ int main()
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    float tolerance = 2000.0; // "Pixel width in metres".
-    //float tolerance = 50.0; // No longer fails!
+    float tolerance = 50.0; // "Pixel width in metres".
 
     // Draw electorate boundaries as polygons.
     {
@@ -33,7 +32,7 @@ int main()
         Polygon_array *polygons = query_polygons(db, query, params, ctx);
 
         for (s64 i = 0; i < polygons->count; i++) {
-            Vector4 colour = {frand(), 0.3, 0.5*frand(), 1.0};
+            Vector4 colour = {0.2, frand(), frand(), 1.0};
 
             Vertex_array *polygon_verts = draw_polygon(&polygons->data[i], colour, ctx);
 

@@ -22,6 +22,7 @@ typedef Array(Path)     Polygon;
 typedef Array(Polygon)  Polygon_array;
 
 bool points_are_clockwise(Vector2 *points, s64 num_points);
+bool points_are_anticlockwise(Vector2 *points, s64 num_points);
 Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context);
 
 #endif // SHAPES_H_INCLUDED

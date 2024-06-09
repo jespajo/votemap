@@ -11,26 +11,26 @@ static float clockwise_value(Vector2 *points, s64 num_points)
 {
     assert(num_points >= 3);
 
-    float sum = 0;
+    float det = 0;
     for (int i = 0; i < num_points; i++) {
         float x1 = points[i].v[0];
         float y1 = points[i].v[1];
         float x2 = points[(i+1) % num_points].v[0];
         float y2 = points[(i+1) % num_points].v[1];
 
-        sum += (x2 - x1)/(y1 + y2);
+        det += (x2 - x1)/(y1 + y2);
     }
-    return sum;
+    return det;
 }
 
-bool points_are_clockwise(Vector2 *points, s64 num_points) //@Naming are_points_clockwise
+bool points_are_clockwise(Vector2 *points, s64 num_points)
 {
-    return clockwise_value(points, num_points) < 0;
+    return clockwise_value(points, num_points) < 0; // (Inverted Y axis.)
 }
 
 bool points_are_anticlockwise(Vector2 *points, s64 num_points)
 {
-    return clockwise_value(points, num_points) >= 0;//@Todo: Why?
+    return clockwise_value(points, num_points) > 0;
 }
 
 static bool is_polygon(Polygon *polygon)
@@ -40,29 +40,17 @@ static bool is_polygon(Polygon *polygon)
     for (s64 i = 0; i < polygon->count; i++) {
         Path *ring = &polygon->data[i];
         if (!i) {
-            if (points_are_clockwise(ring->data, ring->count-1))      return false;
+            if (points_are_clockwise(ring->data, ring->count))      return false;
         } else {
-            if (points_are_anticlockwise(ring->data, ring->count-1))  return false;
+            if (points_are_anticlockwise(ring->data, ring->count))  return false;
         }
     }
     return true;
 }
 
-static bool is_triangle(Path triangle)
-{
-    // @Todo: Check the three points aren't colinear.
-    if (triangle.count == 3)  return true;
-    if (triangle.count == 4) {
-        Vector2 first = triangle.data[0];
-        Vector2 last  = triangle.data[3];
-        if (same_point(first, last))  return true;
-    }
-    return false;
-}
-
 static bool point_in_triangle(Vector2 point, Vector2 *triangle)
 {
-    // If the point is the same as one of the triangle's points, it's not considered in the triangle.
+    // If the point is the same as one of the triangle's points, it's not considered "in" the triangle.
     for (int i = 0; i < 3; i++) {
         if (same_point(triangle[i], point))  return false;
     }
@@ -113,14 +101,25 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context)
     int current_point_index =  0;
     int halt_point_index    = -1; // If >= 0, means "we've tried this point index already"
 
-    while (triangles->count < ring->count-2) {
+    int expect_num_triangles = ring->count-2;
+
+    while (triangles->count < expect_num_triangles) {
         int i0 = current_point_index;
         int i1 = links[current_point_index];
         int i2 = links[links[current_point_index]];
 
         Vector2 tri[3] = {ring->data[i0], ring->data[i1], ring->data[i2]};
 
-        if (points_are_anticlockwise(tri, 3)) {
+        float det = clockwise_value(tri, 3);
+        if (det == 0) {
+            // The points are colinear. The middle point can be removed without consequence.
+            links[i0] = i2;
+            expect_num_triangles -= 1;
+            continue;
+        }
+        bool clockwise = det < 0;
+
+        if (!clockwise) {
             // The ear is on the outer hull. Check whether any other point is inside this ear.
             int i = links[i2];
 
@@ -151,7 +150,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context)
         current_point_index = i1;
         if (current_point_index != halt_point_index)  continue;
 
-        if (triangles->count == ring->count-3) {
+        if (triangles->count == expect_num_triangles-1) {
             // Sometimes the last three points aren't in anticlockwise order for reasons unknown and we end up here.
             // We don't need to fix the triangles because they're on their way to becoming GPU fodder.
             Path *final = Add(triangles);
@@ -160,7 +159,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context)
             break;
         }
 
-        Log("Partial triangulation: %d out of %d triangles created.", triangles->count, ring->count-2);
+        Log("Partial triangulation. Created %d/%d triangles.", triangles->count, expect_num_triangles);
         break;
     }
 
