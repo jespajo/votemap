@@ -1,3 +1,10 @@
+Triangulation improvements:
+    1. Performance.
+    2. Correctness. (The last three points get left sometimes, plus other failures.)
+
+Redo the Voronoi diagram with topological data.
+Finish writing docs/topology.md.
+
 Add JSON module to src/
 Output map labels in JSON format and draw them on screen.
 
@@ -7,8 +14,6 @@ Upload XML files to database:
     candidate info
     vote data
     election info
-
-Create topologies from the district/Voronoi polygons.
 
 Make Voronoi map visualise real vote data instead of random colours.
 

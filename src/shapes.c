@@ -57,6 +57,11 @@ bool point_in_triangle(Vector2 point, Path triangle)
 {
     assert(is_triangle(triangle));
 
+    // If the point is the same as one of the triangle's points, it's not considered in the triangle.
+    for (int i = 0; i < 3; i++) {
+        if (same_point(triangle.data[i], point))  return false;
+    }
+
     float *p  = point.v;
     float *t1 = triangle.data[0].v;
     float *t2 = triangle.data[1].v;
@@ -104,7 +109,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
 
             bool remove = true;
 
-            Path ear = {.context = ctx};
+            Path ear = {.context = ctx}; // @Speed!: Wait... you create this even if you're not going to use it?? Jeez, no wonder this is so slow.
 
             *Add(&ear) = ring->data[v1];
             *Add(&ear) = ring->data[v2];
@@ -132,7 +137,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *ctx)
                 assert(triangles->count || i1);
                 // If we have partially triangulated, return what we've got. @Todo: Control what to return if triangulation fails with a parameter?
                 if (!(!triangles->count || i1 != i0)) {
-                    //Error("Partial triangulation. Used %d out of %d vertices.", triangles->count, ring->count); // @Fixme.
+                    Log("Partial triangulation. Used %d out of %d vertices.", triangles->count, ring->count); // @Fixme.
                     return triangles;
                 }
                 continue;

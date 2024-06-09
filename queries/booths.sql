@@ -1,3 +1,6 @@
+--
+-- This venerable query is @Deprecated, but, for now, here for reference.
+--
 with booth_nodes as (
   select unnest(
       xpath('/aec:MediaFeed/aec:PollingDistrictList/aec:PollingDistrict/aec:PollingPlaces/aec:PollingPlace', xmldata, $1)

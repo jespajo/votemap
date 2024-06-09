@@ -208,6 +208,7 @@ Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_Co
 
         u8_array *cell = *Get(row, "path");
         if (!cell)  return QueryError("Couldn't find a \"path\" column in the results.");
+        if (!cell->count)  continue;
 
         u8 *end_data = NULL;
         parse_paths(cell->data, result, &end_data);

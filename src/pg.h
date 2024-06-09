@@ -21,6 +21,16 @@ enum WKB_Geometry_Type {
     WKB_GEOMETRYCOLLECTION = 7,
 };
 
+//
+// A Postgres_result is an array of rows. Each row is a hash table, which has all the row's cells
+// (one for each column) keyed by the column names. An empty cell in a result is represented by a
+// pointer to a zeroed-out u8_array struct. So:
+//
+//      u8_array *cell = *Get(row, "my_column_name");
+//
+//      if (!cell)             <-- The query didn't have a column called my_column_name.
+//      else if (!cell->count) <-- The column name is correct, but the cell in this row is empty.
+//
 typedef Dict(u8_array *)    Result_row;
 typedef Array(Result_row *) Postgres_result;
 

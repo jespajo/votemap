@@ -1,5 +1,3 @@
-// New() variadic API. Ideally: New(Hash_Bucket, context) or New(8, Hash_Bucket, context).
-
 // Move documentation from new_map() to header file.
 
 #include <string.h>
@@ -133,6 +131,11 @@ void *new_map(Memory_Context *context, u64 key_size, u64 val_size, bool string_m
     // Reserve the first key/value pair. keys[-1] will be used as temporary storage for a key we're
     // operating on with Get(), Set() or Delete(). vals[-1] will store the default value for *Get()
     // to return if the requested key is not present.
+    //
+    // This means that when you use Get() with an incorrect key, the result returned is a zeroed-out
+    // value of the same type as map's values. We rely on this behaviour elsewhere! One day we might
+    // want a SetDefault() to allow changing the default value returned on a per-map basis, but the
+    // default default should always be the zeroed-out value.
     memset(map->vals, 0, val_size);
     map->keys += key_size;
     map->vals += val_size;
