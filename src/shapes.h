@@ -2,11 +2,7 @@
 #define SHAPES_H_INCLUDED
 
 #include "array.h"
-
-// Later we'll probably move these to vector.h.
-typedef struct {float v[2];}  Vector2;
-typedef struct {float v[3];}  Vector3;
-typedef struct {float v[4];}  Vector4;
+#include "vector.h"
 
 // In Path data, we guarantee:
 // - the y-axis increases downwards

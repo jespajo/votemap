@@ -24,11 +24,14 @@ Get JavaScript just to request based on the current zoom level when you press a 
 Turn main() into a CGI script that parses this and returns the verts to the web browser.
 
 Front end: improve two-part transitions.
-    Only do them if you're going from one zoomed-in look to another in a different place.
-    Expand the combined bounds box.
+    Only do them if you're going from one zoomed-in look to another in a different place?
+    Expand the combined bounds box?
+    Use some kind of spline!?
 
 Front end: draw map legend scale (e.g. show a line equal to 5km for reference).
 
 Front end: draw compass.
     On mobile, tap this to return to a view with north oriented upwards.
     On desktop, when you press the compass you go into rotation mode. A circle appears in the middle of the screen with the compass directions etched in. Your cursor is on the edge of the compass. A change in the cursor image would be nice. While the mouse is held down, the circle rotates such that the point the cursor was originally on is the closest point on the circle to the cursor position.
+
+Front end: proper FPS counter.
