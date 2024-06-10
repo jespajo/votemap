@@ -1,3 +1,12 @@
+// alloc() and resize() do not currently assert that their Memory_Context arguments are not NULL.
+// This should probably change, because it's too easy to accidentally create a new context:
+//
+//      u8_array array = {0};
+//      *Add(&array) = 1; // @Leak! A memory context for the array was created in the background.
+//
+// But memory leaks created in this way aren't hard to find: put a breakpoint in new_context() for
+// when parent == NULL. Generally there should only be one hit for the top-level context.
+
 // Some kind of visualisation would be really helpful.
 
 // At the moment we frequently operate on the arrays of blocks by deleting a block with

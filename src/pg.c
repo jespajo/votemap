@@ -281,7 +281,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
 
     Memory_Context *ctx = context;
 
-    Postgres_result *result = New(Postgres_result, ctx);
+    Postgres_result *result = NewArray(result, ctx);
 
     u64 query_hash = hash_query(query, params);
 

@@ -2,7 +2,7 @@
 
 #cc := clang
 cc := gcc
-#fsan := -fsanitize=address,undefined
+#fsan := -fsanitize=address,undefined # Our memory manager breaks it. Use valgrind.
 
 cflags += -Wall -Werror
 cflags += -Wno-unused
@@ -54,7 +54,7 @@ bin/%.o:  src/%.c;  $(cc) -c $(cflags) $<
 
 tags:  $(sources);  ctags --recurse src/
 
-tidy:           ;  rm -f core.*
+tidy:           ;  rm -f core.* vgcore.*
 pgcache-clean:  ;  rm -f /tmp/*.pgcache
 clean:      tidy;  rm -rf bin tags
 
