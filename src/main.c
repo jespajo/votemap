@@ -1,13 +1,14 @@
 #include <string.h>
 
 #include "draw.h"
-#include "pg.h"
+#include "json.h"
 #include "map.h"
+#include "pg.h"
 #include "strings.h"
 
 #include "grab.h" // @Leak
 
-int once_and_future_main()
+int main()
 {
     Memory_Context *ctx = new_context(NULL);
 
@@ -70,29 +71,23 @@ int once_and_future_main()
 
     write_array_to_file(verts, "/home/jpj/src/webgl/bin/vertices");
 
+    // Output map labels as JSON.
+    {
+        char *json_text = Grab(/*
+            {
+                "labels": [
+                    {"text": "AUSTRALIA", "pos": [254405, 2772229]}
+                ]
+            }
+        */);
+
+        char_array *json = get_string(ctx, json_text);
+
+        write_array_to_file(json, "/home/jpj/src/webgl/bin/labels.json"); // @Temporary: Change directory structure.
+    }
+
     PQfinish(db);
     free_context(ctx);
 
-    return 0;
-}
-
-#include "json.h"
-int main()
-{
-    Memory_Context *ctx = new_context(NULL);
-
-    char *json = Grab(/*
-        {"ABC": [3,2,1,"a"], "XYZ": 9}
-    */);
-
-    Parsed_JSON parsed = parse_json(json, strlen(json), ctx);
-    if (parsed.success)  Log("Victoly!");
-    else  Error("Failure!");
-
-    JSON_value *value = &parsed.json;
-
-    Log(get_json_printed(value, ctx)->data);
-
-    free_context(ctx);
     return 0;
 }

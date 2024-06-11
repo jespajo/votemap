@@ -1,4 +1,3 @@
-Add JSON module to src/
 Output map labels in JSON format and draw them on screen.
 
 Redo the Voronoi diagram with topological data.

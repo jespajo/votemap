@@ -161,9 +161,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     let vertices; {
         const response = await fetch("../bin/vertices");
-        const data     = await response.arrayBuffer();
+        const data = await response.arrayBuffer();
 
         vertices = new Float32Array(data);
+    }
+
+    let labels; {
+        const response = await fetch("../bin/labels.json");
+        const json = await response.json();
+
+        labels = json.labels;
     }
 
     //
@@ -593,15 +600,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             ui.scale(dpr, dpr);
             ui.clearRect(0, 0, windowWidth, windowHeight);
 
-            // Draw a square in the centre of Australia.
-            {
-                const size = 10;
-                const austCentre = xform(map.currentTransform, [254405, 2772229]);
-                ui.fillStyle = 'black';
-                ui.fillRect(austCentre[0]-size/2, austCentre[1]-size/2, size, size);
-            }
-
-            // Draw the map's current transform.
+            // Draw the map's current transform. @Cleanup: Make this a function.
             {
                 const height = 16;
                 ui.font = height + 'px sans serif';
@@ -621,6 +620,21 @@ document.addEventListener("DOMContentLoaded", async () => {
                     ui.fillText(label, x, y);
 
                     y -= height;
+                }
+            }
+
+            // Draw the labels loaded from the JSON file.
+            {
+                const height = 16;
+
+                for (const label of labels) {
+                    const {width} = ui.measureText(label);
+                    const screenPos = xform(map.currentTransform, label.pos);
+                    const x = screenPos[0] - width/2;
+                    const y = screenPos[1] - height/2;
+
+                    ui.fillStyle = 'black';
+                    ui.fillText(label.text, x, y);
                 }
             }
         }
