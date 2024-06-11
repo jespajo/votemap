@@ -307,7 +307,7 @@ static void delete_block(Memory_Block *blocks, s64 *count, Memory_Block *block)
 static u64 get_alignment(u64 unit_size)
 {
     u64 max_align = 16;
-    s64 alignment = (unit_size < max_align) ? round_up_to_power_of_two(unit_size) : max_align;
+    s64 alignment = (unit_size < max_align) ? round_up_pow2(unit_size) : max_align;
 
     return alignment;
 }

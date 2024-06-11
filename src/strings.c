@@ -23,7 +23,7 @@ static void vaprintf(char_array *array, char *format, va_list args)
         if (length < free_space)  break;
 
         assert(attempt == 0);
-        array_reserve(array, array->count + length + 1);
+        array_reserve(array, round_up_pow2(array->count + length + 1));
     }
 
     assert(0 <= length);

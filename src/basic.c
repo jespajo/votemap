@@ -4,7 +4,7 @@
 
 #include "basic.h"
 
-s64 round_up_to_power_of_two(s64 num)
+s64 round_up_pow2(s64 num)
 {
     // @Fixme: Assert not out of max range.
 
@@ -17,7 +17,7 @@ s64 round_up_to_power_of_two(s64 num)
 
 bool is_power_of_two(s64 num)
 {
-    s64 round = round_up_to_power_of_two(num);
+    s64 round = round_up_pow2(num);
 
     return (num == round);
 }

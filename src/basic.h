@@ -29,7 +29,7 @@ typedef ptrdiff_t      s64;
 #define S64_MIN  PTRDIFF_MIN
 #define S64_MAX  PTRDIFF_MAX
 
-s64 round_up_to_power_of_two(s64 num);
+s64 round_up_pow2(s64 num);
 bool is_power_of_two(s64 num);
 void log_error_(char *file, int line, char *format, ...);
 char *trim_left_(char *string, char *trim_chars, int num_trim_chars);

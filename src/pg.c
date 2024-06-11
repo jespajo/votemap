@@ -21,7 +21,7 @@ static void add_s32(u8_array *array, s32 number)
 {
     s64 new_count = array->count + sizeof(s32);
     if (array->limit < new_count) {
-        array_reserve(array, round_up_to_power_of_two(new_count));
+        array_reserve(array, round_up_pow2(new_count));
     }
     memcpy(array->data + array->count, &number, sizeof(s32));
     array->count = new_count;
