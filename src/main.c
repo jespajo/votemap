@@ -16,8 +16,7 @@ int main()
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    float metres_per_pixel = 300.0;
-    float tolerance = 5*metres_per_pixel;
+    float metres_per_pixel = 700.0;
 
     // Draw electorate boundaries as polygons.
     {
@@ -31,12 +30,13 @@ int main()
 
         string_array *params = NewArray(params, ctx);
 
-        *Add(params) = get_string(ctx, "%f", tolerance)->data;
+        *Add(params) = get_string(ctx, "%f", metres_per_pixel)->data;
 
         Polygon_array *polygons = query_polygons(db, query, params, ctx);
 
         for (s64 i = 0; i < polygons->count; i++) {
-            Vector4 colour = {0.2, frand(), frand(), 1.0};
+            float shade = frand();
+            Vector4 colour = {shade, shade, shade, 1.0};
 
             draw_polygon(&polygons->data[i], colour, verts);
         }
@@ -54,12 +54,12 @@ int main()
 
         string_array *params = NewArray(params, ctx);
 
-        *Add(params) = get_string(ctx, "%f", tolerance)->data;
+        *Add(params) = get_string(ctx, "%f", metres_per_pixel)->data;
 
         Path_array *paths = query_paths(db, query, params, ctx);
 
         for (s64 i = 0; i < paths->count; i++) {
-            Vector4 colour = {0.9, 0.9, 0.9, 1.0};
+            Vector4 colour = {0.9, 0.9, 0.3, 1.0};
 
             float line_width_px = 5;
             float line_width    = line_width_px*metres_per_pixel;

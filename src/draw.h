@@ -13,5 +13,6 @@ typedef Array(Vertex)  Vertex_array;
 
 void draw_polygon(Polygon *polygon, Vector4 colour, Vertex_array *out);
 void draw_path(Path *path, float width, Vector4 colour, Vertex_array *out);
+void draw_path_NEW(Path *path, float width, Vector4 colour, Vertex_array *out);
 
 #endif // DRAW_H_INCLUDED

@@ -1,5 +1,3 @@
-draw_path(): Make adjoining lines' vertices connect.
-
 Add JSON module to src/
 Output map labels in JSON format and draw them on screen.
 
@@ -35,3 +33,8 @@ Front end: draw compass.
     On desktop, when you press the compass you go into rotation mode. A circle appears in the middle of the screen with the compass directions etched in. Your cursor is on the edge of the compass. A change in the cursor image would be nice. While the mouse is held down, the circle rotates such that the point the cursor was originally on is the closest point on the circle to the cursor position.
 
 Front end: proper FPS counter.
+
+triangulate_polygon():
+    Return Triangle_array instead of Path_array. It will be faster and also make more sense because the output of triangulate_polygon doesn't follow the rules for Path structs, namely, repeat the first point in closed rings and make sure the points are in anticlockwise order to define a positive space.
+    Identify holes: turn the polygon into one big ring?
+    Use spatial hashing to speed it up.

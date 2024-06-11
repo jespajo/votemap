@@ -1,13 +1,13 @@
 #include "shapes.h"
 
-static bool same_point(Vector2 p, Vector2 q)
+bool same_point(Vector2 p, Vector2 q)
 {
     if (p.v[0] != q.v[0])  return false;
     if (p.v[1] != q.v[1])  return false;
     return true;
 }
 
-static float clockwise_value(Vector2 *points, s64 num_points)
+float clockwise_value(Vector2 *points, s64 num_points)
 {
     assert(num_points >= 3);
 

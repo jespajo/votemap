@@ -9,5 +9,7 @@ Vector2 add_vec2(Vector2 u, Vector2 w);
 Vector2 sub_vec2(Vector2 u, Vector2 w);
 Vector2 norm_vec2(Vector2 u);
 Vector2 scale_vec2(float a, Vector2 u);
+Vector2 rotate_90(Vector2 u);
+Vector2 rotate_270(Vector2 u);
 
 #endif // VECTOR_H_INCLUDED

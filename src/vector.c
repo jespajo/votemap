@@ -26,3 +26,15 @@ Vector2 scale_vec2(float a, Vector2 u)
     Vector2 v = {a*u.v[0], a*u.v[1]};
     return v;
 }
+
+Vector2 rotate_90(Vector2 u)
+{
+    Vector2 v = {-u.v[1], u.v[0]};
+    return v;
+}
+
+Vector2 rotate_270(Vector2 u)
+{
+    Vector2 v = {u.v[1], -u.v[0]};
+    return v;
+}
