@@ -7,7 +7,7 @@
 
 #include "grab.h" // @Leak
 
-int main()
+int once_and_future_main()
 {
     Memory_Context *ctx = new_context(NULL);
 
@@ -73,5 +73,26 @@ int main()
     PQfinish(db);
     free_context(ctx);
 
+    return 0;
+}
+
+#include "json.h"
+int main()
+{
+    Memory_Context *ctx = new_context(NULL);
+
+    char *json = Grab(/*
+        {"ABC": [3,2,1,"a"], "XYZ": 9}
+    */);
+
+    Parsed_JSON parsed = parse_json(json, strlen(json), ctx);
+    if (parsed.success)  Log("Victoly!");
+    else  Error("Failure!");
+
+    JSON_Value *value = &parsed.json;
+
+    Log(get_json_printed(value, ctx)->data);
+
+    free_context(ctx);
     return 0;
 }

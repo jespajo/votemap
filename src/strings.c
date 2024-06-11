@@ -43,3 +43,34 @@ char_array *get_string(Memory_Context *context, char *format, ...)
 
     return string;
 }
+
+void print_string(char_array *out, char *format, ...)
+{
+    va_list vargs;
+    va_start(vargs, format);
+    vaprintf(out, format, vargs);
+    va_end(vargs);
+}
+
+void print_double(double number, char_array *out)
+// We can extend this later. For now just remove trailing zero decimal places and if it's a whole
+// number then remove the whole decimal part.
+{
+    s64 old_count = out->count;
+    print_string(out, "%.15f", number);
+
+    s64 decimel_index = -1; // The index of the decimel place '.' character, or -1 if there was none.
+    for (s64 i = old_count; i < out->count; i++) {
+        if (out->data[i] != '.')  continue;
+        decimel_index = i;
+        break;
+    }
+    if (decimel_index < 0)  return;
+
+    // It's a number with a fractional part. Remove trailing zeroes.
+    for (s64 i = out->count-1; i > decimel_index; i--) {
+         if (out->data[i] == '0')  out->count -= 1;
+    }
+    if (out->data[out->count-1] == '.')  out->count -= 1; // Remove the dot too if it was all zeroes.
+    out->data[out->count] = '\0';
+}
