@@ -235,7 +235,7 @@ static void print_bytes_escaped_for_json(char *bytes, s64 num_bytes, char_array 
     out->count -= 1;
 }
 
-s64 json_value_to_uint(JSON_Value *json)
+s64 json_value_to_uint(JSON_value *json)
 // Return the number if it's a non-negative number in the range of an s64. Otherwise return -1.
 {
     if (json->type != JSON_NUMBER)  return -1;
@@ -247,46 +247,46 @@ s64 json_value_to_uint(JSON_Value *json)
     return (s64)json->number;
 }
 
-s64 assert_json_uint(JSON_Value *json)
+s64 assert_json_uint(JSON_value *json)
 {
     assert(json_value_to_uint(json) >= 0);
     return (s64)json->number;
 }
 
-float assert_json_float(JSON_Value *json)
+float assert_json_float(JSON_value *json)
 {
     assert(json->type == JSON_NUMBER);
     assert(-FLT_MAX <= json->number && json->number <= FLT_MAX); // This might be pointless. Remove if it causes problems.
     return (float)json->number;
 }
 
-char_array *assert_json_string(JSON_Value *json)
+char_array *assert_json_string(JSON_value *json)
 {
     assert(json->type == JSON_STRING);
     return json->string;
 }
 
-JSON_Array *json_value_to_array(JSON_Value *json)
+JSON_array *json_value_to_array(JSON_value *json)
 {
     if (json->type != JSON_ARRAY)  return NULL;
     return json->array;
 }
 
-JSON_Array *assert_json_array(JSON_Value *json)
+JSON_array *assert_json_array(JSON_value *json)
 {
     assert(json->type == JSON_ARRAY);
     return json->array;
 }
 
-JSON_Object *assert_json_object(JSON_Value *json)
+JSON_object *assert_json_object(JSON_value *json)
 {
     assert(json->type == JSON_OBJECT);
     return json->object;
 }
 
-void print_json(JSON_Value *json, char_array *out)
+void print_json(JSON_value *json, char_array *out)
 {
-    JSON_Value *j = json;
+    JSON_value *j = json;
 
     switch (j->type) {
         case JSON_NULL:
@@ -322,7 +322,7 @@ void print_json(JSON_Value *json, char_array *out)
                 *Add(out) = '"';
                 print_string(out, ": ");
 
-                JSON_Value *value = &j->object->vals[i];
+                JSON_value *value = &j->object->vals[i];
                 print_json(value, out);
             }
             *Add(out) = '}';
@@ -335,7 +335,7 @@ void print_json(JSON_Value *json, char_array *out)
     out->count -= 1;
 }
 
-char_array *get_json_printed(JSON_Value *json, Memory_Context *context)
+char_array *get_json_printed(JSON_value *json, Memory_Context *context)
 {
     char_array *result = NewArray(result, context);
 

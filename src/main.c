@@ -89,7 +89,7 @@ int main()
     if (parsed.success)  Log("Victoly!");
     else  Error("Failure!");
 
-    JSON_Value *value = &parsed.json;
+    JSON_value *value = &parsed.json;
 
     Log(get_json_printed(value, ctx)->data);
 
