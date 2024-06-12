@@ -1,7 +1,3 @@
-Back end: Query the database for the names, centroids and areas of the electorates. Put this into the JSON file.
-
-Front end: Only show labels if they don't overlap.
-
 Redo the Voronoi diagram with topological data.
 Finish writing docs/topology.md.
 
@@ -39,3 +35,5 @@ triangulate_polygon():
     Return Triangle_array instead of Path_array. It will be faster and also make more sense because the output of triangulate_polygon doesn't follow the rules for Path structs, namely, repeat the first point in closed rings and make sure the points are in anticlockwise order to define a positive space.
     Identify holes: turn the polygon into one big ring?
     Use spatial hashing to speed it up.
+
+Front end: Improve label maker. Keep trying to fit labels up to a point. It's good to keep trying but beyond a certain point it starts to look weird if we label one tiny electorate in a dense cluster of unlabelled electorates.

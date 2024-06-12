@@ -623,15 +623,79 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
             }
 
+
             // Draw the labels loaded from the JSON file.
             {
                 const height = 16;
+                ui.font = `${height}px sans serif`;
+                ui.textBaseline = "top";
+
+                const usedSpace = new Int8Array(256);
+                // x = num columns, y = num rows:
+                //        x*y = 256
+                //        x/y = ratio
+                //          x = y*ratio
+                //  ratio*y^2 = 256
+                //          y = sqrt(256/ratio)
+                const ratio   = windowWidth/windowHeight;
+                const numRows = Math.floor(Math.sqrt(usedSpace.length/ratio));
+                const numCols = Math.floor(numRows*ratio);
 
                 for (const label of labels) {
-                    const {width} = ui.measureText(label);
+                    const {width} = ui.measureText(label.text);
                     const screenPos = xform(map.currentTransform, label.pos);
                     const x = screenPos[0] - width/2;
                     const y = screenPos[1] - height/2;
+
+                    // To stop labels from overlapping, look at the usedSpace array. These are bytes
+                    // we turn from 0 to 1 when the corresponding pixel-space is used by a label.
+                    {
+                        // x1 and y1 are the bottom-right corner of the text box.
+                        const x1 = x + width;
+                        const y1 = y + height;
+
+                        // Convert these points to their usedSpace indices.
+                        const ix  = Math.floor((x/windowWidth)*numCols);
+                        const iy  = Math.floor((y/windowHeight)*numRows);
+                        const ix1 = Math.floor((x1/windowWidth)*numCols);
+                        const iy1 = Math.floor((y1/windowHeight)*numRows);
+
+                        let used = false;
+                        {
+                            let col = ix;
+                            let row = iy;
+                            while (row <= iy1) {
+                                // Check if anyone else is using the space.
+                                const index = numCols*row + col;
+                                if (usedSpace[index]) { // @Todo: Could this index be outside the array's range? What would happen?
+                                    used = true;
+                                    break;
+                                }
+                                col += 1;
+                                if (col <= ix1)  continue;
+                                col = ix;
+                                row += 1;
+                            }
+                        }
+
+                        //if (used)  continue; // Keep trying to fit all the labels.
+                        if (used)  break;      // Stop trying to add labels once one of them doesn't fit.
+
+                        // We will now use the space.
+                        {
+                            let col = ix;
+                            let row = iy;
+                            while (row <= iy1) {
+                                const index = numCols*row + col;
+                                usedSpace[index] = 1;
+
+                                col += 1;
+                                if (col <= ix1)  continue;
+                                col = ix;
+                                row += 1;
+                            }
+                        }
+                    }
 
                     ui.fillStyle = 'black';
                     ui.fillText(label.text, x, y);
