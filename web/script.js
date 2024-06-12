@@ -120,29 +120,6 @@ function combineBoxes(a, b) {
     return {x, y, width, height};
 }
 
-function draw_transform(ui, transform, windowWidth, windowHeight) {
-// Draw the transform in the bottom-right corner of the canvas.
-    const height = 16;
-    ui.font = height + 'px sans serif';
-    ui.textBaseline = "top";
-
-    let y = windowHeight - height;
-
-    for (const target of ["translateY", "translateX", "rotate", "scale"]) {
-        const label = target + ': ' + transform[target];
-        const width = 200;
-        const x     = windowWidth - width;
-
-        ui.fillStyle = 'rgba(255,255,255,0.9)';
-        ui.fillRect(x, y, width, height);
-
-        ui.fillStyle = 'black';
-        ui.fillText(label, x, y);
-
-        y -= height;
-    }
-}
-
 document.addEventListener("DOMContentLoaded", async () => {
     const gl = $("canvas#map").getContext("webgl");
     const ui = $("canvas#gui").getContext("2d");
@@ -306,6 +283,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         // must be recalculated from map.currentTransform.scale.
         scrollOffset: 0,
     };
+
+    // Toggle developer visualisations. @Debug
+    let debugTransform = false;
+    let debugLabels    = false;
 
     let currentTime = document.timeline.currentTime;
 
@@ -515,9 +496,19 @@ document.addEventListener("DOMContentLoaded", async () => {
                         });
                     }
 
-                    // We've consumed this key press. @Cleanup: Clear this per frame.
+                    // We've consumed this key press. @Cleanup: Delete all these once per frame.
                     delete input.pressed[key];
                 }
+            }
+
+            // Check whether developer visualisations have been toggled:
+            if (input.pressed['t']) {
+                debugTransform = !debugTransform;
+                delete input.pressed['t'];
+            }
+            if (input.pressed['l']) {
+                debugLabels = !debugLabels;
+                delete input.pressed['l'];
             }
         }
 
@@ -711,10 +702,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                     ui.fillText(label.text, x, y);
                 }
 
-                // Visualise the used-space grid.
-                {
+                if (debugLabels) { // Visualise the usedSpace grid. @Debug
                     ui.lineWidth = 1;
-                    ui.strokeStyle = 'rgba(255,0,0,0.75)';
+                    ui.strokeStyle = 'rgba(255,255,255,0.5)';
 
                     const colWidth  = windowWidth/numCols;
                     const rowHeight = windowHeight/numRows;
@@ -729,7 +719,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     }
                     ui.stroke();
 
-                    ui.fillStyle = 'rgba(255,0,0,0.75)';
+                    ui.fillStyle = 'rgba(255,255,255,0.35)';
                     for (let row = 0; row < numRows; row++) {
                         for (let col = 0; col < numCols; col++) {
                             const index = numCols*row + col;
@@ -741,8 +731,27 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
             }
 
-            // Draw the map's current transform.
-            //draw_transform(ui, map.currentTransform, windowWidth, windowHeight);
+            if (debugTransform) { // Draw the map's current transform in the bottom-right corner of the canvas. @Debug
+                const height = 16; // Text height.
+                ui.font = height + 'px sans serif';
+                ui.textBaseline = "top";
+
+                let y = windowHeight - height;
+
+                for (const target of ["translateY", "translateX", "rotate", "scale"]) {
+                    const label = target + ': ' + map.currentTransform[target];
+                    const width = 200;
+                    const x     = windowWidth - width;
+
+                    ui.fillStyle = 'rgba(255,255,255,0.9)';
+                    ui.fillRect(x, y, width, height);
+
+                    ui.fillStyle = 'black';
+                    ui.fillText(label, x, y);
+
+                    y -= height;
+                }
+            }
         }
 
         window.requestAnimationFrame(step);

@@ -1,3 +1,9 @@
+Labelmaker improvements:
+    Fix bug where labels rendered on one side of the screen wrap around and fill boxes in the used-space grid on the other side of the screen.
+    Keep a cached array of labels that you keep referring to each frame unless a dirty flag is set. Set the flag if the map's scale or rotation has changed, or the translation has changed beyond a threshold.
+    To make it appear more stable when zooming/rotating, debounce setting the dirty flag.
+    Get it to keep trying to find room for new labels after failing once but not to keep trying indefinitely. It starts to look weird if we label one tiny electorate in a dense cluster of unlabelled electorates.
+
 Redo the Voronoi diagram with topological data.
 Finish writing docs/topology.md.
 
@@ -9,6 +15,8 @@ Upload XML files to database:
     election info
 
 Make Voronoi map visualise real vote data instead of random colours.
+
+@Bug: I left my computer with the current build open in the browser for a few hours and when I tried scrolling the mouse, it was super janky, like the transformations weren't being applied uniformly. I stupidly refreshed the page. The fact that it appeared after a while made me thing it was floating-point issues to do with currentTime being large, but I haven't been able to reproduce the issue by setting currentTime to large values.
 
 Write up docs on map params:
     bounds
@@ -35,5 +43,3 @@ triangulate_polygon():
     Return Triangle_array instead of Path_array. It will be faster and also make more sense because the output of triangulate_polygon doesn't follow the rules for Path structs, namely, repeat the first point in closed rings and make sure the points are in anticlockwise order to define a positive space.
     Identify holes: turn the polygon into one big ring?
     Use spatial hashing to speed it up.
-
-Front end: Improve label maker. Keep trying to fit labels up to a point. It's good to keep trying but beyond a certain point it starts to look weird if we label one tiny electorate in a dense cluster of unlabelled electorates.
