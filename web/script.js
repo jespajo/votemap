@@ -120,6 +120,29 @@ function combineBoxes(a, b) {
     return {x, y, width, height};
 }
 
+function draw_transform(ui, transform, windowWidth, windowHeight) {
+// Draw the transform in the bottom-right corner of the canvas.
+    const height = 16;
+    ui.font = height + 'px sans serif';
+    ui.textBaseline = "top";
+
+    let y = windowHeight - height;
+
+    for (const target of ["translateY", "translateX", "rotate", "scale"]) {
+        const label = target + ': ' + transform[target];
+        const width = 200;
+        const x     = windowWidth - width;
+
+        ui.fillStyle = 'rgba(255,255,255,0.9)';
+        ui.fillRect(x, y, width, height);
+
+        ui.fillStyle = 'black';
+        ui.fillText(label, x, y);
+
+        y -= height;
+    }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
     const gl = $("canvas#map").getContext("webgl");
     const ui = $("canvas#gui").getContext("2d");
@@ -600,45 +623,22 @@ document.addEventListener("DOMContentLoaded", async () => {
             ui.scale(dpr, dpr);
             ui.clearRect(0, 0, windowWidth, windowHeight);
 
-            // Draw the map's current transform. @Cleanup: Make this a function.
-            {
-                const height = 16;
-                ui.font = height + 'px sans serif';
-                ui.textBaseline = "top";
-
-                let y = windowHeight - height;
-
-                for (const target of ["translateY", "translateX", "rotate", "scale"]) {
-                    const label = target + ': ' + map.currentTransform[target];
-                    const width = 200;
-                    const x     = windowWidth - width;
-
-                    ui.fillStyle = 'rgba(255,255,255,0.9)';
-                    ui.fillRect(x, y, width, height);
-
-                    ui.fillStyle = 'black';
-                    ui.fillText(label, x, y);
-
-                    y -= height;
-                }
-            }
-
-
             // Draw the labels loaded from the JSON file.
             {
                 const height = 16;
                 ui.font = `${height}px sans serif`;
                 ui.textBaseline = "top";
 
-                const usedSpace = new Int8Array(256);
+                const resolution = 2048; // @Memory @Speed
+                const usedSpace  = new Int8Array(resolution);
                 // x = num columns, y = num rows:
-                //        x*y = 256
+                //        x*y = resolution
                 //        x/y = ratio
                 //          x = y*ratio
-                //  ratio*y^2 = 256
-                //          y = sqrt(256/ratio)
+                //  ratio*y^2 = resolution
+                //          y = sqrt(resolution/ratio)
                 const ratio   = windowWidth/windowHeight;
-                const numRows = Math.floor(Math.sqrt(usedSpace.length/ratio));
+                const numRows = Math.floor(Math.sqrt(resolution/ratio));
                 const numCols = Math.floor(numRows*ratio);
 
                 for (const label of labels) {
@@ -697,10 +697,13 @@ document.addEventListener("DOMContentLoaded", async () => {
                         }
                     }
 
-                    ui.fillStyle = 'black';
+                    ui.fillStyle = 'white';
                     ui.fillText(label.text, x, y);
                 }
             }
+
+            // Draw the map's current transform.
+            //draw_transform(ui, map.currentTransform, windowWidth, windowHeight);
         }
 
         window.requestAnimationFrame(step);
