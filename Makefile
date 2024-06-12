@@ -1,4 +1,4 @@
-#MAKEFLAGS += --jobs=$(shell nproc)
+MAKEFLAGS += --jobs=$(shell nproc)
 
 #cc := clang
 cc := gcc

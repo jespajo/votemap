@@ -629,7 +629,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 ui.font = `${height}px sans serif`;
                 ui.textBaseline = "top";
 
-                const resolution = 2048; // @Memory @Speed
+                const resolution = 256;
                 const usedSpace  = new Int8Array(resolution);
                 // x = num columns, y = num rows:
                 //        x*y = resolution
@@ -641,9 +641,19 @@ document.addEventListener("DOMContentLoaded", async () => {
                 const numRows = Math.floor(Math.sqrt(resolution/ratio));
                 const numCols = Math.floor(numRows*ratio);
 
+                // Draw the labels.
                 for (const label of labels) {
-                    const {width} = ui.measureText(label.text);
                     const screenPos = xform(map.currentTransform, label.pos);
+
+                    let offScreen = false; { // @Cleanup. Overlap function?
+                        if (screenPos[0] < 0)                  offScreen = true;
+                        else if (screenPos[0] > windowWidth)   offScreen = true;
+                        else if (screenPos[1] < 0)             offScreen = true;
+                        else if (screenPos[1] > windowHeight)  offScreen = true;
+                    }
+                    if (offScreen)  continue;
+
+                    const {width} = ui.measureText(label.text);
                     const x = screenPos[0] - width/2;
                     const y = screenPos[1] - height/2;
 
@@ -678,8 +688,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                             }
                         }
 
-                        //if (used)  continue; // Keep trying to fit all the labels.
-                        if (used)  break;      // Stop trying to add labels once one of them doesn't fit.
+                        //if (used)  break;      // Stop trying to add labels once one of them doesn't fit.
+                        if (used)  continue; // Keep trying to fit all the labels.
 
                         // We will now use the space.
                         {
@@ -699,6 +709,35 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                     ui.fillStyle = 'white';
                     ui.fillText(label.text, x, y);
+                }
+
+                // Visualise the used-space grid.
+                {
+                    ui.lineWidth = 1;
+                    ui.strokeStyle = 'rgba(255,0,0,0.75)';
+
+                    const colWidth  = windowWidth/numCols;
+                    const rowHeight = windowHeight/numRows;
+
+                    for (let i = 0; i < numCols+1; i++) {
+                        ui.moveTo(colWidth*i, 0);
+                        ui.lineTo(colWidth*i, windowHeight);
+                    }
+                    for (let i = 0; i < numRows+1; i++) {
+                        ui.moveTo(0,           rowHeight*i);
+                        ui.lineTo(windowWidth, rowHeight*i);
+                    }
+                    ui.stroke();
+
+                    ui.fillStyle = 'rgba(255,0,0,0.75)';
+                    for (let row = 0; row < numRows; row++) {
+                        for (let col = 0; col < numCols; col++) {
+                            const index = numCols*row + col;
+                            if (usedSpace[index]) {
+                                ui.fillRect(colWidth*col, rowHeight*row, colWidth, rowHeight);
+                            }
+                        }
+                    }
                 }
             }
 
