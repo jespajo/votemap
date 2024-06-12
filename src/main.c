@@ -73,15 +73,26 @@ int main()
 
     // Output map labels as JSON.
     {
-        char *json_text = Grab(/*
-            {
-                "labels": [
-                    {"text": "AUSTRALIA", "pos": [254405, 2772229]}
-                ]
-            }
+        char *query = Grab(/*
+            select jsonb_build_object(
+                'labels', jsonb_agg(
+                    jsonb_build_object(
+                        'text', name,
+                        'pos', jsonb_build_array(round(st_x(centroid)), round(-st_y(centroid)))
+                      )
+                  )
+              )::text as json
+            from (
+                select name,
+                  st_centroid(geom) as centroid
+                from electorates_22
+                order by st_area(geom) desc
+              ) t;
         */);
 
-        char_array *json = get_string(ctx, json_text);
+        Postgres_result *result = query_database(db, query, NULL, ctx);
+
+        u8_array *json = *Get(result->data[0], "json");
 
         write_array_to_file(json, "/home/jpj/src/webgl/bin/labels.json"); // @Temporary: Change directory structure.
     }

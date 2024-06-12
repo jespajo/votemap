@@ -1,4 +1,6 @@
-Output map labels in JSON format and draw them on screen.
+Back end: Query the database for the names, centroids and areas of the electorates. Put this into the JSON file.
+
+Front end: Only show labels if they don't overlap.
 
 Redo the Voronoi diagram with topological data.
 Finish writing docs/topology.md.
