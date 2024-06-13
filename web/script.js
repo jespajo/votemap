@@ -655,11 +655,17 @@ document.addEventListener("DOMContentLoaded", async () => {
                         const x1 = x + width;
                         const y1 = y + height;
 
-                        // Convert these points to their usedSpace indices.
-                        const ix  = Math.floor((x/windowWidth)*numCols);
-                        const iy  = Math.floor((y/windowHeight)*numRows);
-                        const ix1 = Math.floor((x1/windowWidth)*numCols);
-                        const iy1 = Math.floor((y1/windowHeight)*numRows);
+                        const colWidth  = windowWidth/numCols;
+                        const rowHeight = windowHeight/numRows;
+                        // Attempt to make the labels stable across translations:
+                        const offsetX = map.currentTransform.translateX % colWidth;
+                        const offsetY = map.currentTransform.translateY % rowHeight;
+
+                        // Convert the text's bounding box points to their usedSpace indices.
+                        const ix  = Math.floor(((x-offsetX)/windowWidth)*numCols);
+                        const iy  = Math.floor(((y-offsetY)/windowHeight)*numRows);
+                        const ix1 = Math.floor(((x1-offsetX)/windowWidth)*numCols);
+                        const iy1 = Math.floor(((y1-offsetY)/windowHeight)*numRows);
 
                         let used = false;
                         {

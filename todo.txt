@@ -1,8 +1,25 @@
-Labelmaker improvements:
+---
+
+Stabilise label-maker algorithm:
+    1. Get the screen bounding box in map-space coordinates as four points.
+    2. Make a note of the X and Y domains of these four points. This whole big rectangle becomes our area of focus.
+    3. Decide the grid size---it will be a power of two---based on how many squares of that size we need to cover the rectangle. We want the smallest grid size possible while still covering the rectangle with no more than `resolution` squares.
+    4. In fact, this rectangle---the one made of grid squares, which is most likely slightly larger than the rectangle that envelopes our screen's bounding quad---becomes our real grid of focus. From now on we can turn XY coordinates into an index in the usedSpace buffer by finding `Math.floor(((y-gridRect.y)/numGridRows)*numGridCols + (x-gridRect.x)/numGridCols)`.
+    5. When we go to draw a label:
+       a. Find its bounding box in map-space coordinates. Skip it if it's outside our grid.
+       b. Sort the points of the bounding box by Y. Call the sorted points A, B, C and D.
+       c. Iterate over the grid rows in the Y-range of A, B, C and D.
+          i. To start with, track the lines AB and AC. On each pass, find the X values of these lines. These become our X-range. When we get to the Y value of B, our lines become AC and BD. When we get to the Y value of C, our lines become BD and CD.
+          ii. Turn each square in the grid within the X range into a usedSpace buffer index. If the byte at this index has been set already, cancel the label, set `used = true`.
+       d. If we get this far and `used` is still false, iterate over the grid rows in the same way as before, but this time, set all the bytes in the usedSpace buffer.
+
+Old ideas for label-maker improvements:
     Fix bug where labels rendered on one side of the screen wrap around and fill boxes in the used-space grid on the other side of the screen.
     Keep a cached array of labels that you keep referring to each frame unless a dirty flag is set. Set the flag if the map's scale or rotation has changed, or the translation has changed beyond a threshold.
     To make it appear more stable when zooming/rotating, debounce setting the dirty flag.
     Get it to keep trying to find room for new labels after failing once but not to keep trying indefinitely. It starts to look weird if we label one tiny electorate in a dense cluster of unlabelled electorates.
+
+---
 
 Redo the Voronoi diagram with topological data.
 Finish writing docs/topology.md.
