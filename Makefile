@@ -37,7 +37,7 @@ all:  bin/main
 all:  tags
 
 # Run targets:
-all:  ; bin/main
+#all:  ; bin/main
 
 sources    := $(shell find src -type f)
 non_mains  := $(shell grep -L '^int main' $(sources))
@@ -60,3 +60,7 @@ clean:      tidy;  rm -rf bin tags
 
 bin/%.d: ;
 include $(deps)
+
+# Type-check JavaScript:
+bin/checked-%-js:  web/%.js;  (tsc --noEmit --checkJs --target es6 $< && touch $@) | sed 's/(\(.*\),\(.*\)):/:\1:\2:/'
+all:  $(patsubst web/%.js,bin/checked-%-js,$(wildcard web/*.js))

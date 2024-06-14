@@ -1,3 +1,5 @@
+/** @typedef {{scale: number, rotate: number, translateX: number, translateY: number}} Transform */
+
 const $ = document.querySelector.bind(document);
 const $$ = document.querySelectorAll.bind(document);
 
@@ -75,6 +77,9 @@ function clone(object) {
     return JSON.parse(JSON.stringify(object));
 }
 
+/**
+ * @returns {Transform}
+ */
 function fitBox(inner, outer) {
 // Return the transform (applied to the inner box) required to fit the inner box in the centre
 // of the outer box. The boxes are of the form {x, y, width, height}.
@@ -253,6 +258,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         //
         // Map state variables:
         //
+        /** @type {Transform} */
         currentTransform: {
             scale:      1,
             rotate:     0, // The angle, in radians, of a counter-clockwise rotation.
@@ -666,10 +672,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                             else if (y > maxY)  maxY = y;
                         }
                     }
-                    focusX      = minX;
-                    focusY      = minY;
-                    focusWidth  = maxX-minX;
-                    focusHeight = maxY-minY;
+                    const focusWidth  = maxX-minX;
+                    const focusHeight = maxY-minY;
 
                     const ratio = focusWidth/focusHeight;
 
@@ -685,8 +689,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                     numGridCols = Math.floor(resolution/numRows); // The real number of columns in our grid.
 
                     gridRect = {
-                        x:      focusX - (focusX % gridSize),
-                        y:      focusY - (focusY % gridSize),
+                        x:      minX - (minX % gridSize),
+                        y:      minY - (minY % gridSize),
                         width:  numGridCols*gridSize,
                         height: numGridRows*gridSize,
                     };
