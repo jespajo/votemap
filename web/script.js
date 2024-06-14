@@ -1,4 +1,25 @@
-/** @typedef {{scale: number, rotate: number, translateX: number, translateY: number}} Transform */
+/**
+        @typedef {{
+                scale:      number,
+                rotate:     number,
+                translateX: number,
+                translateY: number
+            }} Transform
+
+        @typedef {{x: number, y: number}} Vec2
+
+        @typedef {{
+                x:      number,
+                y:      number,
+                width:  number,
+                height: number
+            }} Rect
+
+    Box is a variable-length array of 2D points. In practice, it's 2 or 4 points,
+    depending on whether we're taking the box's rotation into account.
+
+        @typedef {Vec2[]} Box
+ */
 
 const $ = document.querySelector.bind(document);
 const $$ = document.querySelectorAll.bind(document);
@@ -35,22 +56,24 @@ const FRAGMENT_SHADER_TEXT = `
     }
 `;
 
+/** @type {(transform: Transform, vec2: Vec2) => Vec2} */
 function xform(transform, vec2) {
     const {scale, rotate, translateX, translateY} = transform;
-    const [x0, y0] = vec2;
+    const {x, y} = vec2;
 
     const sin = Math.sin(rotate);
     const cos = Math.cos(rotate);
 
-    const x1 = scale*(x0*cos + y0*sin) + translateX;
-    const y1 = scale*(y0*cos - x0*sin) + translateY;
+    const x1 = scale*(x*cos + y*sin) + translateX;
+    const y1 = scale*(y*cos - x*sin) + translateY;
 
-    return [x1, y1];
+    return {x: x1, y: y1};
 }
 
+/** @type {(transform: Transform, vec2: Vec2) => Vec2} */
 function inverseXform(transform, vec2) {
     const {scale, rotate, translateX, translateY} = transform;
-    const [x0, y0] = vec2;
+    const {x, y} = vec2;
 
     const sin = Math.sin(rotate);
     const cos = Math.cos(rotate);
@@ -59,16 +82,17 @@ function inverseXform(transform, vec2) {
     const det = scale*scale*(cos*cos + sin*sin);
     if (det == 0)  throw new Error();
 
-    const x1 = x0 - translateX;
-    const y1 = y0 - translateY;
+    const x1 = x - translateX;
+    const y1 = y - translateY;
 
     // @Cleanup: Redundant scale on numerator and denom.
     const x2 = (scale/det)*(x1*cos - y1*sin);
     const y2 = (scale/det)*(x1*sin + y1*cos);
 
-    return [x2, y2];
+    return {x: x2, y: y2};
 }
 
+/** @type {(a: number, b: number, t: number) => number} */
 function lerp(a, b, t) {
     return (1-t)*a + t*b;
 }
@@ -77,9 +101,7 @@ function clone(object) {
     return JSON.parse(JSON.stringify(object));
 }
 
-/**
- * @returns {Transform}
- */
+/** @type {(inner: Rect, outer: Rect) => Transform} */      // @Cleanup: Change to Box (array of 2)
 function fitBox(inner, outer) {
 // Return the transform (applied to the inner box) required to fit the inner box in the centre
 // of the outer box. The boxes are of the form {x, y, width, height}.
@@ -97,6 +119,7 @@ function fitBox(inner, outer) {
     return transform;
 }
 
+/** @type {(a: Rect, b: Rect) => Rect} */
 function combineBoxes(a, b) {
 // If one of the boxes contains the other, return the larger box (the actual object, not a copy of it).
 // @Cleanup: All this would be less tedious if we made common use of 'box' vs 'rect' and actually used boxes.
@@ -171,6 +194,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         vertices = new Float32Array(data);
     }
 
+    /** @typedef {{text: string, pos: [number, number]}} Label */
+    /** @type {Label[]} */
     let labels; {
         const response = await fetch("../bin/labels.json");
         const json = await response.json();
@@ -184,13 +209,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const input = {
         // pointer[0] is the mouse, or the first finger to touch the screen. pointer[1] is the second finger.
+        /** @typedef {{id: number, down: boolean, x: number, y: number}} Pointer */
+        /** @type {[Pointer, Pointer]} */
         pointers: [
             {id: 0, down: false, x: 0, y: 0}, // X and Y are in screen coordinates.
             {id: 0, down: false, x: 0, y: 0},
         ],
 
+        /** @type {number} */
         scroll: 0, // The deltaY of wheel events.
 
+        /** @type {{[key: string]: boolean}} */
         pressed: {}, // E.g. {a: true, b: true}.
     };
 
@@ -268,25 +297,28 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // When the user presses their mouse down on the map, we lock the mouse position to its
         // current location on the map. On a touchscreen, we do this with up to two fingers.
+        /** @typedef {{locked: boolean, x: number, y: number}} PointerLock */
+        /** @type {[PointerLock, PointerLock]} */
         pointerLocks: [  // X and Y are in map coordinates.
             {locked: false, x: 0, y: 0},
             {locked: false, x: 0, y: 0},
         ],
 
-        // Members of the animations array look like this:
-        //  {
-        //      startTime:  <time stamp>
-        //      endTime:    <time stamp>
-        //      start:      {scale: 1, rotate: 0, translateX: 0, translateY: 0},
-        //      end:        {scale: 3, rotate: 0, translateX: 0, translateY: 0},
-        //      scroll?:    true,
-        //  }
+        /** @typedef {{
+         *      startTime: DOMHighResTimeStamp,
+         *      endTime:   DOMHighResTimeStamp,
+         *      start:     Transform,
+         *      end:       Transform,
+         *      scroll?:   true
+         *  }} Animation */
+        /** @type Array<Animation> */
         animations: [],
 
         // This value represents how far the user has scrolled in "pixels", if you imagine the map
         // is a normal web page where, as you scroll, the map goes from minimum to maximum zoom.
         // This value is only valid if there is currently a scroll animation happening. Otherwise it
         // must be recalculated from map.currentTransform.scale.
+        /** @type {number} */
         scrollOffset: 0,
     };
 
@@ -321,10 +353,10 @@ document.addEventListener("DOMContentLoaded", async () => {
                         // The user has just pressed the mouse or touched the screen.
                         lock[i].locked = true;
 
-                        const pointerMapCoords = inverseXform(ct, [ptr[i].x, ptr[i].y]);
+                        const pointerMapCoords = inverseXform(ct, ptr[i]);
 
-                        lock[i].x = pointerMapCoords[0];
-                        lock[i].y = pointerMapCoords[1];
+                        lock[i].x = pointerMapCoords.x;
+                        lock[i].y = pointerMapCoords.y;
 
                         map.animations.length = 0; // Cancel any current animations.
                     }
@@ -373,17 +405,17 @@ document.addEventListener("DOMContentLoaded", async () => {
                 ct.rotate = mapAngle - screenAngle;
 
                 // Find translation:
-                const lockScreenCoords = xform(ct, [lock[0].x, lock[0].y]);
+                const lockScreenCoords = xform(ct, lock[0]);
 
-                ct.translateX += ptr[0].x - lockScreenCoords[0];
-                ct.translateY += ptr[0].y - lockScreenCoords[1];
+                ct.translateX += ptr[0].x - lockScreenCoords.x;
+                ct.translateY += ptr[0].y - lockScreenCoords.y;
             } else {
                 for (let i = 0; i < 2; i++) {
                     if (lock[i].locked && !lock[1-i].locked) {
-                        const lockScreenCoords = xform(ct, [lock[i].x, lock[i].y]);
+                        const lockScreenCoords = xform(ct, lock[i]);
 
-                        ct.translateX += ptr[i].x - lockScreenCoords[0];
-                        ct.translateY += ptr[i].y - lockScreenCoords[1];
+                        ct.translateX += ptr[i].x - lockScreenCoords.x;
+                        ct.translateY += ptr[i].y - lockScreenCoords.y;
 
                         break;
                     }
@@ -396,8 +428,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             const {minScale, maxScale, maxScroll} = map;
             const ct = map.currentTransform;
 
-            const exp0 = Math.log2(minScale); // @Speed.
-            const exp1 = Math.log2(maxScale); // @Speed.
+            const exp0 = Math.log2(minScale); // @Cleanup. We'd rather store the exponential value. Transform.scale should also be the exponential.
+            const exp1 = Math.log2(maxScale);
 
             if (!map.animations.length || !map.animations[0].scroll) {
                 // There is not currently a scroll animation happening, so we can't trust the
@@ -419,12 +451,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             newTransform.scale = Math.pow(2, exp);
 
             const mouse  = input.pointers[0];
-            const origin = inverseXform(ct, [mouse.x, mouse.y]);
+            const origin = inverseXform(ct, mouse);
 
             // @Naming: These variables. Call them something like "error", "correction", "offset"?
             const originScreenCoords = xform(newTransform, origin);
-            newTransform.translateX += mouse.x - originScreenCoords[0];
-            newTransform.translateY += mouse.y - originScreenCoords[1];
+            newTransform.translateX += mouse.x - originScreenCoords.x;
+            newTransform.translateY += mouse.y - originScreenCoords.y;
 
             const duration = 100;
 
@@ -454,9 +486,10 @@ document.addEventListener("DOMContentLoaded", async () => {
                 if (input.pressed[key]) {
                     const targetBox = boxes[key];
 
+                    /** @type Rect */ // @Cleanup: Change to Box.
                     let screenBounds; { // Get the screen in map coordinates.
-                        const [x1, y1] = inverseXform(map.currentTransform, [0, 0]);
-                        const [x2, y2] = inverseXform(map.currentTransform, [windowWidth, windowHeight]);
+                        const {x: x1, y: y1} = inverseXform(map.currentTransform, {x: 0, y: 0});
+                        const {x: x2, y: y2} = inverseXform(map.currentTransform, {x: windowWidth, y: windowHeight});
 
                         screenBounds = {x: x1, y: y1, width: x2-x1, height: y2-y1};
                     }
@@ -650,22 +683,23 @@ document.addEventListener("DOMContentLoaded", async () => {
                 const resolution = 512; // @Speed.
                 const usedSpace  = new Int8Array(resolution);
 
-                const screenCorners = [
-                    [0,           0],
-                    [0,           windowHeight],
-                    [windowWidth, windowHeight],
-                    [windowWidth, 0]
-                ].map(
-                    corner => inverseXform(map.currentTransform, corner) // In map coordinates.
-                  );
+                /** @type Box */
+                const screenBoxScreenCoords = [
+                    {x: 0,           y: 0},
+                    {x: 0,           y: windowHeight},
+                    {x: windowWidth, y: windowHeight},
+                    {x: windowWidth, y: 0}
+                ];
+                /** @type Box */
+                const screenBoxMapCoords = screenBoxScreenCoords.map(v => inverseXform(map.currentTransform, v));
 
                 let gridSize, numGridCols, numGridRows, gridRect; {
                     // Find the map-axis-aligned rectangle enclosing the screen's bounding box:
                     let minX, minY, maxX, maxY; {
-                        minX = maxX = screenCorners[0][0];
-                        minY = maxY = screenCorners[0][1];
-                        for (let i = 1; i < screenCorners.length; i++) {
-                            const [x, y] = screenCorners[i];
+                        minX = maxX = screenBoxMapCoords[0].x;
+                        minY = maxY = screenBoxMapCoords[0].y;
+                        for (let i = 1; i < 4; i++) {
+                            const {x, y} = screenBoxMapCoords[i];
                             if (x < minX)       minX = x;
                             else if (x > maxX)  maxX = x;
                             if (y < minY)       minY = y;
@@ -699,26 +733,27 @@ document.addEventListener("DOMContentLoaded", async () => {
                 // Draw the labels.
                 for (const label of labels) {
                     const {width} = ui.measureText(label.text);
-                    const screenPos = xform(map.currentTransform, label.pos);
-                    const textX = screenPos[0] - width/2;
-                    const textY = screenPos[1] - height/2;
+                    const screenPos = xform(map.currentTransform, {x: label.pos[0], y: label.pos[1]});
+                    const textX = screenPos.x - width/2;
+                    const textY = screenPos.y - height/2;
                     const textX1 = textX + width; // textX1 and textY1 are the bottom-right corner of the text box.
                     const textY1 = textY + height;
 
                     // Find the map-axis-aligned rectangle enclosing the text box:
+                    /** @type Box */
                     const box = [
-                        [textX,  textY],
-                        [textX,  textY1],
-                        [textX1, textY1],
-                        [textX1, textY]
-                    ].map(
-                        corner => inverseXform(map.currentTransform, corner)
-                    );
+                        {x: textX,  y: textY},
+                        {x: textX,  y: textY1},
+                        {x: textX1, y: textY1},
+                        {x: textX1, y: textY}
+                    ];
+                    for (let i = 0; i < 4; i++)  box[i] = inverseXform(map.currentTransform, box[i]);
+
                     let minX, minY, maxX, maxY; {
-                        minX = maxX = box[0][0];
-                        minY = maxY = box[0][1];
+                        minX = maxX = box[0].x;
+                        minY = maxY = box[0].y;
                         for (let i = 1; i < box.length; i++) {
-                            const [x, y] = box[i];
+                            const {x, y} = box[i];
                             if (x < minX)       minX = x;
                             else if (x > maxX)  maxX = x;
                             if (y < minY)       minY = y;
@@ -784,14 +819,14 @@ document.addEventListener("DOMContentLoaded", async () => {
                     const gr = gridRect;
 
                     for (let i = 0; i < numGridCols+1; i++) {
-                        const [x1, y1] = xform(ct, [gr.x + gridSize*i, gr.y]);
-                        const [x2, y2] = xform(ct, [gr.x + gridSize*i, gr.y + gr.height]);
+                        const {x: x1, y: y1} = xform(ct, {x: gr.x + gridSize*i, y: gr.y}); // @Cleanup. Make this point a variable and add gridSize each pass?
+                        const {x: x2, y: y2} = xform(ct, {x: gr.x + gridSize*i, y: gr.y + gr.height});
                         ui.moveTo(x1, y1);
                         ui.lineTo(x2, y2);
                     }
                     for (let i = 0; i < numGridRows+1; i++) {
-                        const [x1, y1] = xform(ct, [gr.x,            gr.y + gridSize*i]);
-                        const [x2, y2] = xform(ct, [gr.x + gr.width, gr.y + gridSize*i]);
+                        const {x: x1, y: y1} = xform(ct, {x: gr.x,            y: gr.y + gridSize*i});
+                        const {x: x2, y: y2} = xform(ct, {x: gr.x + gr.width, y: gr.y + gridSize*i});
                         ui.moveTo(x1, y1);
                         ui.lineTo(x2, y2);
                     }
@@ -805,17 +840,17 @@ document.addEventListener("DOMContentLoaded", async () => {
                             if (usedSpace[index]) {
                                 // @Speed: This is very slow when the screen has a non-zero rotation!
                                 const [p0, p1, p2, p3] = [
-                                    [gr.x + gridSize*col,            gr.y + gridSize*row],
-                                    [gr.x + gridSize*col,            gr.y + gridSize*row + gridSize],
-                                    [gr.x + gridSize*col + gridSize, gr.y + gridSize*row + gridSize],
-                                    [gr.x + gridSize*col + gridSize, gr.y + gridSize*row],
+                                    {x: gr.x + gridSize*col,            y: gr.y + gridSize*row},
+                                    {x: gr.x + gridSize*col,            y: gr.y + gridSize*row + gridSize},
+                                    {x: gr.x + gridSize*col + gridSize, y: gr.y + gridSize*row + gridSize},
+                                    {x: gr.x + gridSize*col + gridSize, y: gr.y + gridSize*row},
                                 ].map(
                                     point => xform(ct, point)
                                 );
-                                ui.moveTo(p0[0], p0[1]);
-                                ui.lineTo(p1[0], p1[1]);
-                                ui.lineTo(p2[0], p2[1]);
-                                ui.lineTo(p3[0], p3[1]);
+                                ui.moveTo(p0.x, p0.y);
+                                ui.lineTo(p1.x, p1.y);
+                                ui.lineTo(p2.x, p2.y);
+                                ui.lineTo(p3.x, p3.y);
                             }
                         }
                     }
