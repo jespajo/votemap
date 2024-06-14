@@ -26,7 +26,7 @@ static char *find_end_quote(char *source, s64 length)
 }
 
 static char_array parse_json_string(char *source, s64 length, Memory_Context *context)
-// @Todo: Support extended unicode characters. https://datatracker.ietf.org/doc/html/rfc8259#section-7
+// |Todo: Support extended unicode characters. https://datatracker.ietf.org/doc/html/rfc8259#section-7
 {
     // The string should start and end with quotation marks.
     assert(source[0] == '"' && source[length-1] == '"');
@@ -68,7 +68,7 @@ static char_array parse_json_string(char *source, s64 length, Memory_Context *co
 }
 
 Parsed_JSON parse_json(char *source, s64 length, Memory_Context *context)
-// @Terrible!
+// |Terrible!
 {
     char *remainder = trim_left(source, WHITESPACE);
 
@@ -241,7 +241,7 @@ s64 json_value_to_uint(JSON_value *json)
     if (json->type != JSON_NUMBER)  return -1;
     if (json->number < 0)     return -1;
 
-    // @Fixme: Safely cast with frexp. https://stackoverflow.com/a/26584177
+    // |Fixme: Safely cast with frexp. https://stackoverflow.com/a/26584177
     if (json->number >= (double)S64_MAX)  return -1;
 
     return (s64)json->number;

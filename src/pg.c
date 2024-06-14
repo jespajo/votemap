@@ -91,7 +91,7 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
                     // Ensure the first ring is counter-clockwise and subsequent rings are clockwise.
                     if (!ring_index) {if (points_are_clockwise(ring.data, ring.count))      reverse_array(&ring);}
                     else             {if (points_are_anticlockwise(ring.data, ring.count))  reverse_array(&ring);}
-                    // @Todo: What if the determinant is 0?
+                    // |Todo: What if the determinant is 0?
 
                     *Add(&polygon) = ring;
                 }
@@ -172,7 +172,7 @@ void parse_paths(u8 *data, Path_array *result, u8 **end_data)
 
         u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
         d += sizeof(u32);
-        assert(wkb_type == WKB_LINESTRING); // @Todo: Be more flexible. Polygons can be parsed as paths. Only points can't.
+        assert(wkb_type == WKB_LINESTRING); // |Todo: Be more flexible. Polygons can be parsed as paths. Only points can't.
 
         u32 num_points;  memcpy(&num_points, d, sizeof(u32));
         d += sizeof(u32);
@@ -276,7 +276,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
 // Parameters are string literals. Cast them in your queries: SELECT $1::int;
 // This function is mostly concerned with caching the results of query_database_uncached().
 {
-    char cache_dir[]    = "/tmp"; // @Todo: Create our own directory for cache files.
+    char cache_dir[]    = "/tmp"; // |Todo: Create our own directory for cache files.
     char magic_number[] = "PG$$";
 
     Memory_Context *ctx = context;

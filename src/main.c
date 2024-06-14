@@ -6,7 +6,7 @@
 #include "pg.h"
 #include "strings.h"
 
-#include "grab.h" // @Leak
+#include "grab.h" // |Leak
 
 int main()
 {
@@ -94,7 +94,7 @@ int main()
 
         u8_array *json = *Get(result->data[0], "json");
 
-        write_array_to_file(json, "/home/jpj/src/webgl/bin/labels.json"); // @Temporary: Change directory structure.
+        write_array_to_file(json, "/home/jpj/src/webgl/bin/labels.json"); // |Temporary: Change directory structure.
     }
 
     PQfinish(db);

@@ -78,14 +78,14 @@ function inverseXform(transform, vec2) {
     const sin = Math.sin(rotate);
     const cos = Math.cos(rotate);
 
-    // @Todo: Simpler way?!?!
+    // |Todo: Simpler way?!?!
     const det = scale*scale*(cos*cos + sin*sin);
     if (det == 0)  throw new Error();
 
     const x1 = x - translateX;
     const y1 = y - translateY;
 
-    // @Cleanup: Redundant scale on numerator and denom.
+    // |Cleanup: Redundant scale on numerator and denom.
     const x2 = (scale/det)*(x1*cos - y1*sin);
     const y2 = (scale/det)*(x1*sin + y1*cos);
 
@@ -101,7 +101,7 @@ function clone(object) {
     return JSON.parse(JSON.stringify(object));
 }
 
-/** @type {(inner: Rect, outer: Rect) => Transform} */      // @Cleanup: Change to Box (array of 2)
+/** @type {(inner: Rect, outer: Rect) => Transform} */      // |Cleanup: Change to Box (array of 2)
 function fitBox(inner, outer) {
 // Return the transform (applied to the inner box) required to fit the inner box in the centre
 // of the outer box. The boxes are of the form {x, y, width, height}.
@@ -122,7 +122,7 @@ function fitBox(inner, outer) {
 /** @type {(a: Rect, b: Rect) => Rect} */
 function combineBoxes(a, b) {
 // If one of the boxes contains the other, return the larger box (the actual object, not a copy of it).
-// @Cleanup: All this would be less tedious if we made common use of 'box' vs 'rect' and actually used boxes.
+// |Cleanup: All this would be less tedious if we made common use of 'box' vs 'rect' and actually used boxes.
     const ax1 = a.x;
     const ay1 = a.y;
     const ax2 = a.x + a.width;
@@ -156,19 +156,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     {
         const vertexShader = gl.createShader(gl.VERTEX_SHADER)
         gl.shaderSource(vertexShader, VERTEX_SHADER_TEXT);
-        gl.compileShader(vertexShader); // @Fixme: Check compilation errors.
+        gl.compileShader(vertexShader); // |Fixme: Check compilation errors.
 
         const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
         gl.shaderSource(fragmentShader, FRAGMENT_SHADER_TEXT);
-        gl.compileShader(fragmentShader); // @Fixme: Check compilation errors.
+        gl.compileShader(fragmentShader); // |Fixme: Check compilation errors.
 
         gl.attachShader(program, vertexShader);
         gl.attachShader(program, fragmentShader);
-        gl.linkProgram(program); // @Todo: Clean up shaders?
+        gl.linkProgram(program); // |Todo: Clean up shaders?
         if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
             console.error("Shader program did not link successfully.");
             console.error("Error log: ", gl.getProgramInfoLog(program));
-            return; // @Todo: Clean up GL program?
+            return; // |Todo: Clean up GL program?
         }
 
         const buffer = gl.createBuffer();
@@ -181,7 +181,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         gl.enableVertexAttribArray(v_colour);
 
         gl.vertexAttribPointer(v_position, 2, gl.FLOAT, false, 6*4, 0);
-        gl.vertexAttribPointer(v_colour,   4, gl.FLOAT, false, 6*4, 8); // @Cleanup: Avoid hard-coding these numbers.
+        gl.vertexAttribPointer(v_colour,   4, gl.FLOAT, false, 6*4, 8); // |Cleanup: Avoid hard-coding these numbers.
     }
 
     const u_proj = gl.getUniformLocation(program, "u_proj"); // Transforms pixel space to UV space. Only changes when the screen dimensions change.
@@ -244,8 +244,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (ptr.id !== event.pointerId)  continue;
 
             ptr.down = false;
-            ptr.x    = event.clientX; // @Cleanup: Necessary?
-            ptr.y    = event.clientY; // @Cleanup: Necessary?
+            ptr.x    = event.clientX; // |Cleanup: Necessary?
+            ptr.y    = event.clientY; // |Cleanup: Necessary?
 
             break;
         }
@@ -273,7 +273,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         input.scroll = event.deltaY;
     }, {passive: true});
     window.addEventListener("keydown", event => {
-        input.pressed[event.key] = true; // @Temporary.
+        input.pressed[event.key] = true; // |Temporary.
     });
 
     const map = {
@@ -322,7 +322,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         scrollOffset: 0,
     };
 
-    // Toggle developer visualisations. @Debug
+    // Toggle developer visualisations. |Debug
     let debugTransform = false;
     let debugLabels    = false;
 
@@ -380,7 +380,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 ct.scale = screenDistance/mapDistance;
 
                 // Find rotation:
-                // @Bug: The below calculations break when d == 0 and maybe other times?
+                // |Bug: The below calculations break when d == 0 and maybe other times?
                 let mapAngle; {
                     const dx = mapDistanceX;
                     const dy = mapDistanceY;
@@ -428,13 +428,13 @@ document.addEventListener("DOMContentLoaded", async () => {
             const {minScale, maxScale, maxScroll} = map;
             const ct = map.currentTransform;
 
-            const exp0 = Math.log2(minScale); // @Cleanup. We'd rather store the exponential value. Transform.scale should also be the exponential.
+            const exp0 = Math.log2(minScale); // |Cleanup. We'd rather store the exponential value. Transform.scale should also be the exponential.
             const exp1 = Math.log2(maxScale);
 
             if (!map.animations.length || !map.animations[0].scroll) {
                 // There is not currently a scroll animation happening, so we can't trust the
                 // map.scrollOffset variable. Calculate it again based on the current scale.
-                const exp = Math.log2(ct.scale); // @Fixme: What if this is outside our expected range?
+                const exp = Math.log2(ct.scale); // |Fixme: What if this is outside our expected range?
                 const t   = (exp - exp0)/(exp1 - exp0);
 
                 map.scrollOffset = maxScroll*t;
@@ -453,7 +453,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             const mouse  = input.pointers[0];
             const origin = inverseXform(ct, mouse);
 
-            // @Naming: These variables. Call them something like "error", "correction", "offset"?
+            // |Naming: These variables. Call them something like "error", "correction", "offset"?
             const originScreenCoords = xform(newTransform, origin);
             newTransform.translateX += mouse.x - originScreenCoords.x;
             newTransform.translateY += mouse.y - originScreenCoords.y;
@@ -469,13 +469,13 @@ document.addEventListener("DOMContentLoaded", async () => {
                 scroll:    true, // A special flag just for scroll-zoom animations, so we know we can trust map.scrollOffset.
             });
 
-            // We've consumed the scroll! @Todo: Reset per frame.
+            // We've consumed the scroll! |Todo: Reset per frame.
             input.scroll = 0;
         }
 
         // Handle keyboard presses.
         {
-            // @Temporary: When the user presses certain numbers, animate the map to show different locations.
+            // |Temporary: When the user presses certain numbers, animate the map to show different locations.
             const aust = {x: -1863361, y: 1168642, width: 3951342, height: 3671953};
             const melb = {x:  1140377, y: 4187714, width:    8624, height:    8663};
             const syd  = {x:  1757198, y: 3827047, width:    5905, height:    7899};
@@ -486,7 +486,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 if (input.pressed[key]) {
                     const targetBox = boxes[key];
 
-                    /** @type Rect */ // @Cleanup: Change to Box.
+                    /** @type Rect */ // |Cleanup: Change to Box.
                     let screenBounds; { // Get the screen in map coordinates.
                         const {x: x1, y: y1} = inverseXform(map.currentTransform, {x: 0, y: 0});
                         const {x: x2, y: y2} = inverseXform(map.currentTransform, {x: windowWidth, y: windowHeight});
@@ -494,7 +494,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         screenBounds = {x: x1, y: y1, width: x2-x1, height: y2-y1};
                     }
 
-                    // @Todo: Expand the combined box by 10%.
+                    // |Todo: Expand the combined box by 10%.
                     const combined = combineBoxes(targetBox, screenBounds);
 
                     // It's a simple transition if one of the boxes contains the other.
@@ -535,7 +535,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         });
                     }
 
-                    // We've consumed this key press. @Cleanup: Delete all these once per frame.
+                    // We've consumed this key press. |Cleanup: Delete all these once per frame.
                     delete input.pressed[key];
                 }
             }
@@ -568,7 +568,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         keys.push("scale");
                         for (const key of keys)  ct[key] = lerp(start[key], end[key], t);
                     } else {
-                        // @Speed: Store exp0 and exp1 on the animation object.
+                        // |Speed: Store exp0 and exp1 on the animation object.
                         const exp0 = Math.log2(start.scale);
                         const exp1 = Math.log2(end.scale);
                         const exp  = lerp(exp0, exp1, t);
@@ -641,7 +641,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             gl.uniformMatrix3fv(u_proj, false, proj);
             gl.uniformMatrix3fv(u_view, false, view);
 
-            // @Speed: We only want to re-buffer the vertices if they've changed.
+            // |Speed: We only want to re-buffer the vertices if they've changed.
             // This seems to be especially important for performance on Firefox.
             gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
 
@@ -674,13 +674,13 @@ document.addEventListener("DOMContentLoaded", async () => {
                 //   When the map has not been rotated, our approach is fine, because the screen and
                 // text boxes are their smallest enclosing orthogonal rectangles already.
                 //   (When we start rotating the labels themselves, that won't be true anymore.)
-                //   So, for now, the below algorithm performs worse when the map is rotated. @Temporary.
+                //   So, for now, the below algorithm performs worse when the map is rotated. |Temporary.
                 //
                 const height = 16;
                 ui.font = `${height}px sans serif`;
                 ui.textBaseline = "top";
 
-                const resolution = 512; // @Speed.
+                const resolution = 512; // |Speed.
                 const usedSpace  = new Int8Array(resolution);
 
                 /** @type Box */
@@ -811,7 +811,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     ui.fillText(label.text, textX, textY);
                 }
 
-                if (debugLabels) { // Visualise the usedSpace grid. @Debug
+                if (debugLabels) { // Visualise the usedSpace grid. |Debug
                     ui.lineWidth = 1;
                     ui.strokeStyle = 'rgba(255,255,255,0.5)';
 
@@ -819,7 +819,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     const gr = gridRect;
 
                     for (let i = 0; i < numGridCols+1; i++) {
-                        const {x: x1, y: y1} = xform(ct, {x: gr.x + gridSize*i, y: gr.y}); // @Cleanup. Make this point a variable and add gridSize each pass?
+                        const {x: x1, y: y1} = xform(ct, {x: gr.x + gridSize*i, y: gr.y}); // |Cleanup. Make this point a variable and add gridSize each pass?
                         const {x: x2, y: y2} = xform(ct, {x: gr.x + gridSize*i, y: gr.y + gr.height});
                         ui.moveTo(x1, y1);
                         ui.lineTo(x2, y2);
@@ -838,7 +838,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         for (let col = 0; col < numGridCols; col++) {
                             const index = numGridCols*row + col;
                             if (usedSpace[index]) {
-                                // @Speed: This is very slow when the screen has a non-zero rotation!
+                                // |Speed: This is very slow when the screen has a non-zero rotation!
                                 const [p0, p1, p2, p3] = [
                                     {x: gr.x + gridSize*col,            y: gr.y + gridSize*row},
                                     {x: gr.x + gridSize*col,            y: gr.y + gridSize*row + gridSize},
@@ -859,7 +859,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
             }
 
-            if (debugTransform) { // Draw the map's current transform in the bottom-right corner of the canvas. @Debug
+            if (debugTransform) { // Draw the map's current transform in the bottom-right corner of the canvas. |Debug
                 const height = 16; // Text height.
                 ui.font = height + 'px sans serif';
                 ui.textBaseline = "top";

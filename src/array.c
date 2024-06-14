@@ -59,7 +59,7 @@ char_array *load_text_file(char *file_name, Memory_Context *context)
         int c = fgetc(file);
         if (c == EOF)  break;
 
-        // @Memory: This doubles the buffer when needed.
+        // |Memory: This doubles the buffer when needed.
         *Add(buffer) = (char)c;
     }
 
@@ -86,7 +86,7 @@ u8_array *load_binary_file(char *file_name, Memory_Context *context)
         int c = fgetc(file);
         if (c == EOF)  break;
 
-        // @Memory: This doubles the buffer when needed.
+        // |Memory: This doubles the buffer when needed.
         *Add(buffer) = (u8)c;
     }
 
@@ -124,7 +124,7 @@ void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_Cont
 
     // We need a temporary buffer the size of one element in the array. If the array has any spare
     // space after its data, we'll use that. If not, we'll allocate a temporary buffer, though we
-    // won't bother to free it later. @Memory
+    // won't bother to free it later. |Memory
     void *tmp;
     if (count < limit)  tmp = (u8 *)data + count*unit_size;
     else                tmp = alloc(context, 1, unit_size);

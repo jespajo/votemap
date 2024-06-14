@@ -1,5 +1,5 @@
 --
--- This venerable query is @Deprecated, but, for now, here for reference.
+-- This venerable query is |Deprecated, but, for now, here for reference.
 --
 with booth_nodes as (
   select unnest(
@@ -30,11 +30,11 @@ projected as (
     and lon is not null
 ),
 district as (
-  -- @Todo: This is where we should be clipping the districts by the coastline.
+  -- |Todo: This is where we should be clipping the districts by the coastline.
   select 
     f.*,
     st_makevalid(
-      st_simplifypreservetopology( -- @Bug: This doesn't actually seem to preserve the topology. Maybe we need to aggregate the districts first for this to work?
+      st_simplifypreservetopology( -- |Bug: This doesn't actually seem to preserve the topology. Maybe we need to aggregate the districts first for this to work?
         st_force2d(f.geom),
         100.0
       )

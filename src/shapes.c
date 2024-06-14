@@ -36,7 +36,7 @@ bool points_are_anticlockwise(Vector2 *points, s64 num_points)
 static bool is_polygon(Polygon *polygon)
 // See Polygon typedef.
 {
-    if (polygon->count < 0)  return false; // Should this be <= ? @Todo
+    if (polygon->count < 0)  return false; // Should this be <= ? |Todo
     for (s64 i = 0; i < polygon->count; i++) {
         Path *ring = &polygon->data[i];
         if (!i) {
@@ -77,7 +77,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context)
 
     Path_array *triangles = NewArray(triangles, ctx);
 
-    // @Todo: If the polygon has holes, turn it into one big ring.
+    // |Todo: If the polygon has holes, turn it into one big ring.
     // But for now we'll just take the outer ring and ignore holes.
     Path *ring = &polygon->data[0];
 

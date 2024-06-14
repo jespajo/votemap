@@ -33,7 +33,7 @@ Upload XML files to database:
 
 Make Voronoi map visualise real vote data instead of random colours.
 
-@Bug: I left my computer with the current build open in the browser for a few hours and when I tried scrolling the mouse, it was super janky, like the transformations weren't being applied uniformly. I stupidly refreshed the page. The fact that it appeared after a while made me thing it was floating-point issues to do with currentTime being large, but I haven't been able to reproduce the issue by setting currentTime to large values.
+|Bug: I left my computer with the current build open in the browser for a few hours and when I tried scrolling the mouse, it was super janky, like the transformations weren't being applied uniformly. I stupidly refreshed the page. The fact that it appeared after a while made me thing it was floating-point issues to do with currentTime being large, but I haven't been able to reproduce the issue by setting currentTime to large values.
 
 Write up docs on map params:
     bounds

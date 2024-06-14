@@ -25,7 +25,7 @@ lflags += -o $@
 lflags += $(fsan)
 lflags += -lm
 
-# @Cleanup: Surely all this isn't necessary to link with Postgres?
+# |Cleanup: Surely all this isn't necessary to link with Postgres?
 lflags += -L/usr/local/src/postgresql-14.8/build/src/interfaces/libpq
 lflags += -L/usr/local/src/postgresql-14.8/build/src/common
 lflags += -L/usr/local/src/postgresql-14.8/build/src/port

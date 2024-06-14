@@ -6,7 +6,7 @@
 
 s64 round_up_pow2(s64 num)
 {
-    // @Fixme: Assert not out of max range.
+    // |Fixme: Assert not out of max range.
 
     s64 result = 1;
 
@@ -35,7 +35,7 @@ void log_error_(char *file, int line, char *format, ...)
     fflush(stderr);
 }
 
-void assert_(bool cond, char *cond_text, char *file, int line) // @Deprecated.
+void assert_(bool cond, char *cond_text, char *file, int line) // |Deprecated.
 {
     if (!cond) {
         log_error("%s:%d: Assertion failed: `%s`.\n", file, line, cond_text);

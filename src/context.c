@@ -2,7 +2,7 @@
 // This should probably change, because it's too easy to accidentally create a new context:
 //
 //      u8_array array = {0};
-//      *Add(&array) = 1; // @Leak! A memory context for the array was created in the background.
+//      *Add(&array) = 1; // |Leak! A memory context for the array was created in the background.
 //
 // But memory leaks created in this way aren't hard to find: put a breakpoint in new_context() for
 // when parent == NULL. Generally there should only be one hit for the top-level context.
@@ -13,7 +13,7 @@
 // delete_block() and then adding blocks with add_free_block() or add_used_block(). Each of these
 // functions leaves the array sorted, so if we delete the first block in the array, it will shift
 // all subsequent blocks to the left, and if we then insert a new block at the start of the array,
-// it will shift everything back to the right. There is room for improvement here. @Speed
+// it will shift everything back to the right. There is room for improvement here. |Speed
 
 #include <stdlib.h>
 #include <string.h>
@@ -269,7 +269,7 @@ static Memory_Block *grow_context(Memory_Context *context, u64 size)
     // Keep doubling until we know we have room for an allocation of length `size`. We need to be
     // conservative here. Even though the first sentinel only takes the first byte of a new buffer,
     // it effectively prevents large allocations for the first 16 bytes due to alignment issues.
-    // We won't need to take anything from size once we remove sentinels. @Memory @Hack
+    // We won't need to take anything from size once we remove sentinels. |Memory |Hack
     while ((buffer.size - 16 - 1) < size)  buffer.size *= 2;
 
     buffer.data = alloc(c->parent, 1, buffer.size);
@@ -336,7 +336,7 @@ static Memory_Block *alloc_block(Memory_Context *context, Memory_Block *free_blo
 
     u64 remaining = free_block->size - padding - size;
 
-    // @Speed: For now we're just going to add and delete the relevant blocks one at a time.
+    // |Speed: For now we're just going to add and delete the relevant blocks one at a time.
 
     u8 *free_data = free_block->data;
 
@@ -362,9 +362,9 @@ static Memory_Block *dealloc_block(Memory_Context *context, Memory_Block *used_b
     Memory_Context *c = context;
 
     assert(in_range(c->used_blocks, used_block, c->used_blocks+c->used_count));
-    assert(!used_block->sentinel); // @Cleanup: If we're only going to do this during debug builds, we should probably not bother with the `sentinel` flag and we can make the whole check more expensive:.
+    assert(!used_block->sentinel); // |Cleanup: If we're only going to do this during debug builds, we should probably not bother with the `sentinel` flag and we can make the whole check more expensive:.
 
-    // @Speed: For now we're just going to add and delete the relevant blocks one at a time.
+    // |Speed: For now we're just going to add and delete the relevant blocks one at a time.
 
     u8 *freed_data = used_block->data;
     u64 freed_size = used_block->size;
@@ -424,7 +424,7 @@ static Memory_Block *resize_block(Memory_Context *context, Memory_Block *used_bl
     u64 size_avail_after  = next_used->data - end_of_used_block;
 
     // Return NULL if there's not enough room after the block.
-    // @Todo: Maybe also check if there's room *before* the used block. If so, it would probably be
+    // |Todo: Maybe also check if there's room *before* the used block. If so, it would probably be
     // better than telling the caller to reallocate. We'd have to pass the unit size to this function
     // or just be super conservative about alignment.
     if (used_block->size + size_avail_after < new_size)  return NULL;

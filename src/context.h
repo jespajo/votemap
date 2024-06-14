@@ -43,7 +43,7 @@ struct Memory_Context {
 // One day we want to stop reserving any bytes for the sentinel blocks. Ideally we could also remove
 // the `sentinel` flag. Maybe the sentinels could be zero-sized. But we could no longer rely on the
 // assumption that no two used blocks have the same address. However this would improve memory
-// fragmentation. @Speed @Memory
+// fragmentation. |Speed |Memory
 struct Memory_Block {
     u8  *data;
     u64  size:     8*sizeof(u64)-1;

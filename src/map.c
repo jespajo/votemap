@@ -267,7 +267,7 @@ s64 get_bucket_index(void *map)
                 if (!strcmp(key, ((char **)m->keys)[kv_index]))  return bucket_index;
             }
             bucket_index -= 1;
-            if (bucket_index < 0)  bucket_index = m->num_buckets-1; // @Cleanup: += for consistency?
+            if (bucket_index < 0)  bucket_index = m->num_buckets-1; // |Cleanup: += for consistency?
         }
     } else {
         // The key is binary.
@@ -283,7 +283,7 @@ s64 get_bucket_index(void *map)
                 if (!memcmp(key, (char *)m->keys + kv_index*m->key_size, m->key_size))  return bucket_index;
             }
             bucket_index -= 1;
-            if (bucket_index < 0)  bucket_index = m->num_buckets-1; // @Cleanup: += for consistency?
+            if (bucket_index < 0)  bucket_index = m->num_buckets-1; // |Cleanup: += for consistency?
 
         }
     }
