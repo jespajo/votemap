@@ -614,126 +614,209 @@ document.addEventListener("DOMContentLoaded", async () => {
             ui.scale(dpr, dpr);
             ui.clearRect(0, 0, windowWidth, windowHeight);
 
-            // Draw the labels loaded from the JSON file.
+            //
+            // Draw the labels from the JSON file, as stably as possible!
+            //
             {
+                //
+                // We want to break the screen up into a grid of squares. Then, when we draw labels, we
+                // can mark the squares we've drawn on, and in this way prevent labels from overlapping.
+                //   The complexity comes from the fact that we want our grid to be aligned with the
+                // map's transform. That's how we get labels that are mostly stable across transforms.
+                //   Our current approach involves expanding everything into rectangles aligned with the
+                // XY-axes of the map's coordinates. We do this with the screen's bounds initially,
+                // and again with the labels' text boxes.
+                //   When the map is rotated, the screen's bounding box becomes a diamond in map-space.
+                // So when we draw a rectangle around the diamond and establish our grid there,
+                // some of the grid's squares end up being off-screen, where they're not so useful.
+                //   Similarly, when the map is rotated, labels become diagonal relative to the
+                // map's axes, so they end up taking all the grid-squares required by the rectangles
+                // enclosing their diagonals.
+                //   When the map has not been rotated, our approach is fine, because the screen and
+                // text boxes are their smallest enclosing orthogonal rectangles already.
+                //   (When we start rotating the labels themselves, that won't be true anymore.)
+                //   So, for now, the below algorithm performs worse when the map is rotated. @Temporary.
+                //
                 const height = 16;
                 ui.font = `${height}px sans serif`;
                 ui.textBaseline = "top";
 
-                const resolution = 256;
+                const resolution = 512; // @Speed.
                 const usedSpace  = new Int8Array(resolution);
-                // x = num columns, y = num rows:
-                //        x*y = resolution
-                //        x/y = ratio
-                //          x = y*ratio
-                //  ratio*y^2 = resolution
-                //          y = sqrt(resolution/ratio)
-                const ratio   = windowWidth/windowHeight;
-                const numRows = Math.floor(Math.sqrt(resolution/ratio));
-                const numCols = Math.floor(numRows*ratio);
+
+                const screenCorners = [
+                    [0,           0],
+                    [0,           windowHeight],
+                    [windowWidth, windowHeight],
+                    [windowWidth, 0]
+                ].map(
+                    corner => inverseXform(map.currentTransform, corner) // In map coordinates.
+                  );
+
+                let gridSize, numGridCols, numGridRows, gridRect; {
+                    // Find the map-axis-aligned rectangle enclosing the screen's bounding box:
+                    let minX, minY, maxX, maxY; {
+                        minX = maxX = screenCorners[0][0];
+                        minY = maxY = screenCorners[0][1];
+                        for (let i = 1; i < screenCorners.length; i++) {
+                            const [x, y] = screenCorners[i];
+                            if (x < minX)       minX = x;
+                            else if (x > maxX)  maxX = x;
+                            if (y < minY)       minY = y;
+                            else if (y > maxY)  maxY = y;
+                        }
+                    }
+                    focusX      = minX;
+                    focusY      = minY;
+                    focusWidth  = maxX-minX;
+                    focusHeight = maxY-minY;
+
+                    const ratio = focusWidth/focusHeight;
+
+                    const numRows = Math.sqrt(resolution/ratio);  // Not the real number of rows in our grid, but an intermediary.
+                    const rowHeight = focusHeight/numRows;
+
+                    // Round up to the nearest power of two.
+                    let mask = 1;
+                    while (mask < rowHeight)  mask <<= 1;
+                    gridSize = mask; // gridSize is in map units.
+
+                    numGridRows = Math.floor(numRows);            // The real number of rows in our grid.
+                    numGridCols = Math.floor(resolution/numRows); // The real number of columns in our grid.
+
+                    gridRect = {
+                        x:      focusX - (focusX % gridSize),
+                        y:      focusY - (focusY % gridSize),
+                        width:  numGridCols*gridSize,
+                        height: numGridRows*gridSize,
+                    };
+                }
 
                 // Draw the labels.
                 for (const label of labels) {
-                    const screenPos = xform(map.currentTransform, label.pos);
-
-                    let offScreen = false; { // @Cleanup. Overlap function?
-                        if (screenPos[0] < 0)                  offScreen = true;
-                        else if (screenPos[0] > windowWidth)   offScreen = true;
-                        else if (screenPos[1] < 0)             offScreen = true;
-                        else if (screenPos[1] > windowHeight)  offScreen = true;
-                    }
-                    if (offScreen)  continue;
-
                     const {width} = ui.measureText(label.text);
-                    const x = screenPos[0] - width/2;
-                    const y = screenPos[1] - height/2;
+                    const screenPos = xform(map.currentTransform, label.pos);
+                    const textX = screenPos[0] - width/2;
+                    const textY = screenPos[1] - height/2;
+                    const textX1 = textX + width; // textX1 and textY1 are the bottom-right corner of the text box.
+                    const textY1 = textY + height;
 
-                    // To stop labels from overlapping, look at the usedSpace array. These are bytes
-                    // we turn from 0 to 1 when the corresponding pixel-space is used by a label.
+                    // Find the map-axis-aligned rectangle enclosing the text box:
+                    const box = [
+                        [textX,  textY],
+                        [textX,  textY1],
+                        [textX1, textY1],
+                        [textX1, textY]
+                    ].map(
+                        corner => inverseXform(map.currentTransform, corner)
+                    );
+                    let minX, minY, maxX, maxY; {
+                        minX = maxX = box[0][0];
+                        minY = maxY = box[0][1];
+                        for (let i = 1; i < box.length; i++) {
+                            const [x, y] = box[i];
+                            if (x < minX)       minX = x;
+                            else if (x > maxX)  maxX = x;
+                            if (y < minY)       minY = y;
+                            else if (y > maxY)  maxY = y;
+                        }
+                    }
+
+                    // Don't draw labels that are outside our grid:
+                    if (minY > gridRect.y + gridRect.height)  continue;
+                    if (maxY < gridRect.y)                    continue;
+                    if (minX > gridRect.x + gridRect.width)   continue;
+                    if (maxX < gridRect.x)                    continue;
+
+                    // Check whether any of the grid squares we want have been taken.
+
+                    let used = false;
+
+                    const col0 = Math.floor((minX - gridRect.x)/gridSize);
+                    const row0 = Math.floor((minY - gridRect.y)/gridSize);
+                    const col1 = Math.ceil((maxX - gridRect.x)/gridSize);
+                    const row1 = Math.ceil((maxY - gridRect.y)/gridSize);
+
                     {
-                        // x1 and y1 are the bottom-right corner of the text box.
-                        const x1 = x + width;
-                        const y1 = y + height;
+                        let row = row0;
+                        let col = col0;
+                        while (row < row1) {
+                            const index = row*numGridCols + col;
+                            if (usedSpace[index]) {
+                                // We can't use this space.
+                                used = true;
+                                break;
+                            }
 
-                        const colWidth  = windowWidth/numCols;
-                        const rowHeight = windowHeight/numRows;
-                        // Attempt to make the labels stable across translations:
-                        const offsetX = map.currentTransform.translateX % colWidth;
-                        const offsetY = map.currentTransform.translateY % rowHeight;
-
-                        // Convert the text's bounding box points to their usedSpace indices.
-                        const ix  = Math.floor(((x-offsetX)/windowWidth)*numCols);
-                        const iy  = Math.floor(((y-offsetY)/windowHeight)*numRows);
-                        const ix1 = Math.floor(((x1-offsetX)/windowWidth)*numCols);
-                        const iy1 = Math.floor(((y1-offsetY)/windowHeight)*numRows);
-
-                        let used = false;
-                        {
-                            let col = ix;
-                            let row = iy;
-                            while (row <= iy1) {
-                                // Check if anyone else is using the space.
-                                const index = numCols*row + col;
-                                if (usedSpace[index]) { // @Todo: Could this index be outside the array's range? What would happen?
-                                    used = true;
-                                    break;
-                                }
+                            if (col < col1) {
                                 col += 1;
-                                if (col <= ix1)  continue;
-                                col = ix;
+                            } else {
                                 row += 1;
+                                col = col0;
                             }
                         }
+                    }
 
-                        //if (used)  break;      // Stop trying to add labels once one of them doesn't fit.
-                        if (used)  continue; // Keep trying to fit all the labels.
+                    // Once we fail once, skip subsequent labels.
+                    if (used)  break;
 
-                        // We will now use the space.
-                        {
-                            let col = ix;
-                            let row = iy;
-                            while (row <= iy1) {
-                                const index = numCols*row + col;
-                                usedSpace[index] = 1;
-
-                                col += 1;
-                                if (col <= ix1)  continue;
-                                col = ix;
-                                row += 1;
-                            }
+                    // We are now going to use the space. Mark the squares as used.
+                    for (let row = row0; row < row1; row++) {
+                        for (let col = col0; col < col1; col++) {
+                            const index = row*numGridCols + col;
+                            usedSpace[index] = 1;
                         }
                     }
 
                     ui.fillStyle = 'white';
-                    ui.fillText(label.text, x, y);
+                    ui.fillText(label.text, textX, textY);
                 }
 
                 if (debugLabels) { // Visualise the usedSpace grid. @Debug
                     ui.lineWidth = 1;
                     ui.strokeStyle = 'rgba(255,255,255,0.5)';
 
-                    const colWidth  = windowWidth/numCols;
-                    const rowHeight = windowHeight/numRows;
+                    const ct = map.currentTransform;
+                    const gr = gridRect;
 
-                    for (let i = 0; i < numCols+1; i++) {
-                        ui.moveTo(colWidth*i, 0);
-                        ui.lineTo(colWidth*i, windowHeight);
+                    for (let i = 0; i < numGridCols+1; i++) {
+                        const [x1, y1] = xform(ct, [gr.x + gridSize*i, gr.y]);
+                        const [x2, y2] = xform(ct, [gr.x + gridSize*i, gr.y + gr.height]);
+                        ui.moveTo(x1, y1);
+                        ui.lineTo(x2, y2);
                     }
-                    for (let i = 0; i < numRows+1; i++) {
-                        ui.moveTo(0,           rowHeight*i);
-                        ui.lineTo(windowWidth, rowHeight*i);
+                    for (let i = 0; i < numGridRows+1; i++) {
+                        const [x1, y1] = xform(ct, [gr.x,            gr.y + gridSize*i]);
+                        const [x2, y2] = xform(ct, [gr.x + gr.width, gr.y + gridSize*i]);
+                        ui.moveTo(x1, y1);
+                        ui.lineTo(x2, y2);
                     }
                     ui.stroke();
 
                     ui.fillStyle = 'rgba(255,255,255,0.35)';
-                    for (let row = 0; row < numRows; row++) {
-                        for (let col = 0; col < numCols; col++) {
-                            const index = numCols*row + col;
+                    ui.beginPath();
+                    for (let row = 0; row < numGridRows; row++) {
+                        for (let col = 0; col < numGridCols; col++) {
+                            const index = numGridCols*row + col;
                             if (usedSpace[index]) {
-                                ui.fillRect(colWidth*col, rowHeight*row, colWidth, rowHeight);
+                                // @Speed: This is very slow when the screen has a non-zero rotation!
+                                const [p0, p1, p2, p3] = [
+                                    [gr.x + gridSize*col,            gr.y + gridSize*row],
+                                    [gr.x + gridSize*col,            gr.y + gridSize*row + gridSize],
+                                    [gr.x + gridSize*col + gridSize, gr.y + gridSize*row + gridSize],
+                                    [gr.x + gridSize*col + gridSize, gr.y + gridSize*row],
+                                ].map(
+                                    point => xform(ct, point)
+                                );
+                                ui.moveTo(p0[0], p0[1]);
+                                ui.lineTo(p1[0], p1[1]);
+                                ui.lineTo(p2[0], p2[1]);
+                                ui.lineTo(p3[0], p3[1]);
                             }
                         }
                     }
+                    ui.closePath();
+                    ui.fill();
                 }
             }
 
