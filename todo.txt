@@ -1,3 +1,5 @@
+Front end: proper FPS counter.
+
 Bug: Fix the flashing on Firefox on Android.
 
 Front end: draw compass.
@@ -32,8 +34,6 @@ Front end: improve two-part transitions.
     Use some kind of spline!?
 
 Front end: draw map legend scale (e.g. show a line equal to 5km for reference).
-
-Front end: proper FPS counter.
 
 triangulate_polygon():
     Return Triangle_array instead of Path_array. It will be faster and also make more sense because the output of triangulate_polygon doesn't follow the rules for Path structs, namely, repeat the first point in closed rings and make sure the points are in anticlockwise order to define a positive space.

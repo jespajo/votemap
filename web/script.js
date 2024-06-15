@@ -119,7 +119,7 @@ function fitBox(inner, outer) {
     return transform;
 }
 
-/** @type {(a: Rect, b: Rect) => Rect} */
+/** @type {(a: Rect, b: Rect) => Rect} */   // |Cleanup: Change to Box (array of 2)
 function combineBoxes(a, b) {
 // If one of the boxes contains the other, return the larger box (the actual object, not a copy of it).
 // |Cleanup: All this would be less tedious if we made common use of 'box' vs 'rect' and actually used boxes.
@@ -149,8 +149,8 @@ function combineBoxes(a, b) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-    const gl = $("canvas#map").getContext("webgl");
-    const ui = $("canvas#gui").getContext("2d");
+    /** @type WebGLRenderingContext    */ const gl = $("canvas#map").getContext("webgl");
+    /** @type CanvasRenderingContext2D */ const ui = $("canvas#gui").getContext("2d");
 
     const program = gl.createProgram();
     {
@@ -325,6 +325,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Toggle developer visualisations. |Debug
     let debugTransform = false;
     let debugLabels    = false;
+    let debugFPS       = true;
 
     let currentTime = document.timeline.currentTime;
 
@@ -337,6 +338,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         //
         const timeDelta = time - currentTime;
         currentTime = time;
+
+        let frameStartTime = -1; // |Incomplete: We don't use this fact.
+        if (debugFPS)  frameStartTime = performance.now(); // |Debug
 
         const windowWidth  = document.body.clientWidth;
         const windowHeight = document.body.clientHeight;
@@ -548,6 +552,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (input.pressed['l']) {
                 debugLabels = !debugLabels;
                 delete input.pressed['l'];
+            }
+            if (input.pressed['f']) {
+                debugFPS = !debugFPS;
+                delete input.pressed['f'];
             }
         }
 
@@ -879,6 +887,24 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                     y -= height;
                 }
+            }
+
+            if (debugFPS) { // |Debug
+                const height = 14;
+                ui.font      = `${height}px sans serif`;
+
+                const timeUsedThisFrame = performance.now() - frameStartTime;
+
+                const text = `This frame took ${timeUsedThisFrame.toFixed(2)}ms to render.`
+
+                const {width} = ui.measureText(text);
+
+                ui.fillStyle = 'white';
+                ui.fillRect(0, 0, width, height);
+
+                ui.textBaseline = "top";
+                ui.fillStyle    = 'black';
+                ui.fillText(text, 0, 0);
             }
         }
 
