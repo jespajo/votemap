@@ -664,6 +664,9 @@ document.addEventListener("DOMContentLoaded", async () => {
             gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
 
             gl.drawArrays(gl.TRIANGLES, 0, vertices.length/6); // 6 is the number of floats per vertex attribute.
+
+            const error = gl.getError();
+            if (error)  console.error(`WebGL error. Code: ${error}`);
         }
 
         // 2D canvas:
