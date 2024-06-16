@@ -15,10 +15,13 @@ Do the same for the coastline.
 ## 2. Create a new table for extra info related to districts.
 
 ```
-    create table electorates_22 (name varchar(32) primary key);
+    create table electorates_22 (
+        name varchar(32) primary key
+      );
 
     insert into electorates_22
-    select elect_div as name from shp.bounds_22;
+    select elect_div as name
+    from shp.bounds_22;
 ```
 
 Create a new geometry column in the district table, clipping each district by the coast:
@@ -32,7 +35,7 @@ Create a new geometry column in the district table, clipping each district by th
       )
     from (
         select bounds.elect_div,
-          st_intersection(bounds.geom, land.geom, 10.0) as clipped
+          st_intersection(bounds.geom, land.geom, 3.0) as clipped
         from shp.bounds_22 bounds
           join (
             select st_union(geom) as geom
@@ -41,11 +44,7 @@ Create a new geometry column in the district table, clipping each district by th
           ) land on st_intersects(bounds.geom, land.geom)
       ) t
     where e.name = t.elect_div;
-```
 
-Create an index for the new column:
-
-```
     create index electorates_22_geom_idx on electorates_22 using gist(geom);
 ```
 
@@ -102,15 +101,40 @@ Turn that into a new geometry column!
     create index electorates_22_new_geom_idx on electorates_22 using gist(new_geom);
 ```
 
-## 4. Create a table of booth locations.  @Incomplete: Below this heading. (Our next goal is to do the same thing for Voronoi diagrams of booths within districts.)
+## 4. Create a table of booth locations.
 
 ```
-    create table booths_22(booth_id int, electorate_name varchar(32));
+    create table booths_22(
+        booth_id        int,
+        booth_name      text,
+        electorate_name varchar(32)
+      );
 
     select addgeometrycolumn('public', 'booths_22', 'geom', 3577, 'POINT', 2);
 
-    update booths_22
-    set geom =
+    insert into booths_22
+    select id as booth_id,
+      name as booth_name,
+      electorate_name,
+      st_transform(st_setsrid(st_point(lon, lat), 4283), 3577) as geom
+    from (
+        select electorate_name,
+          (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Id',    polling_place))[1]::text::integer as id,
+          (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Name',  polling_place))[1]::text          as name,
+          (xpath('/*/*/*/*/*[local-name()=''AddressLatitude'']/text()',  polling_place))[1]::text::numeric as lat,
+          (xpath('/*/*/*/*/*[local-name()=''AddressLongitude'']/text()', polling_place))[1]::text::numeric as lon
+        from (
+            select
+              (xpath('/*/*/*[local-name()=''Name'']/text()', district))[1]::text as electorate_name,
+              unnest(xpath('/*/*/*[local-name()=''PollingPlace'']', district))   as polling_place
+            from (
+                select unnest(xpath('/*/*/*[local-name()=''PollingDistrict'']', xmldata)) as district
+                from polls_2022_federal
+              ) t
+          ) t
+      ) t
+    where lat is not null
+      and lon is not null;
 ```
 
 ## 5. Add another geometry column to the districts table: a MultiPoint of all its booths.

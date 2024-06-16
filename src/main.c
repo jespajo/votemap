@@ -17,7 +17,7 @@ int main()
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    float metres_per_pixel = 4000.0;
+    float metres_per_pixel = 10000.0;
 
     // Draw electorate boundaries as polygons.
     {

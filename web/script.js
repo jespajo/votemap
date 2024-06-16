@@ -338,7 +338,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Toggle developer visualisations. |Debug
     let debugTransform = false;
     let debugLabels    = false;
-    let debugFPS       = true;
+    let debugFPS       = false;
 
     // The number of milliseconds since page load. Calculated once per frame.
     // For animations, not performance testing.
