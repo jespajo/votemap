@@ -1,11 +1,3 @@
-Front end: proper FPS counter.
-
-Bug: Fix the flashing on Firefox on Android.
-
-Front end: draw compass.
-    On mobile, tap this to return to a view with north oriented upwards.
-    On desktop, when you press the compass you go into rotation mode. A circle appears in the middle of the screen with the compass directions etched in. Your cursor is on the edge of the compass. A change in the cursor image would be nice. While the mouse is held down, the circle rotates such that the point the cursor was originally on is the closest point on the circle to the cursor position.
-
 Redo the Voronoi diagram with topological data.
 Finish writing docs/topology.md.
 
@@ -41,9 +33,14 @@ triangulate_polygon():
     Use spatial hashing to speed it up.
 
 Further label improvements:
+    There is still a bug where labels on one edge of the grid wrap around and fill grid squares on the other side. |Bug
     Get the grid to make use of the screen space efficiently.
     Get the labels to take up only the grid squares they actually touch, even when the map is rotated.
     At the moment, our secret (or cheat) to making it look so stable is that the algorithm breaks as soon as it can't find space for one label on the map. It doesn't keep looking. Really we do want it to keep looking and to fill the available space with labels---up to a point: we don't want it to label one small random electorate in a cluster of unlabelled electorates...
     In fact, what we mainly don't want, I think, is for labels to extend beyond the borders of their electorates. E.g. Eden-Monaro, being a long electorate name, shouldn't appear until it actually fits. Two ways to get this result come to mind: add a bounding box to each label, and add a single value, a width, to each label. In either case you'd only show the label if the width exceeds the map-space width of the text box. So if we can stop electorate labels from exceeding the geographic span of their districts, it might also solve the problem of showing a single electorate in a cluster.
     Also if we cache the currently-shown labels and rate-limit how often we change this set, we could performance and perceived stability, and even improve the result, because if it's not running every frame we could increase the resolution.
     Ultimately, the way to get truly great results will be by implementing a label-override system. Each thing being labelled would have an ID. The source code includes, as JSON text, a list of IDs and their corresponding overridden label attributes. Then we implement an editor on the front end that will let us move the labels around and export their current state as JSON. Bingo bango bongo.
+
+Front end: draw compass.
+    On mobile, tap this to return to a view with north oriented upwards.
+    On desktop, when you press the compass you go into rotation mode. A circle appears in the middle of the screen with the compass directions etched in. Your cursor is on the edge of the compass. A change in the cursor image would be nice. While the mouse is held down, the circle rotates such that the point the cursor was originally on is the closest point on the circle to the cursor position.

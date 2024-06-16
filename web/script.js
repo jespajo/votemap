@@ -203,6 +203,19 @@ document.addEventListener("DOMContentLoaded", async () => {
         labels = json.labels;
     }
 
+    // Load some fonts.
+    {
+        const fonts = {
+            "SourceSerif": "url(../fonts/SourceSerif4-Light.ttf)",
+            "Inconsolata": "url(../fonts/Inconsolata_Condensed-Medium.ttf)",
+        };
+        for (const name in fonts) {
+            const fontFace = new FontFace(name, fonts[name]);
+            const f = await fontFace.load(); // |Speed.
+            document.fonts.add(f);
+        }
+    }
+
     //
     // Handle user input.
     //
@@ -678,6 +691,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             // Draw the labels from the JSON file, as stably as possible!
             //
             {
+                const height = 16; // Text height.
+                ui.font = `${height}px SourceSerif`;
+                ui.textBaseline = "top";
+
                 //
                 // We want to break the screen up into a grid of squares. Then, when we draw labels, we
                 // can mark the squares we've drawn on, and in this way prevent labels from overlapping.
@@ -697,11 +714,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 //   (When we start rotating the labels themselves, that won't be true anymore.)
                 //   So, for now, the below algorithm performs worse when the map is rotated. |Temporary.
                 //
-                const height = 16;
-                ui.font = `${height}px sans serif`;
-                ui.textBaseline = "top";
-
-                const resolution = 512; // |Speed.
+                const resolution = 256;
                 const usedSpace  = new Int8Array(resolution);
 
                 /** @type Box */
@@ -942,13 +955,15 @@ document.addEventListener("DOMContentLoaded", async () => {
                     }
 
                     const textHeight = 14;
-                    ui.font          = `${textHeight}px sans serif`;
-                    ui.fillStyle     = 'white';
+                    ui.font          = `${textHeight}px Inconsolata`;
                     ui.textBaseline  = "top";
 
-                    let x = 0;
-                    let y = 0;
+                    let x = 5;
+                    let y = 5;
                     for (const line of fpsText.split('\n')) {
+                        ui.fillStyle = 'black';
+                        ui.fillText(line, x+1, y+1);
+                        ui.fillStyle = 'white';
                         ui.fillText(line, x, y);
                         y += textHeight;
                     }

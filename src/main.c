@@ -37,7 +37,7 @@ int main()
 
         for (s64 i = 0; i < polygons->count; i++) {
             float shade = frand();
-            Vector4 colour = {0.4*shade, 0.6*shade, 0.1*shade, 1.0};
+            Vector4 colour = {0.9*shade, 0.4*shade, 0.8*shade, 1.0};
 
             draw_polygon(&polygons->data[i], colour, verts);
         }
@@ -77,7 +77,7 @@ int main()
             select jsonb_build_object(
                 'labels', jsonb_agg(
                     jsonb_build_object(
-                        'text', name,
+                        'text', upper(name),
                         'pos', jsonb_build_array(round(st_x(centroid)), round(-st_y(centroid)))
                       )
                   )
