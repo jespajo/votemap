@@ -327,7 +327,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     let debugLabels    = false;
     let debugFPS       = true;
 
+    // The number of milliseconds since page load. Calculated once per frame.
+    // For animations, not performance testing.
     let currentTime = document.timeline.currentTime;
+
+    // Stuff for FPS calculations: |Debug
+    const maxPerfSamples   = 32;
+    const timeDeltaSamples = new Float32Array(maxPerfSamples);
+    const timeUsedSamples  = new Float32Array(maxPerfSamples);
+    let numPerfSamples = 0;
+    let fpsText        = '';
+    let fpsTextUpdated = currentTime;
 
     //
     // The main loop (runs once per frame):
@@ -339,8 +349,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         const timeDelta = time - currentTime;
         currentTime = time;
 
-        let frameStartTime = -1; // |Incomplete: We don't use this fact.
-        if (debugFPS)  frameStartTime = performance.now(); // |Debug
+        let frameStartTime; // |Debug
+        if (debugFPS)  frameStartTime = performance.now();
 
         const windowWidth  = document.body.clientWidth;
         const windowHeight = document.body.clientHeight;
@@ -889,22 +899,57 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
             }
 
-            if (debugFPS) { // |Debug
-                const height = 14;
-                ui.font      = `${height}px sans serif`;
+            // Display FPS: |Debug
+            if (debugFPS) {
+                // debugFPS will be true if the user pressed 'f' this frame, but we can only start taking
+                // performance samples on the next frame, because we need the frameStartTime. |Debug
+                const firstFrame = (frameStartTime === undefined);
+                if (firstFrame) {
+                    numPerfSamples = 0;
+                    fpsTextUpdated = currentTime;
+                } else {
+                    const index = numPerfSamples % maxPerfSamples;
+                    timeDeltaSamples[index] = timeDelta;
+                    timeUsedSamples[index]  = performance.now() - frameStartTime;
+                    numPerfSamples += 1;
 
-                const timeUsedThisFrame = performance.now() - frameStartTime;
+                    // Update the FPS text no more than this many times a second (to make it more readable).
+                    const rate = 5;
 
-                const text = `This frame took ${timeUsedThisFrame.toFixed(2)}ms to render.`
+                    if (numPerfSamples > 4 && fpsTextUpdated+(1000/rate) < currentTime) {
+                        let meanTimeDelta, meanTimeUsed; {
+                            const numSamples = Math.min(numPerfSamples, maxPerfSamples);
+                            let sumTimeDelta = 0;
+                            let sumTimeUsed  = 0;
+                            for (let i = 0; i < numSamples; i++) {
+                                sumTimeDelta += timeDeltaSamples[i];
+                                sumTimeUsed  += timeUsedSamples[i];
+                            }
+                            meanTimeDelta = sumTimeDelta/numSamples;
+                            meanTimeUsed  = sumTimeUsed/numSamples;
+                        }
 
-                const {width} = ui.measureText(text);
+                        const fps = 1000/meanTimeDelta;
 
-                ui.fillStyle = 'white';
-                ui.fillRect(0, 0, width, height);
+                        fpsText  = '';
+                        fpsText += `Quota: ${meanTimeDelta.toFixed(1)}ms for ${fps.toFixed(0)}Hz. `;
+                        fpsText += `Used: ${meanTimeUsed.toFixed(1)}ms.\n`;
 
-                ui.textBaseline = "top";
-                ui.fillStyle    = 'black';
-                ui.fillText(text, 0, 0);
+                        fpsTextUpdated = currentTime;
+                    }
+
+                    const textHeight = 14;
+                    ui.font          = `${textHeight}px sans serif`;
+                    ui.fillStyle     = 'white';
+                    ui.textBaseline  = "top";
+
+                    let x = 0;
+                    let y = 0;
+                    for (const line of fpsText.split('\n')) {
+                        ui.fillText(line, x, y);
+                        y += textHeight;
+                    }
+                }
             }
         }
 
