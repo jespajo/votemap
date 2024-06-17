@@ -17,10 +17,33 @@ int main()
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    float metres_per_pixel = 10000.0;
+    float metres_per_pixel = 2000.0;
 
-    // Draw electorate boundaries as polygons.
-    {
+    bool show_voronoi = true;
+
+    if (show_voronoi) {
+        // Draw the Voronoi map polygons.
+        char *query = Grab(/*
+            select st_asbinary(st_buildarea(topo)) as polygon
+            from (
+                select st_simplify(topo, $1::float) as topo
+                from booths_22
+                where topo is not null
+              ) t
+        */);
+
+        string_array *params = NewArray(params, ctx);
+        *Add(params) = get_string(ctx, "%f", metres_per_pixel)->data;
+
+        Polygon_array *polygons = query_polygons(db, query, params, ctx);
+
+        for (s64 i = 0; i < polygons->count; i++) {
+            Vector4 colour = {0.3*frand(), 0.8*frand(), 0.4*frand(), 1.0};
+
+            draw_polygon(&polygons->data[i], colour, verts);
+        }
+    } else {
+        // Draw electorate boundaries as polygons.
         char *query = Grab(/*
             select st_asbinary(st_buildarea(topo)) as polygon
             from (

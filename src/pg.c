@@ -31,6 +31,7 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
 // data is a pointer to EWKB geometries. Like strtod, if end_data is not NULL, it is the address
 // where this function will save a pointer to the byte after the last byte of data parsed.
 {
+    assert(data);
     Memory_Context *ctx = result->context;
     u8 *d = data;
 
@@ -118,6 +119,7 @@ Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Mem
 
         u8_array *cell = *Get(row, "polygon");
         if (!cell)  return QueryError("Couldn't find a \"polygon\" column in the results.");
+        if (!cell->count)  continue;
 
         u8 *end_data = NULL;
         parse_polygons(cell->data, result, &end_data);
