@@ -13,12 +13,89 @@
 #include <string.h>
 
 #include "array.h"
+#include "map.h"
 #include "strings.h"
+
+//typedef Dict(char *)  string_dict;
+
+//typedef struct Route    Route;
+typedef struct Request  Request;
+//typedef struct Response Response;
+//typedef Response *Request_handler(Request);
+
+enum Method {GET=1, POST};
+
+//struct Route {
+//    enum Method      method;
+//    char            *path; // Just a string because we expect to define these statically in code.
+//    Request_handler *handler;
+//};
+
+struct Request {
+    enum Method  method;
+    char_array   path;
+    //string_dict *query;
+};
+
+//struct Response {
+//    int        status;
+//    char_array body;
+//};
+
+//| Temporary: Move this to basic.h next to trim_left().
+bool starts_with_(char *string, char *match, s64 match_length)
+{
+    for (s64 i = 0; i < match_length; i++) {
+        if (string[i] != match[i])  return false;
+    }
+    return true;
+}
+#define starts_with(DATA, STATIC_STRING) \
+    starts_with_((DATA), (STATIC_STRING), lengthof(STATIC_STRING))
+
+#define ParseError(...)  (Error(__VA_ARGS__), NULL)
+Request *parse_request(char *text, s64 length, Memory_Context *context)
+{
+    Request *request = New(Request, context);
+
+    char *d = text;
+
+    // 10 is an arbitrary number so we don't need to check for null bytes in first part of the text.
+    if (length < 10)  return ParseError("This request was too short to parse:\n%s", text);
+
+    if (starts_with(d, "GET")) {
+        request->method = GET;
+        d += 3;
+    } else if (starts_with(d, "POST")) {
+        request->method = POST;
+        d += 4;
+    }
+
+    if (*d != ' ' || !request->method)  return ParseError("Could not parse the method from this request:\n%s", text);
+    d += 1;
+
+    request->path = (char_array){.context = context};
+    do {
+        if (*d == ' ')  break;
+        *Add(&request->path) = *d;
+        d += 1;
+    } while (d - text < length);
+    *Add(&request->path) = '\0';
+    request->path.count -= 1;
+
+    if (*d != ' ' || !request->path.count)  return ParseError("Could not parse the path from this request:\n%s", text);
+    d += 1;
+
+    if (!starts_with(d, "HTTP/"))  return ParseError("Expected 'HTTP/' after the path in this request:\n%s", text);
+
+    return request;
+}
+#undef ParseError
 
 int main()
 {
-    u32 const ADDRESS = 0xac1180e0; // 172.17.128.224
-    u16 const PORT    = 6008;
+    u32 const ADDR = 0xac1180e0; // 172.17.128.224
+    u16 const PORT = 6008;
 
     Memory_Context *top_context = new_context(NULL);
 
@@ -33,7 +110,7 @@ int main()
     struct sockaddr_in socket_addr = {
         .sin_family   = AF_INET,
         .sin_port     = htons(PORT),
-        .sin_addr     = htonl(ADDRESS),
+        .sin_addr     = htonl(ADDR),
     };
 
     if (bind(socket_num, (struct sockaddr const *)&socket_addr, sizeof(socket_addr)) < 0) {
@@ -42,15 +119,7 @@ int main()
 
     if (listen(socket_num, 100) < 0)  Error("Couldn't listen on socket (%s).", strerror(errno));
 
-    // Log the address and port we're listening on.
-    {
-        u8 a1 = ADDRESS >> 24;
-        u8 a2 = (ADDRESS >> 16) & 0xff;
-        u8 a3 = (ADDRESS >> 8) & 0xff;
-        u8 a4 = ADDRESS & 0xff;
-
-        Log("Listening on http://%d.%d.%d.%d:%d...", a1, a2, a3, a4, PORT);
-    }
+    Log("Listening on http://%d.%d.%d.%d:%d...", ADDR>>24, ADDR>>16&0xff, ADDR>>8&0xff, ADDR&0xff, PORT);
 
     while (true) {
         Memory_Context *ctx = new_context(top_context);
@@ -60,26 +129,38 @@ int main()
 
         int peer_socket_num = accept(socket_num, (struct sockaddr *)&peer_socket_addr, &peer_socket_addr_size);
 
-        char_array *request = NewArray(request, ctx);
-        array_reserve(request, 1<<13);
+        Request *request; {
+            u64 BUFFER_SIZE = 1<<13;
 
-        {
+            char_array *buffer = NewArray(buffer, ctx);
+            array_reserve(buffer, BUFFER_SIZE);
+
             int flags = 0;
-            request->count = recv(peer_socket_num, request->data, request->limit, flags);
-            assert(request->count < request->limit);
+            buffer->count = recv(peer_socket_num, buffer->data, buffer->limit, flags);
+            if (buffer->count < buffer->limit) {
+                buffer->data[buffer->count] = '\0';
+            } else {
+                Error("The request is larger than our buffer size!");
+                break; //|Temporary
+            }
+
+            request = parse_request(buffer->data, buffer->count, ctx);
         }
 
-        *Add(request) = '\0';
-        Log(request->data);
+        if (!request)  break;
 
-        char_array *response = NewArray(response, ctx);
-
-        print_string(response, "HTTP/1.1 200 OK\n");
-        print_string(response, "content-type: text/html\n");
-        print_string(response, "\n");
-        print_string(response, "[Tim Rogers voice] ...HELLO.\n");
+        Log("Parsed a request!");
+        Log(" Method: %s", request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!");
+        Log(" Path:   %s", request->path.data);
 
         {
+            char_array *response = NewArray(response, ctx);
+
+            print_string(response, "HTTP/1.1 200 OK\n");
+            print_string(response, "content-type: text/html\n");
+            print_string(response, "\n");
+            print_string(response, "[Tim Rogers voice] ...HELLO.\n");
+
             int flags = 0;
             s64 num_bytes_sent = send(peer_socket_num, response->data, response->count, flags);
             assert(num_bytes_sent == response->count);
