@@ -16,12 +16,12 @@
 #include "map.h"
 #include "strings.h"
 
-//typedef Dict(char *)  string_dict;
+typedef Dict(char *)  string_dict;
 
 //typedef struct Route    Route;
 typedef struct Request  Request;
-//typedef struct Response Response;
-//typedef Response *Request_handler(Request);
+typedef struct Response Response;
+typedef Response Request_handler(Request *, Memory_Context *);
 
 enum Method {GET=1, POST};
 
@@ -35,12 +35,29 @@ struct Request {
     enum Method  method;
     char_array   path;
     //string_dict *query;
+    //string_dict *headers;
 };
 
-//struct Response {
-//    int        status;
-//    char_array body;
-//};
+struct Response {
+    int          status;
+    string_dict *headers;
+    u8          *body;
+    s64          size; // The number of bytes in the body.
+};
+
+Response handle_request(Request *request, Memory_Context *context)
+// Testing the Request_handler typedef.
+{
+    int status = 200;
+
+    string_dict *headers = NewDict(headers, context);
+
+    *Set(headers, "content-type") = "text/html";
+
+    char_array *body = get_string(context, "[Normal voice] Hello.\n");
+
+    return (Response){status, headers, (u8 *)body->data, body->count};
+}
 
 //| Temporary: Move this to basic.h next to trim_left().
 bool starts_with_(char *string, char *match, s64 match_length)
@@ -153,17 +170,30 @@ int main()
         Log(" Method: %s", request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!");
         Log(" Path:   %s", request->path.data);
 
-        {
-            char_array *response = NewArray(response, ctx);
+        Request_handler *handler = &handle_request;
 
-            print_string(response, "HTTP/1.1 200 OK\n");
-            print_string(response, "content-type: text/html\n");
-            print_string(response, "\n");
-            print_string(response, "[Tim Rogers voice] ...HELLO.\n");
+        {
+            Response response = (*handler)(request, ctx);
+
+            char_array *buffer = NewArray(buffer, ctx);
+
+            print_string(buffer, "HTTP/1.1 %d OK\n", response.status);
+
+            if (response.headers) {
+                string_dict *h = response.headers;
+                for (s64 i = 0; i < h->count; i++)  print_string(buffer, "%s: %s\n", h->keys[i], h->vals[i]);
+            }
+
+            print_string(buffer, "\n");
+
+            // |Speed: We copy the response body to the buffer.
+            if (buffer->limit < buffer->count + response.size)  array_reserve(buffer, buffer->count + response.size);
+            memcpy(&buffer->data[buffer->count], response.body, response.size);
+            buffer->count += response.size;
 
             int flags = 0;
-            s64 num_bytes_sent = send(peer_socket_num, response->data, response->count, flags);
-            assert(num_bytes_sent == response->count);
+            s64 num_bytes_sent = send(peer_socket_num, buffer->data, buffer->count, flags);
+            assert(num_bytes_sent == buffer->count);
         }
 
         if (close(peer_socket_num) < 0)  Error("Couldn't close the peer socket (%s).", strerror(errno));
