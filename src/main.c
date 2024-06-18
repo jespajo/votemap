@@ -18,24 +18,24 @@
 
 typedef Dict(char *)  string_dict;
 
-//typedef struct Route    Route;
+typedef struct Route    Route;
 typedef struct Request  Request;
 typedef struct Response Response;
 typedef Response Request_handler(Request *, Memory_Context *);
 
 enum Method {GET=1, POST};
 
-//struct Route {
-//    enum Method      method;
-//    char            *path; // Just a string because we expect to define these statically in code.
-//    Request_handler *handler;
-//};
+struct Route {
+    enum Method      method;
+    char            *path; // Just a string because we expect to define these statically in code.
+    Request_handler *handler;
+};
 
 struct Request {
     enum Method  method;
     char_array   path;
-    //string_dict *query;
-    //string_dict *headers;
+    string_dict *query;
+    //string_dict *headers; |Todo
 };
 
 struct Response {
@@ -54,26 +54,39 @@ Response handle_request(Request *request, Memory_Context *context)
 
     *Set(headers, "content-type") = "text/html";
 
-    char_array *body = get_string(context, "[Normal voice] Hello.\n");
+    char_array *body = NewArray(body, context);
+
+    if (request->query) {
+        char *name = *Get(request->query, "name");
+
+        if (name)  print_string(body, "Hello, %s.\n", name);
+        else       print_string(body, "What?\n");
+    } else {
+        print_string(body, "Hello, person.\n");
+    }
 
     return (Response){status, headers, (u8 *)body->data, body->count};
 }
 
-//| Temporary: Move this to basic.h next to trim_left().
-bool starts_with_(char *string, char *match, s64 match_length)
+Response handle_404(Request *request, Memory_Context *context)
+// Testing the Request_handler typedef.
 {
-    for (s64 i = 0; i < match_length; i++) {
-        if (string[i] != match[i])  return false;
-    }
-    return true;
+    char body[] = "Das ist verboten.";
+
+    return (Response){
+        .status  = 404,
+        .headers = NULL,
+        .body    = (u8 *)body,
+        .size    = lengthof(body),
+    };
 }
-#define starts_with(DATA, STATIC_STRING) \
-    starts_with_((DATA), (STATIC_STRING), lengthof(STATIC_STRING))
 
 #define ParseError(...)  (Error(__VA_ARGS__), NULL)
 Request *parse_request(char *text, s64 length, Memory_Context *context)
 {
-    Request *request = New(Request, context);
+    Memory_Context *ctx = context;
+
+    Request *req = New(Request, ctx);
 
     char *d = text;
 
@@ -81,31 +94,58 @@ Request *parse_request(char *text, s64 length, Memory_Context *context)
     if (length < 10)  return ParseError("This request was too short to parse:\n%s", text);
 
     if (starts_with(d, "GET")) {
-        request->method = GET;
+        req->method = GET;
         d += 3;
     } else if (starts_with(d, "POST")) {
-        request->method = POST;
+        req->method = POST;
         d += 4;
     }
 
-    if (*d != ' ' || !request->method)  return ParseError("Could not parse the method from this request:\n%s", text);
+    if (*d != ' ' || !req->method)  return ParseError("Could not parse the method from this request:\n%s", text);
     d += 1;
 
-    request->path = (char_array){.context = context};
+    req->path = (char_array){.context = ctx};
     do {
         if (*d == ' ')  break;
-        *Add(&request->path) = *d;
-        d += 1;
-    } while (d - text < length);
-    *Add(&request->path) = '\0';
-    request->path.count -= 1;
+        if (*d == '?') {
+            // Parse a query string. |Cleanup: Move this algorithm elsewhere!
+            req->query = NewDict(req->query, ctx);
 
-    if (*d != ' ' || !request->path.count)  return ParseError("Could not parse the path from this request:\n%s", text);
+            while (d-text < length && *d != ' ') {
+                d += 1;
+
+                char *start = d;
+                do {d += 1;} while (d-text < length && *d != ' ' && *d != '=');
+                char bak = *d;
+                *d = '\0';
+                char *key = copy_string(start, ctx);
+                *d = bak;
+
+                d += 1;
+
+                start = d;
+                do {d += 1;} while (d-text < length && *d != ' ' && *d != '&');
+                bak = *d;
+                *d = '\0';
+                char *value = copy_string(start, ctx);
+                *d = bak;
+
+                *Set(req->query, key) = value;
+            }
+            break;
+        }
+        *Add(&req->path) = *d;
+        d += 1;
+    } while (d-text < length);
+    *Add(&req->path) = '\0';
+    req->path.count -= 1;
+
+    if (*d != ' ' || !req->path.count)  return ParseError("Could not parse the path from this request:\n%s", text);
     d += 1;
 
     if (!starts_with(d, "HTTP/"))  return ParseError("Expected 'HTTP/' after the path in this request:\n%s", text);
 
-    return request;
+    return req;
 }
 #undef ParseError
 
@@ -113,6 +153,10 @@ int main()
 {
     u32 const ADDR = 0xac1180e0; // 172.17.128.224
     u16 const PORT = 6008;
+
+    Route routes[] = {
+        {GET, "/",  &handle_request},
+    };
 
     Memory_Context *top_context = new_context(NULL);
 
@@ -169,15 +213,33 @@ int main()
         Log("Parsed a request!");
         Log(" Method: %s", request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!");
         Log(" Path:   %s", request->path.data);
+        if (request->query) {
+            string_dict *q = request->query;
+            Log(" Query parameters:");
+            for (s64 i = 0; i < q->count; i++)  Log("   %8s:%8s", q->keys[i], q->vals[i]);
+        }
 
-        Request_handler *handler = &handle_request;
+        Request_handler *handler = NULL;
+
+        for (s64 i = 0; i < countof(routes); i++) {
+            Route *r = &routes[i];
+
+            if (r->method != request->method)                             continue;
+            if (strlen(r->path) != request->path.count)                   continue;
+            if (memcmp(r->path, request->path.data, request->path.count)) continue;
+
+            handler = r->handler;
+            break;
+        }
+
+        if (!handler)  handler = &handle_404;
 
         {
             Response response = (*handler)(request, ctx);
 
             char_array *buffer = NewArray(buffer, ctx);
 
-            print_string(buffer, "HTTP/1.1 %d OK\n", response.status);
+            print_string(buffer, "HTTP/1.1 %d\n", response.status);
 
             if (response.headers) {
                 string_dict *h = response.headers;

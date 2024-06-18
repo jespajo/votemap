@@ -53,6 +53,14 @@ char *trim_left_(char *string, char *trim_chars, int num_trim_chars)
     return string;
 }
 
+bool starts_with_(char *string, char *match, s64 match_length)
+{
+    for (s64 i = 0; i < match_length; i++) {
+        if (string[i] != match[i])  return false;
+    }
+    return true;
+}
+
 float frand()
 {
     return rand()/(float)RAND_MAX;

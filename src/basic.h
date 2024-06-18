@@ -33,6 +33,7 @@ s64 round_up_pow2(s64 num);
 bool is_power_of_two(s64 num);
 void log_error_(char *file, int line, char *format, ...);
 char *trim_left_(char *string, char *trim_chars, int num_trim_chars);
+bool starts_with_(char *string, char *match, s64 match_length);
 float frand();
 float lerp(float a, float b, float t);
 void Log(char *format, ...);
@@ -72,5 +73,6 @@ void Log(char *format, ...);
 // The second argument is a static string whose characters will be trimmed, excluding the zero terminator.
 #define trim_left(STRING, TRIM_CHARS)  trim_left_((STRING), (TRIM_CHARS), lengthof(TRIM_CHARS))
 #define WHITESPACE " \n\t\r"
+#define starts_with(DATA, STATIC_STRING)  starts_with_((DATA), (STATIC_STRING), lengthof(STATIC_STRING))
 
 #endif // BASIC_H_INCLUDED
