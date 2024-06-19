@@ -135,161 +135,123 @@ static char hex_to_char(char c1, char c2)
 }
 
 Request *parse_request(char *data, s64 size, Memory_Context *context)
+// On failure, return NULL only if the data doesn't look like a request at all.
+// As long as we can parse a method and a path, return what we've got.
 {
     Memory_Context *ctx = context; // Just for shorthand.
     char *d = data;                // A pointer to advance as we parse.
 
-  #define Fail(...)  (Log("Failed to parse a request. " __VA_ARGS__), NULL)
-
     Request *result = New(Request, ctx);
 
-    if (size < 4)  return Fail("The request was too short.");
+    if (size < 5) {
+        Log("The request was too short.");
+        Breakpoint();
+        return NULL;
+    }
 
-    if (starts_with(d, "GET")) {
+    if (starts_with(d, "GET ")) {
         result->method = GET;
-        d += 3;
-    } else if (starts_with(d, "POST")) {
-        result->method = POST;
         d += 4;
+    } else if (starts_with(d, "POST ")) {
+        result->method = POST;
+        d += 5;
     } else {
-        return Fail("Expected GET or POST. Got: '%c%c%c%c...'", d[0],d[1],d[2],d[3]);
+        Log("Expected 'GET ' or 'POST ' (note the space). Got: '%c%c%c%c...'", d[0],d[1],d[2],d[3]);
+        return NULL;
     }
 
-    if (*d != ' ') return Fail("Expected a space after the method. Got '%c'.", *d);
-    d += 1;
+    // Other than alphanumeric characters, these are the only characters we don't treat specially
+    // in paths and query strings.
+    char const ALLOWED[] = "-_./,";
 
-    result->path = (char_array){.context = ctx};
-    char_array *path = &result->path;
+    char_array  *path  = NewArray(path, ctx);
+    string_dict *query = NewDict(query, ctx);
 
-    bool there_is_a_query = false;
-
-    char const ALLOWED[] = "-_./,"; // Other than alphanumeric characters, these are the only characters we don't treat specially in paths and query strings.
-
-    // Parse the path.
-    while (d-data < size && *d != ' ') {
-        if (is_alphanum(*d) || Contains(ALLOWED, *d)) {
-            *Add(path) = *d;
-            d += 1;
-        } else if (*d == '%') {
-            // We are being cautious not to read past the end of the request data. (We always make
-            // sure the request data has a terminating '\0', so this is probably overly cautious.)
-            if (d-data+2 < size && is_hex(d[1]) && is_hex(d[2])) {
-                *Add(path) = hex_to_char(d[1], d[2]);
-                d += 3;
-            } else {
-                return Fail("Expected %% in path to be followed by two hexadecimal digits.");
-            }
-        } else if (*d == '?') {
-            there_is_a_query = true;
-            d += 1;
-            break;
-        }
-        // We couldn't parse the next character.
-        else  return Fail("Unexpected character in path: 0x%0x.", *d); //|Todo: Print the character itself if it's printable.
-    }
-    if (path->count == 0)  return Fail("Expected a path.");
-
-    // Make sure the path ends with a trailing zero.
-    *Add(path)   = '\0';
-    path->count -= 1;
-
-    if (there_is_a_query) {
-        string_dict *query = NewDict(query, ctx);
-
-        char key[256]  = {0};
-        char val[256]  = {0};
+    // Parse the path and query string.
+    {
+        // Create two buffers on the stack for reading in the keys and values of query strings.
+        char key_buffer[256] = {0};
         int  key_index = 0;
+        char val_buffer[256] = {0};
         int  val_index = 0;
-        bool is_key    = true; // This will be false when we're parsing a value.
-        bool success   = true;
+
+        bool is_query = false; // Will be true when we're parsing the query string.
+        bool is_value = false; // Only meaningful if is_query is true. If so, false means we're parsing a key and true means we're parsing a value.
+        bool success  = false;
 
         while (d-data < size) {
-            if (*d == '&' || *d == ' ') {
-                // Add the previous key/val we were building.
-                if (key_index) {
-                    if (val_index)  *Set(query, key) = copy_string(val, ctx);
-                    else            *Set(query, key) = "";
+            if (is_alphanum(*d) || Contains(ALLOWED, *d) || *d == '%') {
+                // Set c to *d, or, if d points to a %-encoded byte, the value of that byte.
+                char c = *d;
+                if (c == '%') {
+                    // We are being cautious not to read past the end of the request data. (We always make
+                    // sure the request data has a terminating '\0', so this is probably overly cautious.)
+                    if (d-data+2 < size && is_hex(d[1]) && is_hex(d[2])) {
+                        // It's a hex-encoded byte.
+                        c = hex_to_char(d[1], d[2]);
+                        d += 2;
+                    } else {
+                        // The path or query string has a '%' that's not followed by two hexadecimal digits.
+                        break;
+                    }
                 }
-                if (*d == ' ')  break;
-                memset(key, 0, key_index);
-                memset(val, 0, val_index);
-                key_index = val_index = 0;
-                is_key = true;
+                if (!is_query) {
+                    *Add(path) = c;
+                } else if (!is_value) {
+                    key_buffer[key_index] = c;
+                    key_index += 1;
+                } else {
+                    val_buffer[val_index] = c;
+                    val_index += 1;
+                }
+                d += 1;
+            } else if (*d == '?') {
+                if (is_query)  break;
+                is_query = true;
                 d += 1;
             } else if (*d == '=') {
-                // If we fail to parse the query string, we'll just break out---then handle the request as though there was no query string.
-                // |Todo: We should probably pass the query string to the application as a raw string in this case.
-                if (!key_index) {
-                    Fail("Expected a query-string key. Got '='.");
-                    success = false;
-                    break;
-                } else {
-                    is_key = false;
-                    d += 1;
-                }
-            } else if (is_alphanum(*d) || Contains(ALLOWED, *d)) {
-                if (is_key) {
-                    key[key_index] = *d;
-                    key_index += 1;
-                    if (key_index > lengthof(key)) {
-                        Fail("A query-string key is too long.");
-                        success = false;
-                        break;
-                    }
-                } else {
-                    val[val_index] = *d;
-                    val_index += 1;
-                    if (val_index > lengthof(val)) {
-                        Fail("A query-string value is too long.");
-                        success = false;
-                        break;
-                    }
-                }
+                if (!is_query)   break;
+                if (is_value)    break;
+                if (!key_index)  break;
+                is_value = true;
                 d += 1;
-            } else if (*d == '%' && (d-data+2 < size) && is_hex(d[1]) && is_hex(d[2])) {
-                if (is_key) {
-                    key[key_index] = hex_to_char(d[1], d[2]);
-                    key_index += 1;
-                    if (key_index > lengthof(key)) {
-                        Fail("A query-string key is too long.");
-                        success = false;
-                        break;
-                    }
-                } else {
-                    val[val_index] = hex_to_char(d[1], d[2]);
-                    val_index += 1;
-                    if (val_index > lengthof(val)) {
-                        Fail("A query-string value is too long."); // |Cleanup
-                        success = false;
-                        break;
-                    }
+            } else if (*d == '&' || *d == ' ') {
+                // Add the previous key/value we were building.
+                if (is_query && key_index) {
+                    if (val_index)  *Set(query, key_buffer) = copy_string(val_buffer, ctx);
+                    else            *Set(query, key_buffer) = ""; // ?x&y&z -> x, y and z get empty strings for values.
                 }
-                d += 3;
-            }
-            else {
-                Fail("Unexpected character in query string: '%c'.", *d);
-                success = false;
-                break;
+                if (*d == ' ') {
+                    success = true;
+                    break;
+                }
+                memset(key_buffer, 0, key_index);
+                memset(val_buffer, 0, val_index);
+                key_index = val_index = 0;
+                is_value = false;
+                d += 1;
             }
         }
 
+        // Add the path even if we didn't fully parse the query string.
+        if (success || is_query)  result->path = *path;
+
+        // Only add the query string if we parsed it fully.
+        if (success && query->count)   result->query = query;
+
         // If we broke out of the above loop because of a failure to parse the query string, we
-        // still want to return what we have.Advance the data pointer to the next 0x20 space
-        // character after the URI so that we can keep parsing.
+        // still want to return what we have. Advance the data pointer to the next 0x20 space
+        // character after the URI so that we can keep parsing the request after that.
         if (!success) {
             while (*d != ' ' && d-data < size)  d += 1;
-        } else {
-            // Also let request->query remain NULL unless we set some key/value pairs.
-            if (query->count)  result->query = query;
         }
     }
 
-    if (*d != ' ')  return Fail("Expected a space after the URI. Got 0x%x.", *d);
-    d += 1;
+    if (!(d-data+5 < size && starts_with(d, " HTTP/"))) {
+        Log("Expected ' HTTP/' (note the space) after the path.");
+        return NULL;
+    }
 
-    if (!(d-data+5 < size && starts_with(d, "HTTP/")))  return Fail("Expected 'HTTP/' after the path.");
-
-  #undef Fail
     return result;
 }
 
