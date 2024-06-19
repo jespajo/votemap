@@ -68,10 +68,21 @@ Response handle_request(Request *request, Memory_Context *context)
     return (Response){status, headers, (u8 *)body->data, body->count};
 }
 
-Response handle_404(Request *request, Memory_Context *context)
-// Testing the Request_handler typedef.
+Response handle_400(Request *request, Memory_Context *context)
 {
-    char body[] = "Das ist verboten.";
+    char body[] = "Bad request. Bad you.";
+
+    return (Response){
+        .status  = 400,
+        .headers = NULL,
+        .body    = (u8 *)body,
+        .size    = lengthof(body),
+    };
+}
+
+Response handle_404(Request *request, Memory_Context *context)
+{
+    char body[] = "Can't find it.";
 
     return (Response){
         .status  = 404,
@@ -81,73 +92,206 @@ Response handle_404(Request *request, Memory_Context *context)
     };
 }
 
-#define ParseError(...)  (Error(__VA_ARGS__), NULL)
-Request *parse_request(char *text, s64 length, Memory_Context *context)
+static bool is_alphanum(char c) //|Temporary: Move.
 {
-    Memory_Context *ctx = context;
+    if ('a' <= c && c <= 'z')  return true;
+    if ('A' <= c && c <= 'Z')  return true;
+    if ('0' <= c && c <= '9')  return true;
 
-    Request *req = New(Request, ctx);
+    return false;
+}
 
-    char *d = text;
+// |Temporary move
+bool string_contains_char(char const *string, s64 length, char c)
+{
+    for (s64 i = 0; i < length; i++) {
+        if (string[i] == c)  return true;
+    }
+    return false;
+}
+#define Contains(STATIC_STRING, CHAR)  string_contains_char((STATIC_STRING), lengthof(STATIC_STRING), (CHAR))
 
-    // 10 is an arbitrary number so we don't need to check for null bytes in first part of the text.
-    if (length < 10)  return ParseError("This request was too short to parse:\n%s", text);
+
+static bool is_hex(char c)
+// Check whether a character is an ASCII hexadecimal number.
+{
+    c |= 0x20; // OR-ing with 0x20 makes ASCII letters lowercase and doesn't affect ASCII numbers.
+
+    return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f');
+}
+
+static char hex_to_char(char c1, char c2)
+// Assumes you've already validated the characters with is_hex().
+{
+    assert(is_hex(c1) && is_hex(c2));
+
+    c1 |= 0x20; // OR-ing with 0x20 makes ASCII letters lowercase and doesn't affect ASCII numbers.
+    c2 |= 0x20;
+
+    u8 x1 = c1 <= '9' ? c1-'0' : c1-'a'+10;
+    u8 x2 = c2 <= '9' ? c2-'0' : c2-'a'+10;
+
+    return (char)((x1 << 4) | x2);
+}
+
+Request *parse_request(char *data, s64 size, Memory_Context *context)
+{
+    Memory_Context *ctx = context; // Just for shorthand.
+    char *d = data;                // A pointer to advance as we parse.
+
+  #define Fail(...)  (Log("Failed to parse a request. " __VA_ARGS__), NULL)
+
+    Request *result = New(Request, ctx);
+
+    if (size < 4)  return Fail("The request was too short.");
 
     if (starts_with(d, "GET")) {
-        req->method = GET;
+        result->method = GET;
         d += 3;
     } else if (starts_with(d, "POST")) {
-        req->method = POST;
+        result->method = POST;
         d += 4;
+    } else {
+        return Fail("Expected GET or POST. Got: '%c%c%c%c...'", d[0],d[1],d[2],d[3]);
     }
 
-    if (*d != ' ' || !req->method)  return ParseError("Could not parse the method from this request:\n%s", text);
+    if (*d != ' ') return Fail("Expected a space after the method. Got '%c'.", *d);
     d += 1;
 
-    req->path = (char_array){.context = ctx};
-    do {
-        if (*d == ' ')  break;
-        if (*d == '?') {
-            // Parse a query string. |Cleanup: Move this algorithm elsewhere!
-            req->query = NewDict(req->query, ctx);
+    result->path = (char_array){.context = ctx};
+    char_array *path = &result->path;
 
-            while (d-text < length && *d != ' ') {
-                d += 1;
+    bool there_is_a_query = false;
 
-                char *start = d;
-                do {d += 1;} while (d-text < length && *d != ' ' && *d != '=');
-                char bak = *d;
-                *d = '\0';
-                char *key = copy_string(start, ctx);
-                *d = bak;
+    char const ALLOWED[] = "-_./,"; // Other than alphanumeric characters, these are the only characters we don't treat specially in paths and query strings.
 
-                d += 1;
-
-                start = d;
-                do {d += 1;} while (d-text < length && *d != ' ' && *d != '&');
-                bak = *d;
-                *d = '\0';
-                char *value = copy_string(start, ctx);
-                *d = bak;
-
-                *Set(req->query, key) = value;
+    // Parse the path.
+    while (d-data < size && *d != ' ') {
+        if (is_alphanum(*d) || Contains(ALLOWED, *d)) {
+            *Add(path) = *d;
+            d += 1;
+        } else if (*d == '%') {
+            // We are being cautious not to read past the end of the request data. (We always make
+            // sure the request data has a terminating '\0', so this is probably overly cautious.)
+            if (d-data+2 < size && is_hex(d[1]) && is_hex(d[2])) {
+                *Add(path) = hex_to_char(d[1], d[2]);
+                d += 3;
+            } else {
+                return Fail("Expected %% in path to be followed by two hexadecimal digits.");
             }
+        } else if (*d == '?') {
+            there_is_a_query = true;
+            d += 1;
             break;
         }
-        *Add(&req->path) = *d;
-        d += 1;
-    } while (d-text < length);
-    *Add(&req->path) = '\0';
-    req->path.count -= 1;
+        // We couldn't parse the next character.
+        else  return Fail("Unexpected character in path: 0x%0x.", *d); //|Todo: Print the character itself if it's printable.
+    }
+    if (path->count == 0)  return Fail("Expected a path.");
 
-    if (*d != ' ' || !req->path.count)  return ParseError("Could not parse the path from this request:\n%s", text);
+    // Make sure the path ends with a trailing zero.
+    *Add(path)   = '\0';
+    path->count -= 1;
+
+    if (there_is_a_query) {
+        string_dict *query = NewDict(query, ctx);
+
+        char key[256]  = {0};
+        char val[256]  = {0};
+        int  key_index = 0;
+        int  val_index = 0;
+        bool is_key    = true; // This will be false when we're parsing a value.
+        bool success   = true;
+
+        while (d-data < size) {
+            if (*d == '&' || *d == ' ') {
+                // Add the previous key/val we were building.
+                if (key_index) {
+                    if (val_index)  *Set(query, key) = copy_string(val, ctx);
+                    else            *Set(query, key) = "";
+                }
+                if (*d == ' ')  break;
+                memset(key, 0, key_index);
+                memset(val, 0, val_index);
+                key_index = val_index = 0;
+                is_key = true;
+                d += 1;
+            } else if (*d == '=') {
+                // If we fail to parse the query string, we'll just break out---then handle the request as though there was no query string.
+                // |Todo: We should probably pass the query string to the application as a raw string in this case.
+                if (!key_index) {
+                    Fail("Expected a query-string key. Got '='.");
+                    success = false;
+                    break;
+                } else {
+                    is_key = false;
+                    d += 1;
+                }
+            } else if (is_alphanum(*d) || Contains(ALLOWED, *d)) {
+                if (is_key) {
+                    key[key_index] = *d;
+                    key_index += 1;
+                    if (key_index > lengthof(key)) {
+                        Fail("A query-string key is too long.");
+                        success = false;
+                        break;
+                    }
+                } else {
+                    val[val_index] = *d;
+                    val_index += 1;
+                    if (val_index > lengthof(val)) {
+                        Fail("A query-string value is too long.");
+                        success = false;
+                        break;
+                    }
+                }
+                d += 1;
+            } else if (*d == '%' && (d-data+2 < size) && is_hex(d[1]) && is_hex(d[2])) {
+                if (is_key) {
+                    key[key_index] = hex_to_char(d[1], d[2]);
+                    key_index += 1;
+                    if (key_index > lengthof(key)) {
+                        Fail("A query-string key is too long.");
+                        success = false;
+                        break;
+                    }
+                } else {
+                    val[val_index] = hex_to_char(d[1], d[2]);
+                    val_index += 1;
+                    if (val_index > lengthof(val)) {
+                        Fail("A query-string value is too long."); // |Cleanup
+                        success = false;
+                        break;
+                    }
+                }
+                d += 3;
+            }
+            else {
+                Fail("Unexpected character in query string: '%c'.", *d);
+                success = false;
+                break;
+            }
+        }
+
+        // If we broke out of the above loop because of a failure to parse the query string, we
+        // still want to return what we have.Advance the data pointer to the next 0x20 space
+        // character after the URI so that we can keep parsing.
+        if (!success) {
+            while (*d != ' ' && d-data < size)  d += 1;
+        } else {
+            // Also let request->query remain NULL unless we set some key/value pairs.
+            if (query->count)  result->query = query;
+        }
+    }
+
+    if (*d != ' ')  return Fail("Expected a space after the URI. Got 0x%x.", *d);
     d += 1;
 
-    if (!starts_with(d, "HTTP/"))  return ParseError("Expected 'HTTP/' after the path in this request:\n%s", text);
+    if (!(d-data+5 < size && starts_with(d, "HTTP/")))  return Fail("Expected 'HTTP/' after the path.");
 
-    return req;
+  #undef Fail
+    return result;
 }
-#undef ParseError
 
 int main()
 {
@@ -208,28 +352,30 @@ int main()
             request = parse_request(buffer->data, buffer->count, ctx);
         }
 
-        if (!request)  break;
-
-        Log("Parsed a request!");
-        Log(" Method: %s", request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!");
-        Log(" Path:   %s", request->path.data);
-        if (request->query) {
-            string_dict *q = request->query;
-            Log(" Query parameters:");
-            for (s64 i = 0; i < q->count; i++)  Log("   %8s:%8s", q->keys[i], q->vals[i]);
-        }
-
         Request_handler *handler = NULL;
 
-        for (s64 i = 0; i < countof(routes); i++) {
-            Route *r = &routes[i];
+        if (!request) {
+            handler = &handle_400; // Bad request.
+        } else {
+            Log("Parsed a request!");
+            Log(" Method: %s", request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!");
+            Log(" Path:   %s", request->path.data);
+            if (request->query) {
+                string_dict *q = request->query;
+                Log(" Query parameters:");
+                for (s64 i = 0; i < q->count; i++)  Log("   %8s:%8s", q->keys[i], q->vals[i]);
+            }
 
-            if (r->method != request->method)                             continue;
-            if (strlen(r->path) != request->path.count)                   continue;
-            if (memcmp(r->path, request->path.data, request->path.count)) continue;
+            for (s64 i = 0; i < countof(routes); i++) {
+                Route *r = &routes[i];
 
-            handler = r->handler;
-            break;
+                if (r->method != request->method)                             continue;
+                if (strlen(r->path) != request->path.count)                   continue;
+                if (memcmp(r->path, request->path.data, request->path.count)) continue;
+
+                handler = r->handler;
+                break;
+            }
         }
 
         if (!handler)  handler = &handle_404;

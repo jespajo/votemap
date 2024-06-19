@@ -1,5 +1,6 @@
-Redo the Voronoi diagram with topological data.
-Finish writing docs/topology.md.
+Web server:
+    Add regex-based route matching.
+    Parse headers.
 
 Write up database schema plan docs/database.txt.
 Upload XML files to database:
