@@ -92,7 +92,7 @@ Response handle_404(Request *request, Memory_Context *context)
     };
 }
 
-static bool is_alphanum(char c) //|Temporary: Move.
+static bool is_alphanum(char c)
 {
     if ('a' <= c && c <= 'z')  return true;
     if ('A' <= c && c <= 'Z')  return true;
@@ -100,17 +100,6 @@ static bool is_alphanum(char c) //|Temporary: Move.
 
     return false;
 }
-
-// |Temporary move
-bool string_contains_char(char const *string, s64 length, char c)
-{
-    for (s64 i = 0; i < length; i++) {
-        if (string[i] == c)  return true;
-    }
-    return false;
-}
-#define Contains(STATIC_STRING, CHAR)  string_contains_char((STATIC_STRING), lengthof(STATIC_STRING), (CHAR))
-
 
 static bool is_hex(char c)
 // Check whether a character is an ASCII hexadecimal number.
@@ -161,18 +150,17 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
     }
 
     // Other than alphanumeric characters, these are the only characters we don't treat specially
-    // in paths and query strings.
-    char const ALLOWED[] = "-_./,";
+    // in paths and query strings. They're RFC 3986's unreserved characters plus a few.
+    char const ALLOWED[] = "-._~/,+"; //|Cleanup: Defined twice.
 
     char_array  *path  = NewArray(path, ctx);
     string_dict *query = NewDict(query, ctx);
 
     // Parse the path and query string.
     {
-        // Create two buffers on the stack for reading in the keys and values of query strings.
         char key_buffer[256] = {0};
-        int  key_index = 0;
         char val_buffer[256] = {0};
+        int  key_index = 0;
         int  val_index = 0;
 
         bool is_query = false; // Will be true when we're parsing the query string.
@@ -180,6 +168,10 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
         bool success  = false;
 
         while (d-data < size) {
+            // Each pass, we read a character from the request. If it's alphanumeric, in the ALLOWED array,
+            // or a hex-encoded byte, we add it to our present target. At first our target is `path` because
+            // we're just reading the path. But if we come to a query string, our target alternates between
+            // two static buffers: we copy the pending key into one and the pending value into the other.
             if (is_alphanum(*d) || Contains(ALLOWED, *d) || *d == '%') {
                 // Set c to *d, or, if d points to a %-encoded byte, the value of that byte.
                 char c = *d;
@@ -200,26 +192,25 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
                 } else if (!is_value) {
                     key_buffer[key_index] = c;
                     key_index += 1;
+                    if (key_index > lengthof(key_buffer))  break;
                 } else {
                     val_buffer[val_index] = c;
                     val_index += 1;
+                    if (key_index > lengthof(val_buffer))  break;
                 }
-                d += 1;
             } else if (*d == '?') {
                 if (is_query)  break;
                 is_query = true;
-                d += 1;
             } else if (*d == '=') {
                 if (!is_query)   break;
                 if (is_value)    break;
                 if (!key_index)  break;
                 is_value = true;
-                d += 1;
             } else if (*d == '&' || *d == ' ') {
                 // Add the previous key/value we were building.
                 if (is_query && key_index) {
                     if (val_index)  *Set(query, key_buffer) = copy_string(val_buffer, ctx);
-                    else            *Set(query, key_buffer) = ""; // ?x&y&z -> x, y and z get empty strings for values.
+                    else            *Set(query, key_buffer) = ""; //  ?x&y&z  ->  x, y and z get empty strings for values.
                 }
                 if (*d == ' ') {
                     success = true;
@@ -229,14 +220,22 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
                 memset(val_buffer, 0, val_index);
                 key_index = val_index = 0;
                 is_value = false;
-                d += 1;
+            } else {
+                // There was an unexpected character.
+                break;
             }
+            d += 1;
         }
 
-        // Add the path even if we didn't fully parse the query string.
-        if (success || is_query)  result->path = *path;
+        // Return NULL if we didn't even parse a path.
+        if (!success && !is_query)  return NULL;
 
-        // Only add the query string if we parsed it fully.
+        *Add(path) = '\0';
+        path->count -= 1;
+
+        result->path = *path;
+
+        // Only add the query string if we fully parsed one.
         if (success && query->count)   result->query = query;
 
         // If we broke out of the above loop because of a failure to parse the query string, we
@@ -251,6 +250,49 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
         Log("Expected ' HTTP/' (note the space) after the path.");
         return NULL;
     }
+
+    return result;
+}
+
+char_array *encode_query_string(string_dict *query, Memory_Context *context)
+{
+    Memory_Context *ctx = context;
+
+    char_array *result = NewArray(result, ctx);
+
+    *Add(result) = '?';
+
+    // The only characters we won't encode (other than alphanumeric) are RFC 3986 unreserved characters.
+    char const ALLOWED[] = "-._~"; //|Cleanup: Why is this different from the other ALLOWED?
+
+    for (s64 i = 0; i < query->count; i++) {
+        if (i)  *Add(result) = '&';
+
+        char *key = query->keys[i];
+        s64 key_len = strlen(key);
+
+        for (s64 j = 0; j < key_len; j++) {
+            char c = key[j];
+            if (is_alphanum(c) || Contains(ALLOWED, c))  *Add(result) = c;
+            else  print_string(result, "%%%02x", c);
+        }
+
+        char *val = query->vals[i];
+        s64 val_len = strlen(val);
+
+        if (!val_len)  continue;
+
+        *Add(result) = '=';
+
+        for (s64 j = 0; j < val_len; j++) {
+            char c = val[j];
+            if (is_alphanum(c) || Contains(ALLOWED, c))  *Add(result) = c;
+            else  print_string(result, "%%%02x", c);
+        }
+    }
+
+    *Add(result) = '\0';
+    result->count -= 1;
 
     return result;
 }
@@ -288,46 +330,42 @@ int main()
 
     Log("Listening on http://%d.%d.%d.%d:%d...", ADDR>>24, ADDR>>16&0xff, ADDR>>8&0xff, ADDR&0xff, PORT);
 
+    Memory_Context *ctx = new_context(top_context);
     while (true) {
-        Memory_Context *ctx = new_context(top_context);
+        reset_context(ctx);
 
         struct sockaddr_in peer_socket_addr; // Will be initialised by accept().
         socklen_t peer_socket_addr_size = sizeof(peer_socket_addr);
 
         int peer_socket_num = accept(socket_num, (struct sockaddr *)&peer_socket_addr, &peer_socket_addr_size);
 
-        Request *request; {
-            u64 BUFFER_SIZE = 1<<13;
+        Request *request = NULL;
+        char  *error_msg = NULL;
+        {
+            u64 BUFFER_SIZE = 1<<12;
 
             char_array *buffer = NewArray(buffer, ctx);
             array_reserve(buffer, BUFFER_SIZE);
 
             int flags = 0;
             buffer->count = recv(peer_socket_num, buffer->data, buffer->limit, flags);
-            if (buffer->count < buffer->limit) {
-                buffer->data[buffer->count] = '\0';
+            if (buffer->count == 0) {
+                error_msg = "The request was empty.";
+            } else if (buffer->count >= buffer->limit) {
+                error_msg = "The request was larger than our buffer size.";
             } else {
-                Error("The request is larger than our buffer size!");
-                break; //|Temporary
-            }
+                buffer->data[buffer->count] = '\0';
 
-            request = parse_request(buffer->data, buffer->count, ctx);
+                request = parse_request(buffer->data, buffer->count, ctx);
+
+                if (!request)  error_msg = "We couldn't parse the request.";
+            }
         }
+        assert(!!request ^ !!error_msg); // One or the other; not both.
 
         Request_handler *handler = NULL;
-
-        if (!request) {
-            handler = &handle_400; // Bad request.
-        } else {
-            Log("Parsed a request!");
-            Log(" Method: %s", request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!");
-            Log(" Path:   %s", request->path.data);
-            if (request->query) {
-                string_dict *q = request->query;
-                Log(" Query parameters:");
-                for (s64 i = 0; i < q->count; i++)  Log("   %8s:%8s", q->keys[i], q->vals[i]);
-            }
-
+        if (request) {
+            // We parsed a request. Look in the routes for an appropriate handler.
             for (s64 i = 0; i < countof(routes); i++) {
                 Route *r = &routes[i];
 
@@ -338,12 +376,24 @@ int main()
                 handler = r->handler;
                 break;
             }
+        } else {
+            // We failed to parse a request, so it was probably a bad request. Return a 400.
+            handler = &handle_400;
         }
-
         if (!handler)  handler = &handle_404;
 
         {
             Response response = (*handler)(request, ctx);
+
+            if (request) {
+                char *method = request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!";
+
+                char *query = request->query ? encode_query_string(request->query, ctx)->data : "";
+
+                Log("[%d] %s %s%s", response.status, method, request->path.data, query);
+            } else {
+                Log("[%d] %s", response.status, error_msg);
+            }
 
             char_array *buffer = NewArray(buffer, ctx);
 
@@ -367,8 +417,6 @@ int main()
         }
 
         if (close(peer_socket_num) < 0)  Error("Couldn't close the peer socket (%s).", strerror(errno));
-
-        free_context(ctx);
     }
 
     if (close(socket_num) < 0)  Error("Couldn't close our own socket (%s).", strerror(errno));

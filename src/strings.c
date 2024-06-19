@@ -74,3 +74,11 @@ void print_double(double number, char_array *out)
     if (out->data[out->count-1] == '.')  out->count -= 1; // Remove the dot too if it was all zeroes.
     out->data[out->count] = '\0';
 }
+
+bool string_contains_char(char const *string, s64 length, char c)
+{
+    for (s64 i = 0; i < length; i++) {
+        if (string[i] == c)  return true;
+    }
+    return false;
+}
