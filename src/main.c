@@ -237,7 +237,7 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
                 } else {
                     val_buffer[val_index] = c;
                     val_index += 1;
-                    if (key_index > lengthof(val_buffer))  break;
+                    if (val_index > lengthof(val_buffer))  break;
                 }
             } else if (*d == '?') {
                 if (is_query)  break;
