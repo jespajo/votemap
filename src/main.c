@@ -92,6 +92,47 @@ Response handle_404(Request *request, Memory_Context *context)
     };
 }
 
+Response serve_file(Request *request, Memory_Context *context)
+{
+    char *path = request->path.data;
+    s64 path_size = request->path.count;
+
+    // If the path starts with a '/', "remove" it by advancing the pointer by 1 byte.
+    if (*path == '/') {
+        path      += 1;
+        path_size -= 1;
+    }
+
+    u8_array *file = load_binary_file(path, context);
+
+    if (!file)  return (Response){404};
+
+    char *file_extension = NULL;
+
+    for (s64 i = path_size-1; i >= 0; i--) {
+        if (path[i] == '/')  break;
+        if (path[i] == '.') {
+            if (i < path_size-1)  file_extension = &path[i+1];
+            break;
+        }
+    }
+
+    char *content_type = NULL;
+
+    if (file_extension) {
+        if (!strcmp(file_extension, "html"))       content_type = "text/html";
+        else if (!strcmp(file_extension, "js"))    content_type = "text/javascript";
+        else if (!strcmp(file_extension, "json"))  content_type = "application/json";
+        else if (!strcmp(file_extension, "ttf"))   content_type = "font/ttf";
+    }
+
+    string_dict *headers = NewDict(headers, context);
+
+    if (content_type)  *Set(headers, "content-type") = content_type;
+
+    return (Response){200, headers, file->data, file->count};
+}
+
 static bool is_alphanum(char c)
 {
     if ('a' <= c && c <= 'z')  return true;
@@ -299,11 +340,18 @@ char_array *encode_query_string(string_dict *query, Memory_Context *context)
 
 int main()
 {
+    // Call the old main function so we can serve the files it creates. |Temporary.
+    int once_and_future_main();
+    once_and_future_main();
+
     u32 const ADDR = 0xac1180e0; // 172.17.128.224
     u16 const PORT = 6008;
 
     Route routes[] = {
-        {GET, "/",  &handle_request},
+        {GET, "/",          &handle_request},
+        {GET, "/web/.*",    &serve_file},
+        {GET, "/bin/.*",    &serve_file},
+        {GET, "/fonts/.*",  &serve_file},
     };
 
     Memory_Context *top_context = new_context(NULL);
@@ -326,7 +374,8 @@ int main()
         Error("Couldn't bind socket (%s).", strerror(errno));
     }
 
-    if (listen(socket_num, 100) < 0)  Error("Couldn't listen on socket (%s).", strerror(errno));
+    int queue_length = 100;
+    if (listen(socket_num, queue_length) < 0)  Error("Couldn't listen on socket (%s).", strerror(errno));
 
     Log("Listening on http://%d.%d.%d.%d:%d...", ADDR>>24, ADDR>>16&0xff, ADDR>>8&0xff, ADDR&0xff, PORT);
 
@@ -367,14 +416,12 @@ int main()
         if (request) {
             // We parsed a request. Look in the routes for an appropriate handler.
             for (s64 i = 0; i < countof(routes); i++) {
-                Route *r = &routes[i];
-
-                if (r->method != request->method)                             continue;
-                if (strlen(r->path) != request->path.count)                   continue;
-                if (memcmp(r->path, request->path.data, request->path.count)) continue;
-
-                handler = r->handler;
-                break;
+                if (routes[i].method == request->method) {
+                    if (is_match(request->path.data, routes[i].path)) {
+                        handler = routes[i].handler;
+                        break;
+                    }
+                }
             }
         } else {
             // We failed to parse a request, so it was probably a bad request. Return a 400.
@@ -413,7 +460,7 @@ int main()
 
             int flags = 0;
             s64 num_bytes_sent = send(peer_socket_num, buffer->data, buffer->count, flags);
-            assert(num_bytes_sent == buffer->count);
+            assert(num_bytes_sent == buffer->count); // |Fixme: You can trigger this assert by spamming F5 in the browser---sometimes we send less than the full buffer.
         }
 
         if (close(peer_socket_num) < 0)  Error("Couldn't close the peer socket (%s).", strerror(errno));
@@ -445,7 +492,7 @@ int once_and_future_main()
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    float metres_per_pixel = 2000.0;
+    float metres_per_pixel = 4000.0;
 
     bool show_voronoi = true;
 

@@ -82,3 +82,52 @@ bool string_contains_char(char const *string, s64 length, char c)
     }
     return false;
 }
+
+char *trim_left_(char *string, char *trim_chars, int num_trim_chars)
+{
+    for (int i = 0; i < num_trim_chars; i++) {
+        if (string[0] == trim_chars[i]) {
+            return trim_left_(string + 1, trim_chars, num_trim_chars);
+        }
+    }
+    return string;
+}
+
+bool starts_with_(char *string, char *match, s64 match_length)
+{
+    for (s64 i = 0; i < match_length; i++) {
+        if (string[i] != match[i])  return false;
+    }
+    return true;
+}
+
+bool is_match(char *str, char *pat)
+// Check whether a string matches a regex pattern. It must be a full match; /^(pat)$/ is implied.
+// For now we only support the special meanings of two symbols: '.' and '*'.
+//
+// |Todo: Backslash to escape. Also when this is not so simplistic, we should create a regex module.
+{
+    if (*str == '\0') {
+        if (*pat == '\0')  return true;
+
+        while (*(pat+1) == '*') {
+            if (*(pat+2) == '\0')  return true;
+            pat += 2;
+        }
+
+        return false;
+    }
+
+    // There's more string to match.
+    if (*pat == '\0')  return false;
+
+    if (*(pat+1) == '*') {
+        if (is_match(str, pat+2))  return true;
+
+        if (*pat == *str || *pat == '.')  return is_match(str+1, pat);
+    } else {
+        if (*pat == *str || *pat == '.')  return is_match(str+1, pat+1);
+    }
+
+    return false;
+}

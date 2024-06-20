@@ -43,24 +43,6 @@ void assert_(bool cond, char *cond_text, char *file, int line) // |Deprecated.
     }
 }
 
-char *trim_left_(char *string, char *trim_chars, int num_trim_chars)
-{
-    for (int i = 0; i < num_trim_chars; i++) {
-        if (string[0] == trim_chars[i]) {
-            return trim_left_(string + 1, trim_chars, num_trim_chars);
-        }
-    }
-    return string;
-}
-
-bool starts_with_(char *string, char *match, s64 match_length)
-{
-    for (s64 i = 0; i < match_length; i++) {
-        if (string[i] != match[i])  return false;
-    }
-    return true;
-}
-
 float frand()
 {
     return rand()/(float)RAND_MAX;
