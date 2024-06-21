@@ -1,3 +1,8 @@
+// Thoughts on V2:
+// - Maps should store a pointer to their hashing function. This would simplify the implementation
+// while also allowing great flexibility. For example if you are working with data that already has
+// a randomly-generated ID, you could use a hashing function that just returns the ID.
+
 #ifndef MAP_H_INCLUDED
 #define MAP_H_INCLUDED
 

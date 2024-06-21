@@ -1,3 +1,5 @@
+//|Todo: Use getaddrinfo().
+
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -9,7 +11,7 @@
 // you have to venture away from C99. So we looked at `strerror_r`, but it was a headache. The
 // suffixed variant has multiple signatures and you get the one you don't want unless you have
 // certain macros defined during compilation. Yuck! We don't want to deal with that now.
-#include <errno.h>
+#include <errno.h> //|Cleanup: Sort this out.
 #include <string.h>
 
 #include "array.h"
@@ -199,10 +201,8 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
 
     // Parse the path and query string.
     {
-        char key_buffer[256] = {0};
-        char val_buffer[256] = {0};
-        int  key_index = 0;
-        int  val_index = 0;
+        char_array key   = {.context = ctx};
+        char_array value = {.context = ctx};
 
         bool is_query = false; // Will be true when we're parsing the query string.
         bool is_value = false; // Only meaningful if is_query is true. If so, false means we're parsing a key and true means we're parsing a value.
@@ -212,7 +212,7 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
             // Each pass, we read a character from the request. If it's alphanumeric, in the ALLOWED array,
             // or a hex-encoded byte, we add it to our present target. At first our target is `path` because
             // we're just reading the path. But if we come to a query string, our target alternates between
-            // two static buffers: we copy the pending key into one and the pending value into the other.
+            // two arrays: we copy the pending key into one and the pending value into the other.
             if (is_alphanum(*d) || Contains(ALLOWED, *d) || *d == '%') {
                 // Set c to *d, or, if d points to a %-encoded byte, the value of that byte.
                 char c = *d;
@@ -228,38 +228,34 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
                         break;
                     }
                 }
-                if (!is_query) {
-                    *Add(path) = c;
-                } else if (!is_value) {
-                    key_buffer[key_index] = c;
-                    key_index += 1;
-                    if (key_index > lengthof(key_buffer))  break;
-                } else {
-                    val_buffer[val_index] = c;
-                    val_index += 1;
-                    if (val_index > lengthof(val_buffer))  break;
-                }
+                if (!is_query)       *Add(path)   = c;
+                else if (!is_value)  *Add(&key)   = c;
+                else                 *Add(&value) = c;
             } else if (*d == '?') {
                 if (is_query)  break;
                 is_query = true;
             } else if (*d == '=') {
                 if (!is_query)   break;
                 if (is_value)    break;
-                if (!key_index)  break;
+                if (!key.count)  break;
                 is_value = true;
             } else if (*d == '&' || *d == ' ') {
                 // Add the previous key/value we were building.
-                if (is_query && key_index) {
-                    if (val_index)  *Set(query, key_buffer) = copy_string(val_buffer, ctx);
-                    else            *Set(query, key_buffer) = ""; //  ?x&y&z  ->  x, y and z get empty strings for values.
+                if (is_query && key.count) {
+                    *Add(&key) = '\0';
+                    if (value.count) {
+                        *Add(&value) = '\0';
+                        *Set(query, key.data) = value.data;
+                    } else {
+                        *Set(query, key.data) = ""; //  ?x&y&z  ->  x, y and z get empty strings for values.
+                    }
                 }
                 if (*d == ' ') {
                     success = true;
                     break;
                 }
-                memset(key_buffer, 0, key_index);
-                memset(val_buffer, 0, val_index);
-                key_index = val_index = 0;
+                key   = (char_array){.context = ctx};
+                value = (char_array){.context = ctx};
                 is_value = false;
             } else {
                 // There was an unexpected character.
@@ -282,9 +278,7 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
         // If we broke out of the above loop because of a failure to parse the query string, we
         // still want to return what we have. Advance the data pointer to the next 0x20 space
         // character after the URI so that we can keep parsing the request after that.
-        if (!success) {
-            while (*d != ' ' && d-data < size)  d += 1;
-        }
+        while (*d != ' ' && d-data < size)  d += 1;
     }
 
     if (!(d-data+5 < size && starts_with(d, " HTTP/"))) {
@@ -383,34 +377,30 @@ int main()
     while (true) {
         reset_context(ctx);
 
-        struct sockaddr_in peer_socket_addr; // Will be initialised by accept().
+        struct sockaddr_in peer_socket_addr; // This will be initialised by accept().
         socklen_t peer_socket_addr_size = sizeof(peer_socket_addr);
 
         int peer_socket_num = accept(socket_num, (struct sockaddr *)&peer_socket_addr, &peer_socket_addr_size);
 
         Request *request = NULL;
-        char  *error_msg = NULL;
+        char *request_error = NULL;
         {
-            u64 BUFFER_SIZE = 1<<12;
+            char_array *buf = NewArray(buf, ctx);
+            array_reserve(buf, BUFSIZ);
 
-            char_array *buffer = NewArray(buffer, ctx);
-            array_reserve(buffer, BUFFER_SIZE);
-
+            //|Temporary: We're restricting ourselves to one recv() per connection.
             int flags = 0;
-            buffer->count = recv(peer_socket_num, buffer->data, buffer->limit, flags);
-            if (buffer->count == 0) {
-                error_msg = "The request was empty.";
-            } else if (buffer->count >= buffer->limit) {
-                error_msg = "The request was larger than our buffer size.";
+            buf->count = recv(peer_socket_num, buf->data, buf->limit, flags);
+
+            if (!buf->count) {
+                request_error = "The request was empty.";
             } else {
-                buffer->data[buffer->count] = '\0';
+                request = parse_request(buf->data, buf->count, ctx);
 
-                request = parse_request(buffer->data, buffer->count, ctx);
-
-                if (!request)  error_msg = "We couldn't parse the request.";
+                if (!request)  request_error = "We couldn't parse the request.";
             }
         }
-        assert(!!request ^ !!error_msg); // One or the other; not both.
+        assert(!!request ^ !!request_error); // We need one, but not both.
 
         Request_handler *handler = NULL;
         if (request) {
@@ -439,7 +429,7 @@ int main()
 
                 Log("[%d] %s %s%s", response.status, method, request->path.data, query);
             } else {
-                Log("[%d] %s", response.status, error_msg);
+                Log("[%d] %s", response.status, request_error);
             }
 
             char_array *buffer = NewArray(buffer, ctx);
