@@ -1,10 +1,10 @@
-//|Todo: Use getaddrinfo().
-
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <poll.h>
+#include <fcntl.h>
 
 // We include <errno.h> and <string.h> so that we can do `strerror(errno)`. This is |Threadunsafe
 // but it is the only pure-C99 option for getting errno as a string. Of course, to use threads,
@@ -72,7 +72,7 @@ Response handle_request(Request *request, Memory_Context *context)
 
 Response handle_400(Request *request, Memory_Context *context)
 {
-    char body[] = "Bad request. Bad you.";
+    char const static body[] = "Bad request. Bad you.";
 
     return (Response){
         .status  = 400,
@@ -84,7 +84,7 @@ Response handle_400(Request *request, Memory_Context *context)
 
 Response handle_404(Request *request, Memory_Context *context)
 {
-    char body[] = "Can't find it.";
+    char const static body[] = "Can't find it.";
 
     return (Response){
         .status  = 404,
@@ -332,14 +332,30 @@ char_array *encode_query_string(string_dict *query, Memory_Context *context)
     return result;
 }
 
+void set_blocking(int file_no, bool blocking)
+// file_no is an open file descriptor.
+{
+    int flags = fcntl(file_no, F_GETFL, 0);
+
+    if (flags == -1)  Fatal("fcntl failed (%s)", strerror(errno));
+
+    if (blocking)  flags &= ~O_NONBLOCK;
+    else           flags |= O_NONBLOCK;
+
+    bool success = !fcntl(file_no, F_SETFL, flags);
+
+    if (!success)  Fatal("fcntl failed (%s)", strerror(errno));
+}
+
 int main()
 {
     // Call the old main function so we can serve the files it creates. |Temporary.
     int once_and_future_main();
     once_and_future_main();
 
-    u32 const ADDR = 0xac1180e0; // 172.17.128.224
+    u32 const ADDR = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
     u16 const PORT = 6008;
+    bool const VERBOSE = true;
 
     Route routes[] = {
         {GET, "/",          &handle_request},
@@ -348,117 +364,218 @@ int main()
         {GET, "/fonts/.*",  &serve_file},
     };
 
+
     Memory_Context *top_context = new_context(NULL);
 
-    int socket_num = socket(AF_INET, SOCK_STREAM, 0);
+    // The first two members of the socks array are special because they never get removed:
+    // socks.data[0] will be standard input (the only non-actual socket) and socks.data[1] will be
+    // the main socket listening for connections. Any additional members of the array will be
+    // active peer connections.
+    Array(struct pollfd) socks = {.context = top_context};
 
-    // Set SO_REUSEADDR because we want to run this program frequently during development. Otherwise
-    // the Linux kernel holds onto our address/port combo for a while after our program finishes.
-    if (setsockopt(socket_num, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
-        Error("Couldn't set socket options (%s).", strerror(errno));
+    *Add(&socks) = (struct pollfd){.fd = STDIN_FILENO, .events = POLLIN};
+
+    int my_socket_no = socket(AF_INET, SOCK_STREAM, 0);
+    {
+        // Set SO_REUSEADDR because we want to run this program frequently during development. Otherwise
+        // the Linux kernel holds onto our address/port combo for a while after our program finishes.
+        if (setsockopt(my_socket_no, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
+            Error("Couldn't set socket options (%s).", strerror(errno));
+        }
+
+        set_blocking(my_socket_no, false);
+
+        struct sockaddr_in socket_addr = {
+            .sin_family   = AF_INET,
+            .sin_port     = htons(PORT),
+            .sin_addr     = htonl(ADDR),
+        };
+
+        if (bind(my_socket_no, (struct sockaddr const *)&socket_addr, sizeof(socket_addr)) < 0) {
+            Error("Couldn't bind socket (%s).", strerror(errno));
+        }
+
+        int queue_length = 32;
+        if (listen(my_socket_no, queue_length) < 0)  Error("Couldn't listen on socket (%s).", strerror(errno));
+
+        Log("Listening on http://%d.%d.%d.%d:%d...", ADDR>>24, ADDR>>16&0xff, ADDR>>8&0xff, ADDR&0xff, PORT);
+
+        *Add(&socks) = (struct pollfd){.fd = my_socket_no, .events = POLLIN};
     }
 
-    struct sockaddr_in socket_addr = {
-        .sin_family   = AF_INET,
-        .sin_port     = htons(PORT),
-        .sin_addr     = htonl(ADDR),
-    };
+    Memory_Context *ctx = NULL;
 
-    if (bind(socket_num, (struct sockaddr const *)&socket_addr, sizeof(socket_addr)) < 0) {
-        Error("Couldn't bind socket (%s).", strerror(errno));
-    }
-
-    int queue_length = 100;
-    if (listen(socket_num, queue_length) < 0)  Error("Couldn't listen on socket (%s).", strerror(errno));
-
-    Log("Listening on http://%d.%d.%d.%d:%d...", ADDR>>24, ADDR>>16&0xff, ADDR>>8&0xff, ADDR&0xff, PORT);
-
-    Memory_Context *ctx = new_context(top_context);
     while (true) {
-        reset_context(ctx);
+        if (VERBOSE)  Log("Polling %ld sockets.", socks.count-1); // Not counting stdin.
 
-        struct sockaddr_in peer_socket_addr; // This will be initialised by accept().
-        socklen_t peer_socket_addr_size = sizeof(peer_socket_addr);
+        int timeout_ms = -1; // A negative value means wait forever.
+        int num_events = poll(socks.data, socks.count, timeout_ms);
+        assert(num_events != 0); // A return value of 0 means that the timeout expired, which is impossible as long as timeout_ms is negative.
+        if (num_events < 0)  Error("Couldn't poll (%s).", strerror(errno));
 
-        int peer_socket_num = accept(socket_num, (struct sockaddr *)&peer_socket_addr, &peer_socket_addr_size);
+        // If we get here, num_events is a positive number.
 
-        Request *request = NULL;
-        char *request_error = NULL;
+        // Check if we can read anything from stdin.
         {
-            char_array *buf = NewArray(buf, ctx);
-            array_reserve(buf, BUFSIZ);
+            struct pollfd *sock = &socks.data[0];
+            assert(sock->fd == STDIN_FILENO);
 
-            //|Temporary: We're restricting ourselves to one recv() per connection.
-            int flags = 0;
-            buf->count = recv(peer_socket_num, buf->data, buf->limit, flags);
-
-            if (!buf->count) {
-                request_error = "The request was empty.";
-            } else {
-                request = parse_request(buf->data, buf->count, ctx);
-
-                if (!request)  request_error = "We couldn't parse the request.";
+            if (sock->revents & POLLIN) {
+                Log("There's something to read on standard input.");
+                break;
             }
         }
-        assert(!!request ^ !!request_error); // We need one, but not both.
 
-        Request_handler *handler = NULL;
-        if (request) {
-            // We parsed a request. Look in the routes for an appropriate handler.
-            for (s64 i = 0; i < countof(routes); i++) {
-                if (routes[i].method == request->method) {
-                    if (is_match(request->path.data, routes[i].path)) {
-                        handler = routes[i].handler;
+        // Check if we can add a peer socket.
+        {
+            struct pollfd *sock = &socks.data[1];
+            assert(sock->fd == my_socket_no);
+
+            if (sock->revents & POLLIN) {
+                struct sockaddr_in peer_socket_addr; // This will be initialised by accept().
+                socklen_t peer_socket_addr_size = sizeof(peer_socket_addr);
+
+                int peer_socket_no = accept(my_socket_no, (struct sockaddr *)&peer_socket_addr, &peer_socket_addr_size);
+                if (peer_socket_no < 0)  Error("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", strerror(errno));
+
+                set_blocking(peer_socket_no, false);
+
+                if (VERBOSE)  Log("Adding a new peer (socket %d).", peer_socket_no);
+
+                *Add(&socks) = (struct pollfd){.fd = peer_socket_no, .events = POLLIN};
+
+                continue;
+            }
+        }
+
+        // Since the first two socks are standard input and our main socket, we can find peers by starting from index 2.
+        for (s64 sock_index = 2; sock_index < socks.count; sock_index += 1) {
+            struct pollfd *sock = &socks.data[sock_index];
+            assert(sock->fd > 0); //|Temporary
+
+            if (!(sock->events & POLLIN))  continue;
+
+            // There's something to read on the peer socket.
+            int peer_socket_no = sock->fd;
+
+            if (!ctx)  ctx = new_context(top_context);
+            else       reset_context(ctx);
+
+            if (VERBOSE)  Log("Socket %d has something to say!!", peer_socket_no);
+
+            Request *request = NULL;
+            char *request_error = NULL;
+            {
+                char_array buf = {.context = ctx}; // Receive buffer.
+                array_reserve(&buf, BUFSIZ);
+
+                while (true) {
+                    if (VERBOSE)  Log("We're about to read socket %d.", peer_socket_no);
+
+                    int flags = 0;
+                    s64 recv_count = recv(peer_socket_no, buf.data+buf.count, buf.limit-buf.count, flags);
+                    if (recv_count < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            // There's nothing more to read now.
+                            if (VERBOSE)  Log("There was nothing to read.");
+                            break;
+                        } else {
+                            // There was an actual error.
+                            Error("We failed to read from a socket (%s).", strerror(errno));
+                        }
+                    } else if (recv_count == 0) {
+                        // The peer has disconnected.
+                        if (VERBOSE)  Log("Socket %d has disconnected.", peer_socket_no);
+                        // |Fixme! Now we know the client has disconnected, we should free up resources for the socket
+                        // and start looking at the next request ASAP. At the moment we keep trying to parse anything
+                        // in our receive buffer and even try sending a response to a disconnected client.
                         break;
+                    } else {
+                        // We have successfully received some bytes.
+                        if (VERBOSE)  Log("Read %ld bytes from socket %d.", recv_count, peer_socket_no);
+
+                        buf.count += recv_count;
+
+                        if (buf.count == buf.limit)  array_reserve(&buf, round_up_pow2(buf.limit+1));
+                        buf.data[buf.count] = '\0';
                     }
                 }
+
+                if (!buf.count) {
+                    request_error = "The request was empty.";
+                } else {
+                    request = parse_request(buf.data, buf.count, ctx);
+
+                    if (!request)  request_error = "We couldn't parse the request.";
+                }
             }
-        } else {
-            // We failed to parse a request, so it was probably a bad request. Return a 400.
-            handler = &handle_400;
-        }
-        if (!handler)  handler = &handle_404;
+            assert(!!request ^ !!request_error); // We need one, but not both.
 
-        {
-            Response response = (*handler)(request, ctx);
-
+            Request_handler *handler = NULL;
             if (request) {
-                char *method = request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!";
-
-                char *query = request->query ? encode_query_string(request->query, ctx)->data : "";
-
-                Log("[%d] %s %s%s", response.status, method, request->path.data, query);
+                // We parsed a request. Look in the routes for an appropriate handler.
+                for (s64 i = 0; i < countof(routes); i++) {
+                    if (routes[i].method == request->method) {
+                        if (is_match(request->path.data, routes[i].path)) {
+                            handler = routes[i].handler;
+                            break;
+                        }
+                    }
+                }
             } else {
-                Log("[%d] %s", response.status, request_error);
+                // We failed to parse a request, so it was probably a bad request. Return a 400. |Fixme: We should give them a chance to send a little more data!
+                handler = &handle_400;
+            }
+            if (!handler)  handler = &handle_404;
+
+            {
+                Response response = (*handler)(request, ctx);
+
+                if (request) {
+                    char *method = request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!";
+
+                    char *query = request->query ? encode_query_string(request->query, ctx)->data : "";
+
+                    Log("[%d] %s %s%s", response.status, method, request->path.data, query);
+                } else {
+                    Log("[%d] %s", response.status, request_error);
+                }
+
+                char_array buf = {.context = ctx}; // Response buffer.
+
+                print_string(&buf, "HTTP/1.1 %d\n", response.status); //|Fixme: Version??
+                if (response.headers) {
+                    string_dict *h = response.headers;
+                    for (s64 i = 0; i < h->count; i++)  print_string(&buf, "%s: %s\n", h->keys[i], h->vals[i]);
+                }
+                print_string(&buf, "\n");
+
+                // |Speed: We copy the response body to the buffer.
+                if (buf.limit < buf.count + response.size)  array_reserve(&buf, buf.count + response.size);
+                memcpy(&buf.data[buf.count], response.body, response.size);
+                buf.count += response.size;
+
+                int flags = 0;
+                s64 num_bytes_sent = send(peer_socket_no, buf.data, buf.count, flags);
+                assert(num_bytes_sent == buf.count); // |Fixme: You can trigger this assert by spamming F5 in the browser---sometimes we send less than the full buffer.
             }
 
-            char_array *buffer = NewArray(buffer, ctx);
+            if (close(peer_socket_no) < 0)  Error("Couldn't close the peer socket (%s).", strerror(errno));
 
-            print_string(buffer, "HTTP/1.1 %d\n", response.status);
-
-            if (response.headers) {
-                string_dict *h = response.headers;
-                for (s64 i = 0; i < h->count; i++)  print_string(buffer, "%s: %s\n", h->keys[i], h->vals[i]);
+            //|Cleanup: Factor out as array_unordered_remove_by_index()
+            {
+                socks.data[sock_index]    = socks.data[socks.count-1];
+                socks.data[socks.count-1] = (struct pollfd){0};
+                socks.count -= 1;
             }
-
-            print_string(buffer, "\n");
-
-            // |Speed: We copy the response body to the buffer.
-            if (buffer->limit < buffer->count + response.size)  array_reserve(buffer, buffer->count + response.size);
-            memcpy(&buffer->data[buffer->count], response.body, response.size);
-            buffer->count += response.size;
-
-            int flags = 0;
-            s64 num_bytes_sent = send(peer_socket_num, buffer->data, buffer->count, flags);
-            assert(num_bytes_sent == buffer->count); // |Fixme: You can trigger this assert by spamming F5 in the browser---sometimes we send less than the full buffer.
         }
-
-        if (close(peer_socket_num) < 0)  Error("Couldn't close the peer socket (%s).", strerror(errno));
     }
 
-    if (close(socket_num) < 0)  Error("Couldn't close our own socket (%s).", strerror(errno));
+
+    if (close(my_socket_no) < 0)  Error("We couldn't close our own socket (%s).", strerror(errno));
 
     free_context(top_context);
+
     return 0;
 }
 
