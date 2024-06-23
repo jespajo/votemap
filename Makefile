@@ -6,7 +6,7 @@ cc := gcc
 
 cflags += -Wall -Werror
 cflags += -Wno-unused
-cflags += -std=c99 # The lack of -pedantic allows anonymous unions in structs.
+cflags += -std=c99
 cflags += -g3
 cflags += -O2
 cflags += -MMD -MP

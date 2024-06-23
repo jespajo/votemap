@@ -2,6 +2,7 @@
 // - Maps should store a pointer to their hashing function. This would simplify the implementation
 // while also allowing great flexibility. For example if you are working with data that already has
 // a randomly-generated ID, you could use a hashing function that just returns the ID.
+// - Is there a way to initialise maps on the stack? Would it be simple to add this functionality?
 
 #ifndef MAP_H_INCLUDED
 #define MAP_H_INCLUDED

@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 199309L // For clock_gettime().
+
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -24,28 +26,52 @@ typedef struct Route    Route;
 typedef struct Request  Request;
 typedef struct Response Response;
 typedef Response Request_handler(Request *, Memory_Context *);
+typedef struct Pending_request Pending_request;
 
-enum Method {GET=1, POST};
+enum HTTP_method {
+    INVALID_HTTP_METHOD,
+    GET,
+    POST,
+};
 
 struct Route {
-    enum Method      method;
-    char            *path; // Just a string because we expect to define these statically in code.
-    Request_handler *handler;
+    enum HTTP_method     method;
+    char                *path; // Just a string because we expect to define these statically in code.
+    Request_handler     *handler;
 };
 
 struct Request {
-    enum Method  method;
-    char_array   path;
-    string_dict *query;
-    //string_dict *headers; |Todo
+    enum HTTP_method     method;
+    char_array           path;
+    string_dict         *query;
+    //string_dict       *headers; |Todo
 };
 
 struct Response {
-    int          status;
-    string_dict *headers;
-    u8          *body;
-    s64          size; // The number of bytes in the body.
+    int               status;
+    string_dict      *headers;
+
+    u8               *body;
+    s64               size; // The number of bytes in the body.
 };
+
+struct Pending_request {
+    Memory_Context       *context;
+
+    u8_array              message;         // A buffer for storing the all bytes we've received.
+    s64                   start_time;      // When we accepted the connection.
+
+    s32                   socket_no;       // The socket file descriptor.
+
+    enum Request_phase {
+        PARSING=1,
+        READY_TO_CLOSE, // The request has completed (not necessarily successfully). The socket needs to be closed and memory freed.
+    }                     phase;
+
+    //Array(int) *offsets; |Todo: When we can't parse the request straight away (maybe because it hasn't all come in yet), we should keep an array of the offsets of the parts we did understand on the first attempt, e.g. the URI and each header
+    //Request    *result;
+};
+
 
 Response handle_request(Request *request, Memory_Context *context)
 // Testing the Request_handler typedef.
@@ -72,7 +98,7 @@ Response handle_request(Request *request, Memory_Context *context)
 
 Response handle_400(Request *request, Memory_Context *context)
 {
-    char const static body[] = "Bad request. Bad you.";
+    char const static body[] = "Bad request. Bad you.\n";
 
     return (Response){
         .status  = 400,
@@ -84,7 +110,7 @@ Response handle_400(Request *request, Memory_Context *context)
 
 Response handle_404(Request *request, Memory_Context *context)
 {
-    char const static body[] = "Can't find it.";
+    char const static body[] = "Can't find it.\n";
 
     return (Response){
         .status  = 404,
@@ -166,12 +192,12 @@ static char hex_to_char(char c1, char c2)
     return (char)((x1 << 4) | x2);
 }
 
-Request *parse_request(char *data, s64 size, Memory_Context *context)
+Request *parse_request(u8 *data, s64 size, Memory_Context *context)
 // On failure, return NULL only if the data doesn't look like a request at all.
 // As long as we can parse a method and a path, return what we've got.
 {
-    Memory_Context *ctx = context; // Just for shorthand.
-    char *d = data;                // A pointer to advance as we parse.
+    Memory_Context *ctx = context; // Just shorthand.
+    u8 *d = data;                  // A pointer to advance as we parse.
 
     Request *result = New(Request, ctx);
 
@@ -181,10 +207,10 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
         return NULL;
     }
 
-    if (starts_with(d, "GET ")) {
+    if (starts_with((char *)d, "GET ")) {
         result->method = GET;
         d += 4;
-    } else if (starts_with(d, "POST ")) {
+    } else if (starts_with((char *)d, "POST ")) {
         result->method = POST;
         d += 5;
     } else {
@@ -281,7 +307,7 @@ Request *parse_request(char *data, s64 size, Memory_Context *context)
         while (*d != ' ' && d-data < size)  d += 1;
     }
 
-    if (!(d-data+5 < size && starts_with(d, " HTTP/"))) {
+    if (!(d-data+5 < size && starts_with((char *)d, " HTTP/"))) {
         Log("Expected ' HTTP/' (note the space) after the path.");
         return NULL;
     }
@@ -335,17 +361,55 @@ char_array *encode_query_string(string_dict *query, Memory_Context *context)
 void set_blocking(int file_no, bool blocking)
 // file_no is an open file descriptor.
 {
+#if OS != LINUX
+    #error "set_blocking() is only implemented for Linux at the moment."
+#endif
     int flags = fcntl(file_no, F_GETFL, 0);
 
-    if (flags == -1)  Fatal("fcntl failed (%s)", strerror(errno));
+    if (flags == -1)  Fatal("fcntl failed (%s).", strerror(errno));
 
     if (blocking)  flags &= ~O_NONBLOCK;
     else           flags |= O_NONBLOCK;
 
     bool success = !fcntl(file_no, F_SETFL, flags);
 
-    if (!success)  Fatal("fcntl failed (%s)", strerror(errno));
+    if (!success)  Fatal("fcntl failed (%s).", strerror(errno));
 }
+
+#include <time.h>
+s64 get_monotonic_time()
+// In milliseconds.
+{
+#if OS != LINUX
+    #error "get_monotonic_time() is only implemented for Linux at the moment."
+#endif
+    struct timespec time;
+    bool success = !clock_gettime(CLOCK_MONOTONIC, &time);
+
+    if (!success)  Fatal("clock_gettime failed (%s).", strerror(errno));
+
+    s64 milliseconds = 1000*time.tv_sec + time.tv_nsec/1000;
+
+    return milliseconds;
+}
+
+//|Temporary: Move to array.h.
+void array_unordered_remove_by_index_(void *data, s64 *count, u64 unit_size, s64 index_to_remove)
+// Decrements *count.
+{
+    assert(0 <= index_to_remove && index_to_remove < *count);
+
+    u8 *item_to_remove = (u8 *)data + index_to_remove*unit_size;
+    u8 *last_item      = (u8 *)data + (*count-1)*unit_size;
+
+    memcpy(item_to_remove, last_item, unit_size);
+
+    memset(last_item, 0, unit_size);
+
+    *count -= 1;
+}
+#define array_unordered_remove_by_index(ARRAY, INDEX) \
+    array_unordered_remove_by_index_((ARRAY)->data, &(ARRAY)->count, sizeof((ARRAY)->data), INDEX)
 
 int main()
 {
@@ -353,9 +417,10 @@ int main()
     int once_and_future_main();
     once_and_future_main();
 
-    u32 const ADDR = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
-    u16 const PORT = 6008;
+    u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
+    u16  const PORT    = 6008;
     bool const VERBOSE = true;
+    s64  const REQUEST_TIMEOUT = 1000*5; // How many milliseconds we allow for each request to come through.
 
     Route routes[] = {
         {GET, "/",          &handle_request},
@@ -364,16 +429,14 @@ int main()
         {GET, "/fonts/.*",  &serve_file},
     };
 
-
     Memory_Context *top_context = new_context(NULL);
 
-    // The first two members of the socks array are special because they never get removed:
-    // socks.data[0] will be standard input (the only non-actual socket) and socks.data[1] will be
-    // the main socket listening for connections. Any additional members of the array will be
-    // active peer connections.
-    Array(struct pollfd) socks = {.context = top_context};
+    // The first two members of the pollfds array are special because they never get removed: pollfds.data[0] will be
+    // standard input and pollfds.data[1] will be the main socket listening for connections.
+    // Additional members of the array will be open client connections.
+    Array(struct pollfd) pollfds = {.context = top_context};
 
-    *Add(&socks) = (struct pollfd){.fd = STDIN_FILENO, .events = POLLIN};
+    *Add(&pollfds) = (struct pollfd){.fd = STDIN_FILENO, .events = POLLIN};
 
     int my_socket_no = socket(AF_INET, SOCK_STREAM, 0);
     {
@@ -400,80 +463,91 @@ int main()
 
         Log("Listening on http://%d.%d.%d.%d:%d...", ADDR>>24, ADDR>>16&0xff, ADDR>>8&0xff, ADDR&0xff, PORT);
 
-        *Add(&socks) = (struct pollfd){.fd = my_socket_no, .events = POLLIN};
+        *Add(&pollfds) = (struct pollfd){.fd = my_socket_no, .events = POLLIN};
     }
 
-    Memory_Context *ctx = NULL;
+    Map(s32, Pending_request) *pending_requests = NewMap(pending_requests, top_context);
 
-    while (true) {
-        if (VERBOSE)  Log("Polling %ld sockets.", socks.count-1); // Not counting stdin.
+    bool server_should_stop = false;
 
-        int timeout_ms = -1; // A negative value means wait forever.
-        int num_events = poll(socks.data, socks.count, timeout_ms);
-        assert(num_events != 0); // A return value of 0 means that the timeout expired, which is impossible as long as timeout_ms is negative.
-        if (num_events < 0)  Error("Couldn't poll (%s).", strerror(errno));
+    while (!server_should_stop)
+    {
+        s64 current_time = get_monotonic_time();
 
-        // If we get here, num_events is a positive number.
+        if (VERBOSE)  Log("Polling %ld open file descriptors.", pollfds.count);
 
-        // Check if we can read anything from stdin.
-        {
-            struct pollfd *sock = &socks.data[0];
-            assert(sock->fd == STDIN_FILENO);
+        // If there aren't any open connections, wait indefinitely. If there are connections, poll
+        // once per second so we can check if any connection has expired.
+        int timeout_ms = (pollfds.count-2 > 0) ? 1000 : -1;
 
-            if (sock->revents & POLLIN) {
-                Log("There's something to read on standard input.");
-                break;
-            }
-        }
+        int num_events = poll(pollfds.data, pollfds.count, timeout_ms);
 
-        // Check if we can add a peer socket.
-        {
-            struct pollfd *sock = &socks.data[1];
-            assert(sock->fd == my_socket_no);
+        if (num_events < 0)  Fatal("poll failed (%s).", strerror(errno));
 
-            if (sock->revents & POLLIN) {
-                struct sockaddr_in peer_socket_addr; // This will be initialised by accept().
-                socklen_t peer_socket_addr_size = sizeof(peer_socket_addr);
+        // If poll() timed out without any events occurring, skip trying to process requests.
+        if (!num_events)  goto cleanup;
+        // Otherwise, num_events is a positive number.
 
-                int peer_socket_no = accept(my_socket_no, (struct sockaddr *)&peer_socket_addr, &peer_socket_addr_size);
-                if (peer_socket_no < 0)  Error("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", strerror(errno));
+        for (s64 pollfd_index = 0; pollfd_index < pollfds.count; pollfd_index += 1) {
+            struct pollfd *pollfd = &pollfds.data[pollfd_index];
 
-                set_blocking(peer_socket_no, false);
+            if (!(pollfd->revents & POLLIN))  continue; // We're only interested in knowing when we can read data.
 
-                if (VERBOSE)  Log("Adding a new peer (socket %d).", peer_socket_no);
+            if (pollfd->fd == STDIN_FILENO) {
+                if (VERBOSE)  Log("There's something to read on standard input.");
+                // We should exit gracefully if it says "q" or something. |Temporary: Exit on any input from stdin.
+                server_should_stop = true;
+                goto cleanup;
+            } else if (pollfd->fd == my_socket_no) {
+                // A new connection has occurred.
+                struct sockaddr_in client_socket_addr; // This will be initialised by accept().
+                socklen_t client_socket_addr_size = sizeof(client_socket_addr);
 
-                *Add(&socks) = (struct pollfd){.fd = peer_socket_no, .events = POLLIN};
+                int client_socket_no = accept(my_socket_no, (struct sockaddr *)&client_socket_addr, &client_socket_addr_size);
+                if (client_socket_no < 0)  Fatal("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", strerror(errno));
 
-                continue;
-            }
-        }
+                set_blocking(client_socket_no, false);
 
-        // Since the first two socks are standard input and our main socket, we can find peers by starting from index 2.
-        for (s64 sock_index = 2; sock_index < socks.count; sock_index += 1) {
-            struct pollfd *sock = &socks.data[sock_index];
-            assert(sock->fd > 0); //|Temporary
+                if (VERBOSE)  Log("Adding a new client (socket %d).", client_socket_no);
 
-            if (!(sock->events & POLLIN))  continue;
+                struct pollfd pollfd = {.fd = client_socket_no, .events = POLLIN};
+                // Also set .revents so that we'll try receiving from this socket (after the others) instead of waiting to poll them all again. |Hack
+                pollfd.revents = POLLIN;
 
-            // There's something to read on the peer socket.
-            int peer_socket_no = sock->fd;
+                *Add(&pollfds) = pollfd;
 
-            if (!ctx)  ctx = new_context(top_context);
-            else       reset_context(ctx);
+                Pending_request pending_request = {0};
 
-            if (VERBOSE)  Log("Socket %d has something to say!!", peer_socket_no);
+                pending_request.context    = new_context(top_context);
+                pending_request.message    = (u8_array){.context = pending_request.context};
+                pending_request.start_time = current_time;
+                pending_request.socket_no  = client_socket_no;
+                pending_request.phase      = PARSING;
 
-            Request *request = NULL;
-            char *request_error = NULL;
-            {
-                char_array buf = {.context = ctx}; // Receive buffer.
-                array_reserve(&buf, BUFSIZ);
+                *Set(pending_requests, client_socket_no) = pending_request;
+            } else {
+                // There's something to read on a client socket.
+                int client_socket_no = pollfd->fd;
+
+                if (VERBOSE)  Log("Socket %d has something to say!!", client_socket_no);
+
+                Pending_request *pending_request = Get(pending_requests, client_socket_no);
+
+                u8_array *message = &pending_request->message; // We assume it was been initialised when the request was accepted.
 
                 while (true) {
-                    if (VERBOSE)  Log("We're about to read socket %d.", peer_socket_no);
+                    u8 *free_data      = message->data + message->count;
+                    s64 num_free_bytes = message->limit - message->count - 1; // Reserve space for a null byte.
+                    if (num_free_bytes <= 0) {
+                        array_reserve(message, round_up_pow2(message->limit+1));
+                        continue;
+                    }
+
+                    if (VERBOSE)  Log("We're about to read socket %d.", client_socket_no);
 
                     int flags = 0;
-                    s64 recv_count = recv(peer_socket_no, buf.data+buf.count, buf.limit-buf.count, flags);
+                    s64 recv_count = recv(client_socket_no, free_data, num_free_bytes, flags);
+
                     if (recv_count < 0) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK) {
                             // There's nothing more to read now.
@@ -481,96 +555,141 @@ int main()
                             break;
                         } else {
                             // There was an actual error.
-                            Error("We failed to read from a socket (%s).", strerror(errno));
+                            Fatal("We failed to read from socket %d (%s).", client_socket_no, strerror(errno));
                         }
                     } else if (recv_count == 0) {
-                        // The peer has disconnected.
-                        if (VERBOSE)  Log("Socket %d has disconnected.", peer_socket_no);
-                        // |Fixme! Now we know the client has disconnected, we should free up resources for the socket
-                        // and start looking at the next request ASAP. At the moment we keep trying to parse anything
-                        // in our receive buffer and even try sending a response to a disconnected client.
-                        break;
+                        // The client has disconnected.
+                        if (VERBOSE)  Log("Socket %d has disconnected.", client_socket_no);
+                        pending_request->phase = READY_TO_CLOSE;
+                        break; // |Fixme: Now we know the client has disconnected, we should free up resources for the socket and start looking at the next request ASAP.
                     } else {
                         // We have successfully received some bytes.
-                        if (VERBOSE)  Log("Read %ld bytes from socket %d.", recv_count, peer_socket_no);
+                        if (VERBOSE)  Log("Read %ld bytes from socket %d.", recv_count, client_socket_no);
 
-                        buf.count += recv_count;
-
-                        if (buf.count == buf.limit)  array_reserve(&buf, round_up_pow2(buf.limit+1));
-                        buf.data[buf.count] = '\0';
+                        message->count += recv_count;
+                        assert(message->count < message->limit);
+                        message->data[message->count] = '\0';
                     }
                 }
-
-                if (!buf.count) {
-                    request_error = "The request was empty.";
-                } else {
-                    request = parse_request(buf.data, buf.count, ctx);
-
-                    if (!request)  request_error = "We couldn't parse the request.";
-                }
-            }
-            assert(!!request ^ !!request_error); // We need one, but not both.
-
-            Request_handler *handler = NULL;
-            if (request) {
-                // We parsed a request. Look in the routes for an appropriate handler.
-                for (s64 i = 0; i < countof(routes); i++) {
-                    if (routes[i].method == request->method) {
-                        if (is_match(request->path.data, routes[i].path)) {
-                            handler = routes[i].handler;
-                            break;
-                        }
-                    }
-                }
-            } else {
-                // We failed to parse a request, so it was probably a bad request. Return a 400. |Fixme: We should give them a chance to send a little more data!
-                handler = &handle_400;
-            }
-            if (!handler)  handler = &handle_404;
-
-            {
-                Response response = (*handler)(request, ctx);
-
-                if (request) {
-                    char *method = request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!";
-
-                    char *query = request->query ? encode_query_string(request->query, ctx)->data : "";
-
-                    Log("[%d] %s %s%s", response.status, method, request->path.data, query);
-                } else {
-                    Log("[%d] %s", response.status, request_error);
-                }
-
-                char_array buf = {.context = ctx}; // Response buffer.
-
-                print_string(&buf, "HTTP/1.1 %d\n", response.status); //|Fixme: Version??
-                if (response.headers) {
-                    string_dict *h = response.headers;
-                    for (s64 i = 0; i < h->count; i++)  print_string(&buf, "%s: %s\n", h->keys[i], h->vals[i]);
-                }
-                print_string(&buf, "\n");
-
-                // |Speed: We copy the response body to the buffer.
-                if (buf.limit < buf.count + response.size)  array_reserve(&buf, buf.count + response.size);
-                memcpy(&buf.data[buf.count], response.body, response.size);
-                buf.count += response.size;
-
-                int flags = 0;
-                s64 num_bytes_sent = send(peer_socket_no, buf.data, buf.count, flags);
-                assert(num_bytes_sent == buf.count); // |Fixme: You can trigger this assert by spamming F5 in the browser---sometimes we send less than the full buffer.
-            }
-
-            if (close(peer_socket_no) < 0)  Error("Couldn't close the peer socket (%s).", strerror(errno));
-
-            //|Cleanup: Factor out as array_unordered_remove_by_index()
-            {
-                socks.data[sock_index]    = socks.data[socks.count-1];
-                socks.data[socks.count-1] = (struct pollfd){0};
-                socks.count -= 1;
             }
         }
-    }
 
+        //
+        // We've read everything we can from our sockets. Now try parsing the messages.
+        //
+
+        for (s64 request_index = 0; request_index < pending_requests->count; request_index += 1) {
+            s32 client_socket_no = pending_requests->keys[request_index];
+            Pending_request *pending_request = &pending_requests->vals[request_index];
+
+            Memory_Context *ctx = pending_request->context;
+            u8_array *message = &pending_request->message;
+
+            if (!message->count)  continue;
+
+            //|Speed: We shouldn't try to parse again unless we received more bytes when we polled.
+
+            Request *request = parse_request(message->data, message->count, ctx);
+
+            if (!request) {
+                if (VERBOSE) {
+                    char_array out = {.context = ctx};
+                    print_string(&out, "We couldn't parse this message from socket %d:\n", client_socket_no);
+                    print_string(&out, "---\n");
+                    print_string(&out, "%s\n", message->data);
+                    print_string(&out, "---\n");
+                    Log(out.data);
+                }
+                continue;
+            }
+
+            if (VERBOSE)  Log("Successfully parsed a message from socket %d.", client_socket_no);
+
+            Request_handler *handler = NULL;
+            for (s64 route_index = 0; route_index < countof(routes); route_index += 1) {
+                Route *route = &routes[route_index];
+
+                if (route->method != request->method)            continue;
+                if (!is_match(request->path.data, route->path))  continue;
+
+                handler = route->handler;
+            }
+
+            if (!handler) {
+                if (VERBOSE)  Log("We couldn't find a handler for this request, so we're returning a 404.");
+
+                handler = &handle_404;
+            }
+
+            Response response = (*handler)(request, ctx);
+            {
+                char *method = request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!";
+                char *query = request->query ? encode_query_string(request->query, ctx)->data : "";
+
+                Log("[%d] %s %s%s", response.status, method, request->path.data, query);
+            }
+
+            char_array reply = {.context = ctx}; //|Inconsistent: The reply buffer is char_array but the request buffer is u8_array for no apparent reason. In fact, our usual assumption, that char_arrays are null-terminated whereas u8_arrays aren't, is actually reversed here.
+
+            // Print the response headers.
+            print_string(&reply, "HTTP/1.1 %d\n", response.status); //|Fixme: Version??
+            if (response.headers) {
+                string_dict *h = response.headers;
+                for (s64 i = 0; i < h->count; i++)  print_string(&reply, "%s: %s\n", h->keys[i], h->vals[i]);
+            }
+            print_string(&reply, "\n");
+
+            // Copy the response body. |Speed
+            if (reply.count + response.size > reply.limit) {
+                array_reserve(&reply, reply.count + response.size);
+            }
+            memcpy(&reply.data[reply.count], response.body, response.size);
+            reply.count += response.size;
+
+            int flags = 0;
+            s64 num_bytes_sent = send(client_socket_no, reply.data, reply.count, flags);
+
+            assert(num_bytes_sent == reply.count); // |Fixme: You can trigger this assert by spamming F5 in the browser; sometimes we send less than the full buffer.
+
+            pending_request->phase = READY_TO_CLOSE;
+        }
+
+cleanup:
+        // Remove sockets that have timed out or that are marked "ready to close".
+        for (s64 request_index = 0; request_index < pending_requests->count; request_index++) {
+            Pending_request *pending_request = &pending_requests->vals[request_index];
+
+            // Filter out the sockets that we shouldn't close, unless the server should stop, in which
+            // case we will disconnect everyone.
+            if (!server_should_stop) {
+                enum Request_phase phase = pending_request->phase;
+                if (phase != READY_TO_CLOSE) {
+                    assert(phase == PARSING);
+                    s64 age = current_time - pending_request->start_time;
+                    if (age < REQUEST_TIMEOUT)  continue;
+                }
+            }
+
+            s32 socket_no = pending_request->socket_no;
+
+            bool closed = !close(socket_no);
+            if (!closed)  Fatal("We couldn't close a client socket (%s).", strerror(errno));
+
+            s64 pollfd_index = -1;
+            for (s64 i = 2; i < pollfds.count; i++) {
+                if (pollfds.data[i].fd == socket_no) {
+                    pollfd_index = i;
+                    break;
+                }
+            }
+            assert(pollfd_index >= 0);
+
+            array_unordered_remove_by_index(&pollfds, pollfd_index);
+            Delete(pending_requests, socket_no);
+
+            if (VERBOSE)  Log("Closed and deleted socket %d.", socket_no);
+        }
+    }
 
     if (close(my_socket_no) < 0)  Error("We couldn't close our own socket (%s).", strerror(errno));
 
