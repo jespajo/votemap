@@ -1,5 +1,6 @@
 Web server:
     Parse headers.
+    Don't put the socket back into blocking mode when you write to it. Instead, buffer our reply, poll the socket for POLLOUT and write it a little bit at a time when the socket says we can.
 
 Write up database schema plan docs/database.txt.
 Upload XML files to database:

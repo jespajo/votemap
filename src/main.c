@@ -1,3 +1,7 @@
+// Return 400 if we can't parse a request. That means we need to distinguish between "didn't parse but there's more data maybe" and "we didn't parse and we never will".
+
+// Reserve a larger buffer to start with for receiving data.
+
 #define _POSIX_C_SOURCE 199309L // For clock_gettime().
 
 #include <stdio.h>
@@ -388,7 +392,7 @@ s64 get_monotonic_time()
 
     if (!success)  Fatal("clock_gettime failed (%s).", strerror(errno));
 
-    s64 milliseconds = 1000*time.tv_sec + time.tv_nsec/1000;
+    s64 milliseconds = 1000*time.tv_sec + time.tv_nsec/1e6;
 
     return milliseconds;
 }
@@ -472,8 +476,6 @@ int main()
 
     while (!server_should_stop)
     {
-        s64 current_time = get_monotonic_time();
-
         if (VERBOSE)  Log("Polling %ld open file descriptors.", pollfds.count);
 
         // If there aren't any open connections, wait indefinitely. If there are connections, poll
@@ -483,6 +485,8 @@ int main()
         int num_events = poll(pollfds.data, pollfds.count, timeout_ms);
 
         if (num_events < 0)  Fatal("poll failed (%s).", strerror(errno));
+
+        s64 current_time = get_monotonic_time(); // We need to get this value after poll, which might have blocked for a long time, but before jumping to cleanup.
 
         // If poll() timed out without any events occurring, skip trying to process requests.
         if (!num_events)  goto cleanup;
@@ -560,8 +564,9 @@ int main()
                     } else if (recv_count == 0) {
                         // The client has disconnected.
                         if (VERBOSE)  Log("Socket %d has disconnected.", client_socket_no);
+
                         pending_request->phase = READY_TO_CLOSE;
-                        break; // |Fixme: Now we know the client has disconnected, we should free up resources for the socket and start looking at the next request ASAP.
+                        goto cleanup;
                     } else {
                         // We have successfully received some bytes.
                         if (VERBOSE)  Log("Read %ld bytes from socket %d.", recv_count, client_socket_no);
@@ -646,10 +651,12 @@ int main()
             memcpy(&reply.data[reply.count], response.body, response.size);
             reply.count += response.size;
 
+            set_blocking(client_socket_no, true); //|Temporary: Instead of this, we should send() in a loop the same way we recv().
+
             int flags = 0;
             s64 num_bytes_sent = send(client_socket_no, reply.data, reply.count, flags);
 
-            assert(num_bytes_sent == reply.count); // |Fixme: You can trigger this assert by spamming F5 in the browser; sometimes we send less than the full buffer.
+            assert(num_bytes_sent == reply.count); //|Fixme: You can trigger this assert by spamming F5 in the browser; sometimes we send less than the full buffer.
 
             pending_request->phase = READY_TO_CLOSE;
         }
@@ -684,6 +691,7 @@ cleanup:
             }
             assert(pollfd_index >= 0);
 
+            free_context(pending_request->context);
             array_unordered_remove_by_index(&pollfds, pollfd_index);
             Delete(pending_requests, socket_no);
 
