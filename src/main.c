@@ -1,4 +1,3 @@
-// Rewrite parse_request() so that it saves its result in the Pending_request * struct. Based on the data currently parsed into *crlf_offsets etc. we should use labels to efficiently jump to the place where we left off. Most importantly it needs to behave differently depending on whether it encounters an invalid request (in which case it can create the 400 response itself) or runs out of bytes to parse. And I guess it just returns bool depending on whether it completed.
 // After that, parse headers.
 
 // Reserve a larger buffer to start with for receiving data.
@@ -71,16 +70,18 @@ struct Pending_request {
 
     enum Request_phase {
         PARSING=1,
+        HANDLING,
         SENDING_REPLY,
         READY_TO_CLOSE,                    // The request has completed (not necessarily successfully). The socket needs to be closed and memory freed.
     }                     phase;
 
-    u8_array              inbox;           // A buffer for storing bytes received.
+    char_array            inbox;           // A buffer for storing bytes received.
     int_array             crlf_offsets;    // We'll fill this array as we parse the data received.
-    //Request              *request; |Todo
 
-    //Response             *response; |Todo
-    char_array            outbox;          // A buffer for storing our reply. |Cleanup char/u8
+    Request               request;
+    Response              response;
+
+    char_array            outbox;          // A buffer for storing our reply.
     s64                   num_bytes_sent;
 };
 
@@ -203,97 +204,95 @@ static char hex_to_char(char c1, char c2)
     return (char)((x1 << 4) | x2);
 }
 
-Request *parse_request(u8 *data, s64 size, Memory_Context *context)
-// On failure, return NULL only if the data doesn't look like a request at all.
-// As long as we can parse a method and a path, return what we've got.
+bool parse_request(Pending_request *pending_request)
+// If we parse a complete request, return true and set pending_request->phase to HANDLING.
+// If we encounter an invalid request, fill out the response with an appropriate status code and message and set the phase to SENDING_REPLY.
+// Return false if the request looks fine but incomplete.
 {
-    Memory_Context *ctx = context; // Just shorthand.
-    u8 *d = data;                  // A pointer to advance as we parse.
+    Memory_Context     *ctx          = pending_request->context;
+    enum Request_phase *phase        = &pending_request->phase;
+    char_array         *inbox        = &pending_request->inbox;
+    int_array          *crlf_offsets = &pending_request->crlf_offsets;
+    Request            *request      = &pending_request->request;
+    Response           *response     = &pending_request->response;
 
-    Request *result = New(Request, ctx);
+    assert(*phase == PARSING);
+    assert(inbox->count);
 
-    if (size < 5) {
-        Log("The request was too short.");
-        Breakpoint();
-        return NULL;
+    char *data = inbox->data;
+    s64   size = inbox->count;
+
+    if (size < 8)  return false;
+
+    char *d = data; // A pointer to advance as we parse.
+
+    if (crlf_offsets->count) {
+        // We've tried to parse this particular request before (but there's more data now). Pick up where we left off.
+        d += crlf_offsets->data[crlf_offsets->count-1]; //|Speed: Is this the only way we use crlf_offsets, and if so, can we just store the most recent offset and overwrite it?
+        goto parse_headers;
     }
 
-    if (starts_with((char *)d, "GET ")) {
-        result->method = GET;
+    if (starts_with(d, "GET ")) {
+        request->method = GET;
         d += 4;
-    } else if (starts_with((char *)d, "POST ")) {
-        result->method = POST;
+    } else if (starts_with(d, "POST ")) {
+        request->method = POST;
         d += 5;
     } else {
-        Log("Expected 'GET ' or 'POST ' (note the space). Got: '%c%c%c%c...'", d[0],d[1],d[2],d[3]);
-        return NULL;
+        char const static message[] = "Couldn't parse the request method.\n";
+        *response = (Response){.status = 400, .body = (u8 *)message, .size = lengthof(message)};
+        *phase = SENDING_REPLY;
+        return true;
     }
 
-    // Other than alphanumeric characters, these are the only characters we don't treat specially
-    // in paths and query strings. They're RFC 3986's unreserved characters plus a few.
+    // Other than alphanumeric characters, these are the only characters we don't treat specially in paths and query strings.
+    // They're RFC 3986's unreserved characters plus a few.
     char const ALLOWED[] = "-._~/,+"; //|Cleanup: Defined twice.
 
-    char_array  *path  = NewArray(path, ctx);
-    string_dict *query = NewDict(query, ctx);
-
+    //
     // Parse the path and query string.
+    //
     {
+        request->path = (char_array){.context = ctx};
+
+        string_dict *query = NewDict(query, ctx); // We'll only add this to the request if we fully parse a query string.
+
+        // At first we're reading the request path. If we come to a query string, our target alternates between a pending key and value.
+        char_array *target = &request->path;
+
         char_array key   = {.context = ctx};
         char_array value = {.context = ctx};
 
-        bool is_query = false; // Will be true when we're parsing the query string.
-        bool is_value = false; // Only meaningful if is_query is true. If so, false means we're parsing a key and true means we're parsing a value.
-        bool success  = false;
-
-        while (d-data < size) {
-            // Each pass, we read a character from the request. If it's alphanumeric, in the ALLOWED array,
-            // or a hex-encoded byte, we add it to our present target. At first our target is `path` because
-            // we're just reading the path. But if we come to a query string, our target alternates between
-            // two arrays: we copy the pending key into one and the pending value into the other.
-            if (is_alphanum(*d) || Contains(ALLOWED, *d) || *d == '%') {
-                // Set c to *d, or, if d points to a %-encoded byte, the value of that byte.
-                char c = *d;
-                if (c == '%') {
-                    // We are being cautious not to read past the end of the request data. (We always make
-                    // sure the request data has a terminating '\0', so this is probably overly cautious.)
-                    if (d-data+2 < size && is_hex(d[1]) && is_hex(d[2])) {
-                        // It's a hex-encoded byte.
-                        c = hex_to_char(d[1], d[2]);
-                        d += 2;
-                    } else {
-                        // The path or query string has a '%' that's not followed by two hexadecimal digits.
-                        break;
-                    }
-                }
-                if (!is_query)       *Add(path)   = c;
-                else if (!is_value)  *Add(&key)   = c;
-                else                 *Add(&value) = c;
+        while (d - data < size) {
+            if (is_alphanum(*d) || Contains(ALLOWED, *d)) {
+                *Add(target) = *d;
+            } else if (*d == '%') {
+                if (d - data + 2 >= size)      break;
+                if (!is_hex(d[1]))             break;
+                if (!is_hex(d[2]))             break;
+                // It's a hex-encoded byte.
+                *Add(target) = hex_to_char(d[1], d[2]);
+                d += 2;
             } else if (*d == '?') {
-                if (is_query)  break;
-                is_query = true;
+                if (target != &request->path)  break;
+                target = &key;
             } else if (*d == '=') {
-                if (!is_query)   break;
-                if (is_value)    break;
-                if (!key.count)  break;
-                is_value = true;
+                if (target != &key)            break;
+                if (key.count == 0)            break;
+                target = &value;
             } else if (*d == '&' || *d == ' ') {
-                // Add the previous key/value we were building.
-                if (is_query && key.count) {
-                    *Add(&key) = '\0';
-                    if (value.count) {
-                        *Add(&value) = '\0';
-                        *Set(query, key.data) = value.data;
-                    } else {
-                        *Set(query, key.data) = ""; //  ?x&y&z  ->  x, y and z get empty strings for values.
-                    }
+                if (key.count) {
+                    // Add the previous key/value we were building.
+                    *Add(&key)   = '\0';
+                    *Add(&value) = '\0'; // If the query string has keys without values, we put empty strings for values.
+
+                    *Set(query, key.data) = value.data;
+
+                    key   = (char_array){.context = ctx};
+                    value = (char_array){.context = ctx};
                 }
-                if (*d == ' ') {
-                    success = true;
-                    break;
-                }
-                key   = (char_array){.context = ctx};
-                value = (char_array){.context = ctx};
-                is_value = false;
+                if (*d == ' ')  break; // Success!
+                target = &key;
             } else {
                 // There was an unexpected character.
                 break;
@@ -301,29 +300,45 @@ Request *parse_request(u8 *data, s64 size, Memory_Context *context)
             d += 1;
         }
 
-        // Return NULL if we didn't even parse a path.
-        if (!success && !is_query)  return NULL;
+        // If we've come to the end of the data, assume there's more to come. Don't worry about
+        // setting a max URI length; we'll set limits on the request size overall.
+        if (d - data == size)  return false;
 
-        *Add(path) = '\0';
-        path->count -= 1;
+        if (*d != ' ') {
+            // We didn't finish at a space, which means we came to an unexpected character in the URI.
+            // If we managed to parse a path and we were onto a query string, we'll allow it.
+            if (request->path.count && target != &request->path) {
+                // Advance the data pointer to the next space character after the URI.
+                while (d - data < size) {
+                    d += 1;
+                    if (*d == ' ')  break;
+                }
+            } else {
+                // Otherwise, the request is bunk.
+                char_array *message = get_string(ctx, "The request had an unexpected character at index %ld: '%c'.\n", d - data, *d);
+                *response = (Response){.status = 400, .body = (u8 *)message->data, .size = message->count};
+                *phase = SENDING_REPLY;
+                return true;
+            }
+        }
 
-        result->path = *path;
+        *Add(&request->path) = '\0';
+        request->path.count -= 1;
 
-        // Only add the query string if we fully parsed one.
-        if (success && query->count)   result->query = query;
-
-        // If we broke out of the above loop because of a failure to parse the query string, we
-        // still want to return what we have. Advance the data pointer to the next 0x20 space
-        // character after the URI so that we can keep parsing the request after that.
-        while (*d != ' ' && d-data < size)  d += 1;
+        if (query->count)  request->query = query;
     }
 
-    if (!(d-data+5 < size && starts_with((char *)d, " HTTP/"))) {
-        Log("Expected ' HTTP/' (note the space) after the path.");
-        return NULL;
+    if (!(d-data+5 < size && starts_with(d, " HTTP/"))) {
+        char const static message[] = "Expected ' HTTP/' (note the space) after the path.\n";
+        *response = (Response){.status = 400, .body = (u8 *)message, .size = lengthof(message)};
+        *phase = SENDING_REPLY;
+        return true;
     }
 
-    return result;
+parse_headers: //|Todo
+
+    *phase = HANDLING;
+    return true;
 }
 
 char_array *encode_query_string(string_dict *query, Memory_Context *context)
@@ -406,14 +421,14 @@ s64 get_monotonic_time()
 
 int main()
 {
-    // Call the old main function so we can serve the files it creates. |Temporary.
-    int once_and_future_main();
-    once_and_future_main();
+    //// Call the old main function so we can serve the files it creates. |Temporary.
+    //int once_and_future_main();
+    //once_and_future_main();
 
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
     u16  const PORT    = 6008;
     bool const VERBOSE = true;
-    s64  const REQUEST_TIMEOUT = 1000*5; // How many milliseconds we allow for each request to come through.
+    s64  const REQUEST_TIMEOUT = 1000*10; // How many milliseconds we allow for each request to come through.
 
     Route routes[] = {
         {GET, "/",          &handle_request},
@@ -544,9 +559,9 @@ int main()
                     .start_time   = current_time,
                     .socket_no    = client_socket_no,
                     .phase        = PARSING,
-                    .inbox        = (u8_array)  {.context = request_context},
+                    .inbox        = (char_array){.context = request_context},
                     .crlf_offsets = (int_array) {.context = request_context},
-                    .outbox       = (char_array){.context = request_context}, //|Cleanup char/u8
+                    .outbox       = (char_array){.context = request_context},
                 };
             } else if (pollfd->revents & POLLIN) {
                 // There's something to read on a client socket.
@@ -556,10 +571,10 @@ int main()
 
                 if (VERBOSE)  Log("Socket %d has something to say!!", client_socket_no);
 
-                u8_array *inbox = &pending_request->inbox; // We assume it was been initialised when the request was accepted.
+                char_array *inbox = &pending_request->inbox; // We assume it was been initialised when the request was accepted.
 
                 while (true) {
-                    u8 *free_data      = inbox->data + inbox->count;
+                    char *free_data = inbox->data + inbox->count;
                     s64 num_free_bytes = inbox->limit - inbox->count - 1; // Reserve space for a null byte.
                     if (num_free_bytes <= 0) {
                         array_reserve(inbox, round_up_pow2(inbox->limit+1));
@@ -621,7 +636,14 @@ int main()
                     if (VERBOSE)  Log("Sent %ld/%ld bytes to socket %d.", pending_request->num_bytes_sent, outbox->count, client_socket_no);
                 } else {
                     assert(pending_request->num_bytes_sent == outbox->count);
-                    if (VERBOSE)  Log("We've sent our full reply to socket %d.", client_socket_no);
+                    if (VERBOSE) {
+                        Memory_Context *ctx = pending_request->context;
+                        Request *request = &pending_request->request;
+                        Response *response = &pending_request->response;
+                        char *method = request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!";
+                        char *query = request->query ? encode_query_string(request->query, ctx)->data : "";
+                        Log("[%d] %s %s%s", response->status, method, request->path.data, query);
+                    }
 
                     pending_request->phase = READY_TO_CLOSE;
                 }
@@ -638,73 +660,57 @@ int main()
 
             if (pending_request->phase != PARSING)  continue;
 
-            Memory_Context *ctx = pending_request->context;
-            u8_array *inbox = &pending_request->inbox;
+            Memory_Context *ctx      = pending_request->context;
+            char_array     *inbox    = &pending_request->inbox;
+            Request        *request  = &pending_request->request;
+            Response       *response = &pending_request->response;
+            char_array     *outbox   = &pending_request->outbox;
 
             if (!inbox->count)  continue;
 
             //|Speed: We shouldn't try to parse again unless we received more bytes when we polled.
 
-            Request *request = parse_request(inbox->data, inbox->count, ctx);
+            bool parsed = parse_request(pending_request);
 
-            if (!request) {
-                if (VERBOSE) {
-                    char_array out = {.context = ctx};
-                    print_string(&out, "We couldn't parse this message from socket %d:\n", client_socket_no);
-                    print_string(&out, "---\n");
-                    print_string(&out, "%s\n", inbox->data);
-                    print_string(&out, "---\n");
-                    Log(out.data);
-                }
-                continue;
-            }
+            if (!parsed)  continue;
 
             if (VERBOSE)  Log("Successfully parsed a message from socket %d.", client_socket_no);
 
-            Request_handler *handler = NULL;
-            for (s64 route_index = 0; route_index < countof(routes); route_index += 1) {
-                Route *route = &routes[route_index];
+            if (pending_request->phase == HANDLING) {
+                Request_handler *handler = NULL;
+                for (s64 route_index = 0; route_index < countof(routes); route_index += 1) {
+                    Route *route = &routes[route_index];
+                    if (route->method != request->method)            continue;
+                    if (!is_match(request->path.data, route->path))  continue;
+                    handler = route->handler;
+                }
 
-                if (route->method != request->method)            continue;
-                if (!is_match(request->path.data, route->path))  continue;
+                if (!handler) {
+                    if (VERBOSE)  Log("We couldn't find a handler for this request, so we're returning a 404.");
+                    handler = &handle_404;
+                }
 
-                handler = route->handler;
+                *response = (*handler)(request, ctx);
+            } else {
+                assert(pending_request->phase == SENDING_REPLY);
             }
 
-            if (!handler) {
-                if (VERBOSE)  Log("We couldn't find a handler for this request, so we're returning a 404.");
-
-                handler = &handle_404;
-            }
-
-            Response response = (*handler)(request, ctx);
-
-            char_array *outbox = &pending_request->outbox; //|Cleanup char/u8
-
-            print_string(outbox, "HTTP/1.1 %d\n", response.status); //|Fixme: Version??
-            if (response.headers) {
-                string_dict *h = response.headers;
+            print_string(outbox, "HTTP/1.1 %d\n", response->status); //|Fixme: Version??
+            if (response->headers) {
+                string_dict *h = response->headers;
                 for (s64 i = 0; i < h->count; i++)  print_string(outbox, "%s: %s\n", h->keys[i], h->vals[i]);
             }
             print_string(outbox, "\n");
 
             // Copy the response body to the outbox. |Speed!
-            if (outbox->limit < (outbox->count + response.size)) {
-                array_reserve(outbox, outbox->count + response.size);
+            if (outbox->limit < (outbox->count + response->size)) {
+                array_reserve(outbox, outbox->count + response->size);
             }
-            memcpy(&outbox->data[outbox->count], response.body, response.size);
-            outbox->count += response.size;
+            memcpy(&outbox->data[outbox->count], response->body, response->size);
+            outbox->count += response->size;
 
             pending_request->phase = SENDING_REPLY;
             //|Todo: Can we jump straight to trying to write to the socket?
-
-            {
-                //|Cleanup: It feels like we should log this after we've fully sent our response. We can only do this once we're storing the response on the Pending_request struct.
-                char *method = request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!";
-                char *query = request->query ? encode_query_string(request->query, ctx)->data : "";
-
-                Log("[%d] %s %s%s", response.status, method, request->path.data, query);
-            }
         }
 
 cleanup:

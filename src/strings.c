@@ -59,7 +59,8 @@ void print_double(double number, char_array *out)
     s64 old_count = out->count;
     print_string(out, "%.15f", number);
 
-    s64 decimel_index = -1; // The index of the decimel place '.' character, or -1 if there was none.
+    // Find the index of the decimel place '.' character, or -1 if there was none.
+    s64 decimel_index = -1;
     for (s64 i = old_count; i < out->count; i++) {
         if (out->data[i] != '.')  continue;
         decimel_index = i;
