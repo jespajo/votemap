@@ -1,6 +1,9 @@
-// Return 400 if we can't parse a request. That means we need to distinguish between "didn't parse but there's more data maybe" and "we didn't parse and we never will".
+// Rewrite parse_request() so that it saves its result in the Pending_request * struct. Based on the data currently parsed into *crlf_offsets etc. we should use labels to efficiently jump to the place where we left off. Most importantly it needs to behave differently depending on whether it encounters an invalid request (in which case it can create the 400 response itself) or runs out of bytes to parse. And I guess it just returns bool depending on whether it completed.
+// After that, parse headers.
 
 // Reserve a larger buffer to start with for receiving data.
+
+// Factor everything out into a module!
 
 #define _POSIX_C_SOURCE 199309L // For clock_gettime().
 
@@ -25,6 +28,7 @@
 #include "strings.h"
 
 typedef Dict(char *)  string_dict;
+typedef Array(int)    int_array;
 
 typedef struct Route    Route;
 typedef struct Request  Request;
@@ -62,20 +66,23 @@ struct Response {
 struct Pending_request {
     Memory_Context       *context;
 
-    u8_array              message;         // A buffer for storing the all bytes we've received.
     s64                   start_time;      // When we accepted the connection.
-
-    s32                   socket_no;       // The socket file descriptor.
+    s32                   socket_no;       // The client socket's file descriptor.
 
     enum Request_phase {
         PARSING=1,
-        READY_TO_CLOSE, // The request has completed (not necessarily successfully). The socket needs to be closed and memory freed.
+        SENDING_REPLY,
+        READY_TO_CLOSE,                    // The request has completed (not necessarily successfully). The socket needs to be closed and memory freed.
     }                     phase;
 
-    //Array(int) *offsets; |Todo: When we can't parse the request straight away (maybe because it hasn't all come in yet), we should keep an array of the offsets of the parts we did understand on the first attempt, e.g. the URI and each header
-    //Request    *result;
-};
+    u8_array              inbox;           // A buffer for storing bytes received.
+    int_array             crlf_offsets;    // We'll fill this array as we parse the data received.
+    //Request              *request; |Todo
 
+    //Response             *response; |Todo
+    char_array            outbox;          // A buffer for storing our reply. |Cleanup char/u8
+    s64                   num_bytes_sent;
+};
 
 Response handle_request(Request *request, Memory_Context *context)
 // Testing the Request_handler typedef.
@@ -397,24 +404,6 @@ s64 get_monotonic_time()
     return milliseconds;
 }
 
-//|Temporary: Move to array.h.
-void array_unordered_remove_by_index_(void *data, s64 *count, u64 unit_size, s64 index_to_remove)
-// Decrements *count.
-{
-    assert(0 <= index_to_remove && index_to_remove < *count);
-
-    u8 *item_to_remove = (u8 *)data + index_to_remove*unit_size;
-    u8 *last_item      = (u8 *)data + (*count-1)*unit_size;
-
-    memcpy(item_to_remove, last_item, unit_size);
-
-    memset(last_item, 0, unit_size);
-
-    *count -= 1;
-}
-#define array_unordered_remove_by_index(ARRAY, INDEX) \
-    array_unordered_remove_by_index_((ARRAY)->data, &(ARRAY)->count, sizeof((ARRAY)->data), INDEX)
-
 int main()
 {
     // Call the old main function so we can serve the files it creates. |Temporary.
@@ -434,13 +423,6 @@ int main()
     };
 
     Memory_Context *top_context = new_context(NULL);
-
-    // The first two members of the pollfds array are special because they never get removed: pollfds.data[0] will be
-    // standard input and pollfds.data[1] will be the main socket listening for connections.
-    // Additional members of the array will be open client connections.
-    Array(struct pollfd) pollfds = {.context = top_context};
-
-    *Add(&pollfds) = (struct pollfd){.fd = STDIN_FILENO, .events = POLLIN};
 
     int my_socket_no = socket(AF_INET, SOCK_STREAM, 0);
     {
@@ -466,16 +448,44 @@ int main()
         if (listen(my_socket_no, queue_length) < 0)  Error("Couldn't listen on socket (%s).", strerror(errno));
 
         Log("Listening on http://%d.%d.%d.%d:%d...", ADDR>>24, ADDR>>16&0xff, ADDR>>8&0xff, ADDR&0xff, PORT);
-
-        *Add(&pollfds) = (struct pollfd){.fd = my_socket_no, .events = POLLIN};
     }
 
     Map(s32, Pending_request) *pending_requests = NewMap(pending_requests, top_context);
 
     bool server_should_stop = false;
 
+    Memory_Context *frame_ctx = new_context(top_context); // A "frame" is one iteration of the main loop.
+
     while (!server_should_stop)
     {
+        reset_context(frame_ctx);
+
+        // Build an array of file descriptors to poll. The first two elements in the array never change:
+        // pollfds.data[0] is standard input and pollfds.data[1] is our main socket listening for
+        // connections. If there are any other elements in the array, they are open client connections.
+        Array(struct pollfd) pollfds = {.context = frame_ctx};
+        {
+            *Add(&pollfds) = (struct pollfd){.fd = STDIN_FILENO, .events = POLLIN};
+
+            *Add(&pollfds) = (struct pollfd){.fd = my_socket_no, .events = POLLIN};
+
+            for (s64 i = 0; i < pending_requests->count; i++) {
+                Pending_request *pending_request = &pending_requests->vals[i];
+
+                struct pollfd pollfd = {.fd = pending_request->socket_no};
+
+                switch (pending_request->phase) {
+                    case PARSING:        pollfd.events |= POLLIN;   break;
+                    case SENDING_REPLY:  pollfd.events |= POLLOUT;  break;
+
+                    default:  assert(!"Unexpected request phase.");
+                }
+                assert(pollfd.events);
+
+                *Add(&pollfds) = pollfd;
+            }
+        }
+
         if (VERBOSE)  Log("Polling %ld open file descriptors.", pollfds.count);
 
         // If there aren't any open connections, wait indefinitely. If there are connections, poll
@@ -495,14 +505,19 @@ int main()
         for (s64 pollfd_index = 0; pollfd_index < pollfds.count; pollfd_index += 1) {
             struct pollfd *pollfd = &pollfds.data[pollfd_index];
 
-            if (!(pollfd->revents & POLLIN))  continue; // We're only interested in knowing when we can read data.
+            if (!pollfd->revents)  continue;
 
             if (pollfd->fd == STDIN_FILENO) {
+                assert(pollfd->revents == POLLIN);
+
                 if (VERBOSE)  Log("There's something to read on standard input.");
+
                 // We should exit gracefully if it says "q" or something. |Temporary: Exit on any input from stdin.
                 server_should_stop = true;
                 goto cleanup;
             } else if (pollfd->fd == my_socket_no) {
+                assert(pollfd->revents == POLLIN);
+
                 // A new connection has occurred.
                 struct sockaddr_in client_socket_addr; // This will be initialised by accept().
                 socklen_t client_socket_addr_size = sizeof(client_socket_addr);
@@ -514,36 +529,40 @@ int main()
 
                 if (VERBOSE)  Log("Adding a new client (socket %d).", client_socket_no);
 
-                struct pollfd pollfd = {.fd = client_socket_no, .events = POLLIN};
-                // Also set .revents so that we'll try receiving from this socket (after the others) instead of waiting to poll them all again. |Hack
-                pollfd.revents = POLLIN;
+                *Add(&pollfds) = (struct pollfd){
+                    .fd      = client_socket_no,
+                    .events  = POLLIN|POLLOUT,
+                    .revents = POLLIN, // We also set .revents ourselves so that we'll try receiving from this socket (after the others) instead of waiting to poll them all again. |Hack
+                };
 
-                *Add(&pollfds) = pollfd;
+                assert(Get(pending_requests, client_socket_no) == &pending_requests->vals[-1]); //|Temporary: We shouldn't have a request associated with this client socket yet. |Cleanup:IsSet()
 
-                Pending_request pending_request = {0};
+                Memory_Context *request_context = new_context(top_context);
 
-                pending_request.context    = new_context(top_context);
-                pending_request.message    = (u8_array){.context = pending_request.context};
-                pending_request.start_time = current_time;
-                pending_request.socket_no  = client_socket_no;
-                pending_request.phase      = PARSING;
-
-                *Set(pending_requests, client_socket_no) = pending_request;
-            } else {
+                *Set(pending_requests, client_socket_no) = (Pending_request){
+                    .context      = request_context,
+                    .start_time   = current_time,
+                    .socket_no    = client_socket_no,
+                    .phase        = PARSING,
+                    .inbox        = (u8_array)  {.context = request_context},
+                    .crlf_offsets = (int_array) {.context = request_context},
+                    .outbox       = (char_array){.context = request_context}, //|Cleanup char/u8
+                };
+            } else if (pollfd->revents & POLLIN) {
                 // There's something to read on a client socket.
                 int client_socket_no = pollfd->fd;
+                Pending_request *pending_request = Get(pending_requests, client_socket_no);
+                assert(pending_request->phase == PARSING);
 
                 if (VERBOSE)  Log("Socket %d has something to say!!", client_socket_no);
 
-                Pending_request *pending_request = Get(pending_requests, client_socket_no);
-
-                u8_array *message = &pending_request->message; // We assume it was been initialised when the request was accepted.
+                u8_array *inbox = &pending_request->inbox; // We assume it was been initialised when the request was accepted.
 
                 while (true) {
-                    u8 *free_data      = message->data + message->count;
-                    s64 num_free_bytes = message->limit - message->count - 1; // Reserve space for a null byte.
+                    u8 *free_data      = inbox->data + inbox->count;
+                    s64 num_free_bytes = inbox->limit - inbox->count - 1; // Reserve space for a null byte.
                     if (num_free_bytes <= 0) {
-                        array_reserve(message, round_up_pow2(message->limit+1));
+                        array_reserve(inbox, round_up_pow2(inbox->limit+1));
                         continue;
                     }
 
@@ -571,37 +590,69 @@ int main()
                         // We have successfully received some bytes.
                         if (VERBOSE)  Log("Read %ld bytes from socket %d.", recv_count, client_socket_no);
 
-                        message->count += recv_count;
-                        assert(message->count < message->limit);
-                        message->data[message->count] = '\0';
+                        inbox->count += recv_count;
+                        assert(inbox->count < inbox->limit);
+                        inbox->data[inbox->count] = '\0';
                     }
+                }
+            } else if (pollfd->revents & POLLOUT) {
+                // We can write to a client socket.
+                int client_socket_no = pollfd->fd;
+                Pending_request *pending_request = Get(pending_requests, client_socket_no);
+                assert(pending_request->phase == SENDING_REPLY);
+
+                if (VERBOSE)  Log("We're about to write to socket %d.", client_socket_no);
+
+                char_array *outbox = &pending_request->outbox;
+
+                char *data_to_send = outbox->data + pending_request->num_bytes_sent;
+                s64   unsent_bytes = outbox->count - pending_request->num_bytes_sent;
+
+                //|Todo: send() in a loop until returns -1 like we recv()
+
+                int flags = 0;
+                s64 send_count = send(client_socket_no, data_to_send, unsent_bytes, flags);
+
+                if (send_count < 0)  Fatal("send failed (%s).", strerror(errno));
+
+                pending_request->num_bytes_sent += send_count;
+
+                if (pending_request->num_bytes_sent < outbox->count) {
+                    if (VERBOSE)  Log("Sent %ld/%ld bytes to socket %d.", pending_request->num_bytes_sent, outbox->count, client_socket_no);
+                } else {
+                    assert(pending_request->num_bytes_sent == outbox->count);
+                    if (VERBOSE)  Log("We've sent our full reply to socket %d.", client_socket_no);
+
+                    pending_request->phase = READY_TO_CLOSE;
                 }
             }
         }
 
         //
-        // We've read everything we can from our sockets. Now try parsing the messages.
+        // Try to parse and handle pending requests.
         //
 
         for (s64 request_index = 0; request_index < pending_requests->count; request_index += 1) {
             s32 client_socket_no = pending_requests->keys[request_index];
             Pending_request *pending_request = &pending_requests->vals[request_index];
 
-            Memory_Context *ctx = pending_request->context;
-            u8_array *message = &pending_request->message;
+            if (pending_request->phase != PARSING)  continue;
 
-            if (!message->count)  continue;
+            Memory_Context *ctx = pending_request->context;
+            u8_array *inbox = &pending_request->inbox;
+
+            if (!inbox->count)  continue;
 
             //|Speed: We shouldn't try to parse again unless we received more bytes when we polled.
 
-            Request *request = parse_request(message->data, message->count, ctx);
+            Request *request = parse_request(inbox->data, inbox->count, ctx);
 
             if (!request) {
                 if (VERBOSE) {
                     char_array out = {.context = ctx};
                     print_string(&out, "We couldn't parse this message from socket %d:\n", client_socket_no);
                     print_string(&out, "---\n");
-                    print_string(&out, "%s\n", message->data);
+                    print_string(&out, "%s\n", inbox->data);
                     print_string(&out, "---\n");
                     Log(out.data);
                 }
@@ -627,38 +678,33 @@ int main()
             }
 
             Response response = (*handler)(request, ctx);
+
+            char_array *outbox = &pending_request->outbox; //|Cleanup char/u8
+
+            print_string(outbox, "HTTP/1.1 %d\n", response.status); //|Fixme: Version??
+            if (response.headers) {
+                string_dict *h = response.headers;
+                for (s64 i = 0; i < h->count; i++)  print_string(outbox, "%s: %s\n", h->keys[i], h->vals[i]);
+            }
+            print_string(outbox, "\n");
+
+            // Copy the response body to the outbox. |Speed!
+            if (outbox->limit < (outbox->count + response.size)) {
+                array_reserve(outbox, outbox->count + response.size);
+            }
+            memcpy(&outbox->data[outbox->count], response.body, response.size);
+            outbox->count += response.size;
+
+            pending_request->phase = SENDING_REPLY;
+            //|Todo: Can we jump straight to trying to write to the socket?
+
             {
+                //|Cleanup: It feels like we should log this after we've fully sent our response. We can only do this once we're storing the response on the Pending_request struct.
                 char *method = request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!";
                 char *query = request->query ? encode_query_string(request->query, ctx)->data : "";
 
                 Log("[%d] %s %s%s", response.status, method, request->path.data, query);
             }
-
-            char_array reply = {.context = ctx}; //|Inconsistent: The reply buffer is char_array but the request buffer is u8_array for no apparent reason. In fact, our usual assumption, that char_arrays are null-terminated whereas u8_arrays aren't, is actually reversed here.
-
-            // Print the response headers.
-            print_string(&reply, "HTTP/1.1 %d\n", response.status); //|Fixme: Version??
-            if (response.headers) {
-                string_dict *h = response.headers;
-                for (s64 i = 0; i < h->count; i++)  print_string(&reply, "%s: %s\n", h->keys[i], h->vals[i]);
-            }
-            print_string(&reply, "\n");
-
-            // Copy the response body. |Speed
-            if (reply.count + response.size > reply.limit) {
-                array_reserve(&reply, reply.count + response.size);
-            }
-            memcpy(&reply.data[reply.count], response.body, response.size);
-            reply.count += response.size;
-
-            set_blocking(client_socket_no, true); //|Temporary: Instead of this, we should send() in a loop the same way we recv().
-
-            int flags = 0;
-            s64 num_bytes_sent = send(client_socket_no, reply.data, reply.count, flags);
-
-            assert(num_bytes_sent == reply.count); //|Fixme: You can trigger this assert by spamming F5 in the browser; sometimes we send less than the full buffer.
-
-            pending_request->phase = READY_TO_CLOSE;
         }
 
 cleanup:
@@ -667,32 +713,18 @@ cleanup:
             Pending_request *pending_request = &pending_requests->vals[request_index];
 
             // Filter out the sockets that we shouldn't close, unless the server should stop, in which
-            // case we will disconnect everyone.
-            if (!server_should_stop) {
-                enum Request_phase phase = pending_request->phase;
-                if (phase != READY_TO_CLOSE) {
-                    assert(phase == PARSING);
-                    s64 age = current_time - pending_request->start_time;
-                    if (age < REQUEST_TIMEOUT)  continue;
-                }
-            }
+            // case we will disconnect everyone. |Todo: Finish sending pending replies first.
+            bool should_close = server_should_stop;
+            should_close |= (pending_request->phase == READY_TO_CLOSE);
+            should_close |= (REQUEST_TIMEOUT < (current_time - pending_request->start_time));
+            if (!should_close)  continue;
 
             s32 socket_no = pending_request->socket_no;
 
             bool closed = !close(socket_no);
             if (!closed)  Fatal("We couldn't close a client socket (%s).", strerror(errno));
 
-            s64 pollfd_index = -1;
-            for (s64 i = 2; i < pollfds.count; i++) {
-                if (pollfds.data[i].fd == socket_no) {
-                    pollfd_index = i;
-                    break;
-                }
-            }
-            assert(pollfd_index >= 0);
-
             free_context(pending_request->context);
-            array_unordered_remove_by_index(&pollfds, pollfd_index);
             Delete(pending_requests, socket_no);
 
             if (VERBOSE)  Log("Closed and deleted socket %d.", socket_no);

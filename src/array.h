@@ -21,6 +21,7 @@ char_array *load_text_file(char *file_name, Memory_Context *context);
 u8_array *load_binary_file(char *file_name, Memory_Context *context);
 void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name);
 void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_Context *context);
+void array_unordered_remove_by_index_(void *data, s64 *count, u64 unit_size, s64 index_to_remove);
 
 #define NewArray(ARRAY, CONTEXT) \
     ((ARRAY) = zero_alloc((CONTEXT), 1, sizeof(*ARRAY)), \
@@ -40,5 +41,8 @@ void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_Cont
 
 #define reverse_array(ARRAY) \
     (reverse_array_((ARRAY)->data, (ARRAY)->limit, (ARRAY)->count, sizeof((ARRAY)->data[0]), (ARRAY)->context))
+
+#define array_unordered_remove_by_index(ARRAY, INDEX) \
+    array_unordered_remove_by_index_((ARRAY)->data, &(ARRAY)->count, sizeof((ARRAY)->data), (INDEX))
 
 #endif // ARRAY_H_INCLUDED

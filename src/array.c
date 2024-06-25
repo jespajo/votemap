@@ -141,3 +141,18 @@ void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_Cont
     // This is not necessary, but may help prevent confusion when debugging.
     memset(tmp, 0, unit_size);
 }
+
+void array_unordered_remove_by_index_(void *data, s64 *count, u64 unit_size, s64 index_to_remove)
+// Decrements *count. We didn't end up using this when we wrote it, but we'll probably need it some day.
+{
+    assert(0 <= index_to_remove && index_to_remove < *count);
+
+    u8 *item_to_remove = (u8 *)data + index_to_remove*unit_size;
+    u8 *last_item      = (u8 *)data + (*count-1)*unit_size;
+
+    memcpy(item_to_remove, last_item, unit_size);
+
+    memset(last_item, 0, unit_size);
+
+    *count -= 1;
+}
