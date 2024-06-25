@@ -1,6 +1,4 @@
-// After that, parse headers.
-
-// Reserve a larger buffer to start with for receiving data.
+// Parse headers.
 
 // Factor everything out into a module!
 
@@ -421,9 +419,9 @@ s64 get_monotonic_time()
 
 int main()
 {
-    //// Call the old main function so we can serve the files it creates. |Temporary.
-    //int once_and_future_main();
-    //once_and_future_main();
+    // Call the old main function so we can serve the files it creates. |Temporary.
+    int once_and_future_main();
+    once_and_future_main();
 
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
     u16  const PORT    = 6008;
@@ -559,9 +557,6 @@ int main()
                     .start_time   = current_time,
                     .socket_no    = client_socket_no,
                     .phase        = PARSING,
-                    .inbox        = (char_array){.context = request_context},
-                    .crlf_offsets = (int_array) {.context = request_context},
-                    .outbox       = (char_array){.context = request_context},
                 };
             } else if (pollfd->revents & POLLIN) {
                 // There's something to read on a client socket.
@@ -571,7 +566,11 @@ int main()
 
                 if (VERBOSE)  Log("Socket %d has something to say!!", client_socket_no);
 
-                char_array *inbox = &pending_request->inbox; // We assume it was been initialised when the request was accepted.
+                char_array *inbox = &pending_request->inbox;
+                if (!inbox->limit) {
+                    *inbox = (char_array){.context = pending_request->context};
+                    array_reserve(inbox, BUFSIZ);
+                }
 
                 while (true) {
                     char *free_data = inbox->data + inbox->count;
@@ -664,7 +663,6 @@ int main()
             char_array     *inbox    = &pending_request->inbox;
             Request        *request  = &pending_request->request;
             Response       *response = &pending_request->response;
-            char_array     *outbox   = &pending_request->outbox;
 
             if (!inbox->count)  continue;
 
@@ -694,6 +692,9 @@ int main()
             } else {
                 assert(pending_request->phase == SENDING_REPLY);
             }
+
+            char_array *outbox = &pending_request->outbox;
+            *outbox = (char_array){.context = pending_request->context};
 
             print_string(outbox, "HTTP/1.1 %d\n", response->status); //|Fixme: Version??
             if (response->headers) {
