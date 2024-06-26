@@ -1,5 +1,3 @@
-// Parse headers.
-
 // Factor everything out into a module!
 
 #define _POSIX_C_SOURCE 199309L // For clock_gettime().
@@ -23,6 +21,8 @@
 #include "array.h"
 #include "map.h"
 #include "strings.h"
+
+#define CRLF "\r\n"
 
 typedef Dict(char *)  string_dict;
 typedef Array(int)    int_array;
@@ -48,7 +48,8 @@ struct Request {
     enum HTTP_method     method;
     char_array           path;
     string_dict         *query;
-    //string_dict       *headers; |Todo
+    string_dict         *headers;
+    //u8_array          *body;    |Todo
 };
 
 struct Response {
@@ -73,7 +74,7 @@ struct Pending_request {
     }                     phase;
 
     char_array            inbox;           // A buffer for storing bytes received.
-    int_array             crlf_offsets;    // We'll fill this array as we parse the data received.
+    int_array             header_offsets;    // We'll fill this array as we parse the data received.
 
     Request               request;
     Response              response;
@@ -202,6 +203,13 @@ static char hex_to_char(char c1, char c2)
     return (char)((x1 << 4) | x2);
 }
 
+static void to_lower_in_place(char *string, s64 length)
+{
+    for (s64 i = 0; i < length; i++) {
+        if ('A' <= string[i] && string[i] <= 'Z')  string[i] |= 0x20;
+    }
+}
+
 bool parse_request(Pending_request *pending_request)
 // If we successfully parse a complete request, set pending_request->phase to HANDLING_REQUEST and return true.
 // If the request looks invalid, fill out pending_request->response with an appropriate status code and body,
@@ -210,7 +218,7 @@ bool parse_request(Pending_request *pending_request)
     Memory_Context     *ctx          = pending_request->context;
     enum Request_phase *phase        = &pending_request->phase;
     char_array         *inbox        = &pending_request->inbox;
-    int_array          *crlf_offsets = &pending_request->crlf_offsets;
+    int_array          *header_offsets = &pending_request->header_offsets;
     Request            *request      = &pending_request->request;
     Response           *response     = &pending_request->response;
 
@@ -224,9 +232,9 @@ bool parse_request(Pending_request *pending_request)
 
     char *d = data; // A pointer to advance as we parse.
 
-    if (crlf_offsets->count) {
+    if (header_offsets->count) {
         // We've tried to parse this particular request before (but there's more data now). Pick up where we left off.
-        d += crlf_offsets->data[crlf_offsets->count-1]; //|Speed: Is this the only way we use crlf_offsets, and if so, can we just store the most recent offset and overwrite it?
+        d += header_offsets->data[header_offsets->count-1] + lengthof(CRLF);
         goto parse_headers;
     }
 
@@ -261,11 +269,11 @@ bool parse_request(Pending_request *pending_request)
         char_array key   = {.context = ctx};
         char_array value = {.context = ctx};
 
-        while (d - data < size) {
+        while (d-data < size) {
             if (is_alphanum(*d) || Contains(ALLOWED, *d)) {
                 *Add(target) = *d;
             } else if (*d == '%') {
-                if (d - data + 2 >= size)      break;
+                if (d-data + 2 >= size)        break;
                 if (!is_hex(d[1]))             break;
                 if (!is_hex(d[2]))             break;
                 // It's a hex-encoded byte.
@@ -300,20 +308,20 @@ bool parse_request(Pending_request *pending_request)
 
         // If we've come to the end of the available data, assume there's more to come. Don't worry about
         // setting a max URI length, because we'll set limits on the request size overall.
-        if (d - data == size)  return false;
+        if (d-data == size)  return false;
 
         if (*d != ' ') {
             // We didn't finish at a space, which means we came to an unexpected character in the URI.
             // If we managed to parse a path and we were onto a query string, we'll allow it.
             if (request->path.count && target != &request->path) {
                 // Advance the data pointer to the next space character after the URI.
-                while (d - data < size) {
+                while (d-data < size) {
                     d += 1;
                     if (*d == ' ')  break;
                 }
             } else {
                 // Otherwise, the request is bunk.
-                char_array *message = get_string(ctx, "The request had an unexpected character at index %ld: '%c'.\n", d - data, *d);
+                char_array *message = get_string(ctx, "The request had an unexpected character at index %ld: '%c'.\n", d-data, is_alphanum(*d) ? *d : '*');
                 *response = (Response){.status = 400, .body = (u8 *)message->data, .size = message->count};
                 *phase = SENDING_REPLY;
                 return true;
@@ -324,16 +332,78 @@ bool parse_request(Pending_request *pending_request)
         request->path.count -= 1;
 
         if (query->count)  request->query = query;
+
+        d += 1;
     }
 
-    if (!(d-data+5 < size && starts_with(d, " HTTP/"))) {
-        char const static message[] = "Expected ' HTTP/' (note the space) after the path.\n";
-        *response = (Response){.status = 400, .body = (u8 *)message, .size = lengthof(message)};
+    // Make sure the rest of the first line looks like a HTTP version. We don't do anything with this information.
+    if ((size - (d-data)) < lengthof("HTTP/1.x"CRLF))  return false;
+
+    bool version_looks_ok = (starts_with(d, "HTTP/1.0"CRLF) || starts_with(d, "HTTP/1.1"CRLF));
+    if (!version_looks_ok) {
+        char const static message[] = "We couldn't parse the HTTP version.\n";
+        *response = (Response){.status = 505, .body = (u8 *)message, .size = lengthof(message)};
         *phase = SENDING_REPLY;
         return true;
     }
 
-parse_headers: //|Incomplete
+    d += lengthof("HTTP/1.0" CRLF);
+
+    *Add(header_offsets) = d - data;
+
+    request->headers = NewDict(request->headers, ctx);
+
+parse_headers: ;
+    string_dict *headers = request->headers;
+    assert(headers);
+    {
+        char_array  key    = {.context = ctx};
+        char_array  value  = {.context = ctx};
+        char_array *target = &key;
+        while (d-data < size) {
+            if (*d == '\r') {
+                if (!key.count)        break;
+                if (!value.count)      break;
+
+                to_lower_in_place(key.data, key.count);
+                *Add(&key)   = '\0';
+                *Add(&value) = '\0';
+                *Set(headers, key.data) = value.data;
+
+                if (target != &value)  break;
+                if (d-data+1 == size)  break;
+                d += 1;
+                if (*d != '\n')        break;
+                if (d-data+1 == size)  break;
+                d += 1;
+
+                if (*d == '\r')  break; // Success!
+
+                *Add(header_offsets) = d - data;
+
+                key    = (char_array){.context = ctx};
+                value  = (char_array){.context = ctx};
+                target = &key;
+            }
+            else if (target == &key && *d == ':') {
+                if (!key.count)  break;
+                d += 1;
+                if (d-data == size)  break;
+                // Skip whitespace before value.
+                while (Contains(" \t", *d)) {
+                    d += 1;
+                    if (d-data == size)  break;
+                }
+                if (d-data == size)  break; //|Cleanup
+                target = &value;
+            } else {
+                *Add(target) = *d;
+                d += 1;
+            }
+        }
+
+        if (d-data == size)  return false;
+    }
 
     *phase = HANDLING_REQUEST;
     return true;
@@ -419,9 +489,9 @@ s64 get_monotonic_time()
 
 int main()
 {
-    // Call the old main function so we can serve the files it creates. |Temporary.
-    int once_and_future_main();
-    once_and_future_main();
+    //// Call the old main function so we can serve the files it creates. |Temporary.
+    //int once_and_future_main();
+    //once_and_future_main();
 
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
     u16  const PORT    = 6008;
@@ -697,6 +767,12 @@ int main()
             if (!parsed)  continue;
 
             if (VERBOSE)  Log("Successfully parsed a message from socket %d.", client_socket_no);
+
+            if (VERBOSE && request->headers) {
+                string_dict *h = request->headers;
+                Log("Headers:");
+                for (s64 i = 0; i < h->count; i++)  Log("  %s: %s", h->keys[i], h->vals[i]);
+            }
 
             if (pending_request->phase == HANDLING_REQUEST) {
                 Request_handler *handler = NULL;

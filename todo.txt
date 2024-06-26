@@ -45,3 +45,6 @@ Front end: draw compass.
 C framework: copy_string() (and others?) should take optional length params so they don't have to calculate their length unless needed. Optional probably means calling them with -1 for the length argument to say, "These strings are NULL-terminated. Find the length yourself." Add this argument then audit uses of these functions to pass the length if we already know it.
 
 C framework: I can never decide whether to use char or u8 for data. u8 feels better but we can't call print_string() on it. Maybe we could achieve this if we turn print_string() into a macro that calls a function, print_string_((ARRAY)->data, (ARRAY)->count, ...). The first argument is a char *. I think the compiler might be fine with implicitly casting a u8 * to a char * in that case? Or if we have to make it void *, can we assert(sizeof((ARRAY)->data[0]) == sizeof(char))?
+
+Web server: Parse request body.
+    Make it multithreaded.
