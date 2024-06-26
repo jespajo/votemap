@@ -34,8 +34,7 @@ typedef Response Request_handler(Request *, Memory_Context *);
 typedef struct Pending_request Pending_request;
 
 enum HTTP_method {
-    INVALID_HTTP_METHOD,
-    GET,
+    GET=1,            //|Todo: HTTP_ prefix these? Optionally?
     POST,
 };
 
@@ -53,7 +52,7 @@ struct Request {
 };
 
 struct Response {
-    int               status;
+    int               status; //|Todo: enum
     string_dict      *headers;
 
     u8               *body;
@@ -67,8 +66,8 @@ struct Pending_request {
     s32                   socket_no;       // The client socket's file descriptor.
 
     enum Request_phase {
-        PARSING=1,
-        HANDLING,
+        PARSING_REQUEST=1,
+        HANDLING_REQUEST,
         SENDING_REPLY,
         READY_TO_CLOSE,                    // The request has completed (not necessarily successfully). The socket needs to be closed and memory freed.
     }                     phase;
@@ -79,8 +78,8 @@ struct Pending_request {
     Request               request;
     Response              response;
 
-    char_array            outbox;          // A buffer for storing our reply.
-    s64                   num_bytes_sent;
+    char_array            reply_header;    // Our response's header in raw text form.
+    s64                   num_bytes_sent;  // The total number of bytes we've sent of our response. Includes both header and body.
 };
 
 Response handle_request(Request *request, Memory_Context *context)
@@ -131,6 +130,7 @@ Response handle_404(Request *request, Memory_Context *context)
 }
 
 Response serve_file(Request *request, Memory_Context *context)
+//|Insecure!! This function will serve any file in your filesystem, even supporting '..' to go up a directory.
 {
     char *path = request->path.data;
     s64 path_size = request->path.count;
@@ -203,9 +203,9 @@ static char hex_to_char(char c1, char c2)
 }
 
 bool parse_request(Pending_request *pending_request)
-// If we parse a complete request, return true and set pending_request->phase to HANDLING.
-// If we encounter an invalid request, fill out the response with an appropriate status code and message and set the phase to SENDING_REPLY.
-// Return false if the request looks fine but incomplete.
+// If we successfully parse a complete request, set pending_request->phase to HANDLING_REQUEST and return true.
+// If the request looks invalid, fill out pending_request->response with an appropriate status code and body,
+// set the phase to SENDING_REPLY and return true. Return false if the request looks fine but incomplete.
 {
     Memory_Context     *ctx          = pending_request->context;
     enum Request_phase *phase        = &pending_request->phase;
@@ -214,7 +214,7 @@ bool parse_request(Pending_request *pending_request)
     Request            *request      = &pending_request->request;
     Response           *response     = &pending_request->response;
 
-    assert(*phase == PARSING);
+    assert(*phase == PARSING_REQUEST);
     assert(inbox->count);
 
     char *data = inbox->data;
@@ -239,7 +239,7 @@ bool parse_request(Pending_request *pending_request)
     } else {
         char const static message[] = "Couldn't parse the request method.\n";
         *response = (Response){.status = 400, .body = (u8 *)message, .size = lengthof(message)};
-        *phase = SENDING_REPLY;
+        *phase = SENDING_REPLY;//|Todo: Return 501 NOT IMPLEMENTED.
         return true;
     }
 
@@ -298,8 +298,8 @@ bool parse_request(Pending_request *pending_request)
             d += 1;
         }
 
-        // If we've come to the end of the data, assume there's more to come. Don't worry about
-        // setting a max URI length; we'll set limits on the request size overall.
+        // If we've come to the end of the available data, assume there's more to come. Don't worry about
+        // setting a max URI length, because we'll set limits on the request size overall.
         if (d - data == size)  return false;
 
         if (*d != ' ') {
@@ -333,9 +333,9 @@ bool parse_request(Pending_request *pending_request)
         return true;
     }
 
-parse_headers: //|Todo
+parse_headers: //|Incomplete
 
-    *phase = HANDLING;
+    *phase = HANDLING_REQUEST;
     return true;
 }
 
@@ -488,8 +488,8 @@ int main()
                 struct pollfd pollfd = {.fd = pending_request->socket_no};
 
                 switch (pending_request->phase) {
-                    case PARSING:        pollfd.events |= POLLIN;   break;
-                    case SENDING_REPLY:  pollfd.events |= POLLOUT;  break;
+                    case PARSING_REQUEST:  pollfd.events |= POLLIN;   break;
+                    case SENDING_REPLY:    pollfd.events |= POLLOUT;  break;
 
                     default:  assert(!"Unexpected request phase.");
                 }
@@ -556,13 +556,13 @@ int main()
                     .context      = request_context,
                     .start_time   = current_time,
                     .socket_no    = client_socket_no,
-                    .phase        = PARSING,
+                    .phase        = PARSING_REQUEST,
                 };
             } else if (pollfd->revents & POLLIN) {
                 // There's something to read on a client socket.
                 int client_socket_no = pollfd->fd;
                 Pending_request *pending_request = Get(pending_requests, client_socket_no);
-                assert(pending_request->phase == PARSING);
+                assert(pending_request->phase == PARSING_REQUEST);
 
                 if (VERBOSE)  Log("Socket %d has something to say!!", client_socket_no);
 
@@ -617,30 +617,54 @@ int main()
 
                 if (VERBOSE)  Log("We're about to write to socket %d.", client_socket_no);
 
-                char_array *outbox = &pending_request->outbox;
+                char_array *reply_header   = &pending_request->reply_header;
+                Response   *response       = &pending_request->response;
+                s64        *num_bytes_sent = &pending_request->num_bytes_sent;
 
-                char *data_to_send = outbox->data + pending_request->num_bytes_sent;
-                s64   unsent_bytes = outbox->count - pending_request->num_bytes_sent;
+                s64 full_reply_size = reply_header->count + response->size;
+                assert(*num_bytes_sent < full_reply_size);
 
-                //|Todo: send() in a loop until returns -1 like we recv()
+                while (*num_bytes_sent < full_reply_size) {
+                    void *data_to_send      = NULL;
+                    s64   num_bytes_to_send = 0;
+                    if (*num_bytes_sent < reply_header->count) {
+                        // We're still sending the response header.
+                        data_to_send      = reply_header->data  + *num_bytes_sent;
+                        num_bytes_to_send = reply_header->count - *num_bytes_sent;
+                    } else {
+                        // We're sending the response body.
+                        s64 body_sent = *num_bytes_sent - reply_header->count;
 
-                int flags = 0;
-                s64 send_count = send(client_socket_no, data_to_send, unsent_bytes, flags);
+                        data_to_send      = response->body + body_sent;
+                        num_bytes_to_send = response->size - body_sent;
+                    }
+                    assert(data_to_send);
+                    assert(num_bytes_to_send > 0);
 
-                if (send_count < 0)  Fatal("send failed (%s).", strerror(errno));
+                    int flags = 0;
+                    s64 send_count = send(client_socket_no, data_to_send, num_bytes_to_send, flags);
+                    if (send_count < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
+                        else  Fatal("send failed (%s).", strerror(errno));
+                    }
+                    assert(send_count > 0);
 
-                pending_request->num_bytes_sent += send_count;
+                    *num_bytes_sent += send_count;
+                }
 
-                if (pending_request->num_bytes_sent < outbox->count) {
-                    if (VERBOSE)  Log("Sent %ld/%ld bytes to socket %d.", pending_request->num_bytes_sent, outbox->count, client_socket_no);
+                if (*num_bytes_sent < full_reply_size) {
+                    // We've partially sent our reply.
+                    if (VERBOSE)  Log("Sent %ld/%ld bytes to socket %d.", *num_bytes_sent, full_reply_size, client_socket_no);
                 } else {
-                    assert(pending_request->num_bytes_sent == outbox->count);
+                    // We've fully sent our reply.
+                    assert(*num_bytes_sent == full_reply_size);
                     if (VERBOSE) {
                         Memory_Context *ctx = pending_request->context;
                         Request *request = &pending_request->request;
-                        Response *response = &pending_request->response;
+
                         char *method = request->method == GET ? "GET" : request->method == POST ? "POST" : "UNKNOWN!!";
                         char *query = request->query ? encode_query_string(request->query, ctx)->data : "";
+
                         Log("[%d] %s %s%s", response->status, method, request->path.data, query);
                     }
 
@@ -657,7 +681,7 @@ int main()
             s32 client_socket_no = pending_requests->keys[request_index];
             Pending_request *pending_request = &pending_requests->vals[request_index];
 
-            if (pending_request->phase != PARSING)  continue;
+            if (pending_request->phase != PARSING_REQUEST)  continue;
 
             Memory_Context *ctx      = pending_request->context;
             char_array     *inbox    = &pending_request->inbox;
@@ -674,7 +698,7 @@ int main()
 
             if (VERBOSE)  Log("Successfully parsed a message from socket %d.", client_socket_no);
 
-            if (pending_request->phase == HANDLING) {
+            if (pending_request->phase == HANDLING_REQUEST) {
                 Request_handler *handler = NULL;
                 for (s64 route_index = 0; route_index < countof(routes); route_index += 1) {
                     Route *route = &routes[route_index];
@@ -693,22 +717,15 @@ int main()
                 assert(pending_request->phase == SENDING_REPLY);
             }
 
-            char_array *outbox = &pending_request->outbox;
-            *outbox = (char_array){.context = pending_request->context};
+            char_array *reply_header = &pending_request->reply_header;
+            *reply_header = (char_array){.context = pending_request->context};
 
-            print_string(outbox, "HTTP/1.1 %d\n", response->status); //|Fixme: Version??
+            print_string(reply_header, "HTTP/1.1 %d\n", response->status); //|Fixme: Version??
             if (response->headers) {
                 string_dict *h = response->headers;
-                for (s64 i = 0; i < h->count; i++)  print_string(outbox, "%s: %s\n", h->keys[i], h->vals[i]);
+                for (s64 i = 0; i < h->count; i++)  print_string(reply_header, "%s: %s\n", h->keys[i], h->vals[i]);
             }
-            print_string(outbox, "\n");
-
-            // Copy the response body to the outbox. |Speed!
-            if (outbox->limit < (outbox->count + response->size)) {
-                array_reserve(outbox, outbox->count + response->size);
-            }
-            memcpy(&outbox->data[outbox->count], response->body, response->size);
-            outbox->count += response->size;
+            print_string(reply_header, "\n");
 
             pending_request->phase = SENDING_REPLY;
             //|Todo: Can we jump straight to trying to write to the socket?
@@ -720,13 +737,15 @@ cleanup:
             Pending_request *pending_request = &pending_requests->vals[request_index];
 
             // Filter out the sockets that we shouldn't close, unless the server should stop, in which
-            // case we will disconnect everyone. |Todo: Finish sending pending replies first.
+            // case we will disconnect everyone.
             bool should_close = server_should_stop;
             should_close |= (pending_request->phase == READY_TO_CLOSE);
             should_close |= (REQUEST_TIMEOUT < (current_time - pending_request->start_time));
             if (!should_close)  continue;
 
             s32 socket_no = pending_request->socket_no;
+
+            //|Todo: Finish sending pending replies first. Maybe have a "graceful" flag to make this configurable.
 
             bool closed = !close(socket_no);
             if (!closed)  Fatal("We couldn't close a client socket (%s).", strerror(errno));
