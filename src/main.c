@@ -22,8 +22,6 @@
 #include "map.h"
 #include "strings.h"
 
-#define CRLF "\r\n"
-
 typedef Dict(char *)  string_dict;
 typedef Array(int)    int_array;
 
@@ -33,54 +31,47 @@ typedef struct Response Response;
 typedef Response Request_handler(Request *, Memory_Context *);
 typedef struct Pending_request Pending_request;
 
-enum HTTP_method {
-    GET=1,            //|Todo: HTTP_ prefix these? Optionally?
-    POST,
-};
+enum HTTP_method {GET=1, POST};
 
 struct Route {
-    enum HTTP_method     method;
-    char                *path; // Just a string because we expect to define these statically in code.
-    Request_handler     *handler;
+    enum HTTP_method    method;
+    char               *path;
+    Request_handler    *handler;
 };
 
 struct Request {
-    enum HTTP_method     method;
-    char_array           path;
-    string_dict         *query;
-    string_dict         *headers;
-    //u8_array          *body;    |Todo
+    enum HTTP_method    method;
+    char_array          path;
+    string_dict        *query;
 };
 
 struct Response {
-    int               status; //|Todo: enum
-    string_dict      *headers;
-
-    u8               *body;
-    s64               size; // The number of bytes in the body.
+    int                 status;
+    string_dict        *headers;
+    void               *body;
+    s64                 size; // The number of bytes in the body. If 0, body (if set) points to a zero-terminated string.
 };
 
 struct Pending_request {
-    Memory_Context       *context;
+    Memory_Context     *context;
 
-    s64                   start_time;      // When we accepted the connection.
-    s32                   socket_no;       // The client socket's file descriptor.
+    s64                 start_time;      // When we accepted the connection.
+    s32                 socket_no;       // The client socket's file descriptor.
 
     enum Request_phase {
         PARSING_REQUEST=1,
         HANDLING_REQUEST,
         SENDING_REPLY,
-        READY_TO_CLOSE,                    // The request has completed (not necessarily successfully). The socket needs to be closed and memory freed.
-    }                     phase;
+        READY_TO_CLOSE,
+    }                   phase;
 
-    char_array            inbox;           // A buffer for storing bytes received.
-    int_array             header_offsets;    // We'll fill this array as we parse the data received.
+    char_array          inbox;           // A buffer for storing bytes received.
+    Request             request;
 
-    Request               request;
-    Response              response;
+    Response            response;
 
-    char_array            reply_header;    // Our response's header in raw text form.
-    s64                   num_bytes_sent;  // The total number of bytes we've sent of our response. Includes both header and body.
+    char_array          reply_header;    // Our response's header in raw text form.
+    s64                 num_bytes_sent;  // The total number of bytes we've sent of our response. Includes both header and body.
 };
 
 Response handle_request(Request *request, Memory_Context *context)
@@ -103,19 +94,7 @@ Response handle_request(Request *request, Memory_Context *context)
         print_string(body, "Hello, person.\n");
     }
 
-    return (Response){status, headers, (u8 *)body->data, body->count};
-}
-
-Response handle_400(Request *request, Memory_Context *context)
-{
-    char const static body[] = "Bad request. Bad you.\n";
-
-    return (Response){
-        .status  = 400,
-        .headers = NULL,
-        .body    = (u8 *)body,
-        .size    = lengthof(body),
-    };
+    return (Response){status, headers, body->data, body->count};
 }
 
 Response handle_404(Request *request, Memory_Context *context)
@@ -131,12 +110,12 @@ Response handle_404(Request *request, Memory_Context *context)
 }
 
 Response serve_file(Request *request, Memory_Context *context)
-//|Insecure!! This function will serve any file in your filesystem, even supporting '..' to go up a directory.
+//|Insecure!! This function will serve any file in your filesystem, even supporting '..' in paths to go up a directory.
 {
     char *path = request->path.data;
     s64 path_size = request->path.count;
 
-    // If the path starts with a '/', "remove" it by advancing the pointer by 1 byte.
+    // If the path starts with a '/', "remove" it by advancing the pointer 1 byte.
     if (*path == '/') {
         path      += 1;
         path_size -= 1;
@@ -144,7 +123,7 @@ Response serve_file(Request *request, Memory_Context *context)
 
     u8_array *file = load_binary_file(path, context);
 
-    if (!file)  return (Response){404};
+    if (!file)  return (Response){404, .body = "We couldn't find that file.\n"};
 
     char *file_extension = NULL;
 
@@ -203,22 +182,15 @@ static char hex_to_char(char c1, char c2)
     return (char)((x1 << 4) | x2);
 }
 
-static void to_lower_in_place(char *string, s64 length)
-{
-    for (s64 i = 0; i < length; i++) {
-        if ('A' <= string[i] && string[i] <= 'Z')  string[i] |= 0x20;
-    }
-}
-
 bool parse_request(Pending_request *pending_request)
-// If we successfully parse a complete request, set pending_request->phase to HANDLING_REQUEST and return true.
-// If the request looks invalid, fill out pending_request->response with an appropriate status code and body,
-// set the phase to SENDING_REPLY and return true. Return false if the request looks fine but incomplete.
+// Parse the message in pending_request->inbox and save the result in pending_request->request.
+// If we successfully parse a request, set pending_request->phase to HANDLING_REQUEST and return true.
+// If the request is invalid, fill out pending_request->response, set the phase to SENDING_REPLY and
+// return true. Return false only if the request looks fine but incomplete.
 {
     Memory_Context     *ctx          = pending_request->context;
     enum Request_phase *phase        = &pending_request->phase;
     char_array         *inbox        = &pending_request->inbox;
-    int_array          *header_offsets = &pending_request->header_offsets;
     Request            *request      = &pending_request->request;
     Response           *response     = &pending_request->response;
 
@@ -228,26 +200,16 @@ bool parse_request(Pending_request *pending_request)
     char *data = inbox->data;
     s64   size = inbox->count;
 
-    if (size < 8)  return false;
+    if (size < 4)  return false;
 
     char *d = data; // A pointer to advance as we parse.
-
-    if (header_offsets->count) {
-        // We've tried to parse this particular request before (but there's more data now). Pick up where we left off.
-        d += header_offsets->data[header_offsets->count-1] + lengthof(CRLF);
-        goto parse_headers;
-    }
 
     if (starts_with(d, "GET ")) {
         request->method = GET;
         d += 4;
-    } else if (starts_with(d, "POST ")) {
-        request->method = POST;
-        d += 5;
     } else {
-        char const static message[] = "Couldn't parse the request method.\n";
-        *response = (Response){.status = 400, .body = (u8 *)message, .size = lengthof(message)};
-        *phase = SENDING_REPLY;//|Todo: Return 501 NOT IMPLEMENTED.
+        *response = (Response){501, .body = "We only support GET requests!\n"};
+        *phase = SENDING_REPLY;
         return true;
     }
 
@@ -321,8 +283,11 @@ bool parse_request(Pending_request *pending_request)
                 }
             } else {
                 // Otherwise, the request is bunk.
-                char_array *message = get_string(ctx, "The request had an unexpected character at index %ld: '%c'.\n", d-data, is_alphanum(*d) ? *d : '*');
-                *response = (Response){.status = 400, .body = (u8 *)message->data, .size = message->count};
+                char_array message = {.context = ctx};
+                print_string(&message, "The request had an unexpected character at index %ld: ", d-data);
+                print_string(&message, is_alphanum(*d) ? "'%c'.\n" : "\\x%02x.\n", *d);
+
+                *response = (Response){400, .body = message.data, message.count};
                 *phase = SENDING_REPLY;
                 return true;
             }
@@ -332,80 +297,15 @@ bool parse_request(Pending_request *pending_request)
         request->path.count -= 1;
 
         if (query->count)  request->query = query;
-
-        d += 1;
     }
 
-    // Make sure the rest of the first line looks like a HTTP version. We don't do anything with this information.
-    if ((size - (d-data)) < lengthof("HTTP/1.x"CRLF))  return false;
-
-    bool version_looks_ok = (starts_with(d, "HTTP/1.0"CRLF) || starts_with(d, "HTTP/1.1"CRLF));
-    if (!version_looks_ok) {
-        char const static message[] = "We couldn't parse the HTTP version.\n";
-        *response = (Response){.status = 505, .body = (u8 *)message, .size = lengthof(message)};
-        *phase = SENDING_REPLY;
-        return true;
+    if (!starts_with(d, " HTTP/")) {
+        *response = (Response){400, .body = "There was an unexpected character in the HTTP version.\n"};
+        *phase = SENDING_REPLY;    // Fail.
+    } else {
+        *phase = HANDLING_REQUEST; // Success.
     }
 
-    d += lengthof("HTTP/1.0" CRLF);
-
-    *Add(header_offsets) = d - data;
-
-    request->headers = NewDict(request->headers, ctx);
-
-parse_headers: ;
-    string_dict *headers = request->headers;
-    assert(headers);
-    {
-        char_array  key    = {.context = ctx};
-        char_array  value  = {.context = ctx};
-        char_array *target = &key;
-        while (d-data < size) {
-            if (*d == '\r') {
-                if (!key.count)        break;
-                if (!value.count)      break;
-
-                to_lower_in_place(key.data, key.count);
-                *Add(&key)   = '\0';
-                *Add(&value) = '\0';
-                *Set(headers, key.data) = value.data;
-
-                if (target != &value)  break;
-                if (d-data+1 == size)  break;
-                d += 1;
-                if (*d != '\n')        break;
-                if (d-data+1 == size)  break;
-                d += 1;
-
-                if (*d == '\r')  break; // Success!
-
-                *Add(header_offsets) = d - data;
-
-                key    = (char_array){.context = ctx};
-                value  = (char_array){.context = ctx};
-                target = &key;
-            }
-            else if (target == &key && *d == ':') {
-                if (!key.count)  break;
-                d += 1;
-                if (d-data == size)  break;
-                // Skip whitespace before value.
-                while (Contains(" \t", *d)) {
-                    d += 1;
-                    if (d-data == size)  break;
-                }
-                if (d-data == size)  break; //|Cleanup
-                target = &value;
-            } else {
-                *Add(target) = *d;
-                d += 1;
-            }
-        }
-
-        if (d-data == size)  return false;
-    }
-
-    *phase = HANDLING_REQUEST;
     return true;
 }
 
@@ -496,7 +396,7 @@ int main()
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
     u16  const PORT    = 6008;
     bool const VERBOSE = true;
-    s64  const REQUEST_TIMEOUT = 1000*10; // How many milliseconds we allow for each request to come through.
+    s64  const REQUEST_TIMEOUT = 1000*5; // How many milliseconds we allow for each request to come through.
 
     Route routes[] = {
         {GET, "/",          &handle_request},
@@ -768,12 +668,6 @@ int main()
 
             if (VERBOSE)  Log("Successfully parsed a message from socket %d.", client_socket_no);
 
-            if (VERBOSE && request->headers) {
-                string_dict *h = request->headers;
-                Log("Headers:");
-                for (s64 i = 0; i < h->count; i++)  Log("  %s: %s", h->keys[i], h->vals[i]);
-            }
-
             if (pending_request->phase == HANDLING_REQUEST) {
                 Request_handler *handler = NULL;
                 for (s64 route_index = 0; route_index < countof(routes); route_index += 1) {
@@ -793,10 +687,12 @@ int main()
                 assert(pending_request->phase == SENDING_REPLY);
             }
 
+            if (response->body && !response->size)  response->size = strlen(response->body);
+
             char_array *reply_header = &pending_request->reply_header;
             *reply_header = (char_array){.context = pending_request->context};
 
-            print_string(reply_header, "HTTP/1.1 %d\n", response->status); //|Fixme: Version??
+            print_string(reply_header, "HTTP/1.0 %d\n", response->status);
             if (response->headers) {
                 string_dict *h = response->headers;
                 for (s64 i = 0; i < h->count; i++)  print_string(reply_header, "%s: %s\n", h->keys[i], h->vals[i]);
