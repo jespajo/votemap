@@ -29,16 +29,15 @@ int main()
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
     u16  const PORT    = 6008;
     bool const VERBOSE = true;
-    s64  const REQUEST_TIMEOUT = 1000*5; // How many milliseconds we allow for each request to come through.
 
     Memory_Context *top_context = new_context(NULL);
 
     Server *server = create_server(ADDR, PORT, VERBOSE, top_context);
 
-    add_route(server, (Route){GET, "/",          &handle_request});
-    add_route(server, (Route){GET, "/web/.*",    &serve_file});
-    add_route(server, (Route){GET, "/bin/.*",    &serve_file});
-    add_route(server, (Route){GET, "/fonts/.*",  &serve_file});
+    *Add(&server->routes) = (Route){GET, "/",          &handle_request};
+    *Add(&server->routes) = (Route){GET, "/web/.*",    &serve_file};
+    *Add(&server->routes) = (Route){GET, "/bin/.*",    &serve_file};
+    *Add(&server->routes) = (Route){GET, "/fonts/.*",  &serve_file};
 
     start_server(server);
 

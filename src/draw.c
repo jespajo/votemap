@@ -27,8 +27,6 @@ void draw_polygon(Polygon *polygon, Vector4 colour, Vertex_array *out)
 
 void draw_path(Path *path, float width, Vector4 colour, Vertex_array *out)
 {
-    Memory_Context *ctx = out->context;
-
     float r = colour.v[0];
     float g = colour.v[1];
     float b = colour.v[2];

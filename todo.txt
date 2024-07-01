@@ -51,3 +51,4 @@ Web server:
     Parse request headers.
     Parse request bodies; support POST requests.
     Make it multithreaded.
+    Support Connection: Keep-Alive.
