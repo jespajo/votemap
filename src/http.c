@@ -286,7 +286,7 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_Context *conte
     struct sockaddr_in socket_addr = {
         .sin_family   = AF_INET,
         .sin_port     = htons(server->port),
-        .sin_addr     = htonl(server->address),
+        .sin_addr     = {htonl(server->address)},
     };
 
     if (bind(server->socket_no, (struct sockaddr const *)&socket_addr, sizeof(socket_addr)) < 0) {

@@ -7,8 +7,6 @@
 #include "pg.h"
 #include "strings.h"
 
-#include "grab.h" // |Leak
-
 #define DATABASE_URL "postgres://postgres:postgisclarity@osm.tal/gis"
 
 Response serve_vertices(Request *request, Memory_Context *context)
@@ -25,14 +23,13 @@ Response serve_vertices(Request *request, Memory_Context *context)
 
     if (show_voronoi) {
         // Draw the Voronoi map polygons.
-        char *query = Grab(/*
-            select st_asbinary(st_buildarea(topo)) as polygon
-            from (
-                select st_simplify(topo, $1::float) as topo
-                from booths_22
-                where topo is not null
-              ) t
-        */);
+        char *query =
+          " select st_asbinary(st_buildarea(topo)) as polygon  "
+          " from (                                             "
+          "     select st_simplify(topo, $1::float) as topo    "
+          "     from booths_22                                 "
+          "     where topo is not null                         "
+          "   ) t                                              ";
 
         string_array *params = NewArray(params, ctx);
         *Add(params) = get_string(ctx, "%f", metres_per_pixel)->data;
@@ -46,13 +43,12 @@ Response serve_vertices(Request *request, Memory_Context *context)
         }
     } else {
         // Draw electorate boundaries as polygons.
-        char *query = Grab(/*
-            select st_asbinary(st_buildarea(topo)) as polygon
-            from (
-                select st_simplify(topo, $1::float) as topo
-                from electorates_22
-              ) t
-        */);
+        char *query =
+          " select st_asbinary(st_buildarea(topo)) as polygon  "
+          " from (                                             "
+          "     select st_simplify(topo, $1::float) as topo    "
+          "     from electorates_22                            "
+          "   ) t                                              ";
 
         string_array *params = NewArray(params, ctx);
 
@@ -70,13 +66,12 @@ Response serve_vertices(Request *request, Memory_Context *context)
 
     // Draw electorate boundaries as lines.
     {
-        char *query = Grab(/*
-            select st_asbinary(t.geom) as path
-            from (
-                select st_simplify(geom, $1::float) as geom
-                from electorates_22_topo.edge_data
-              ) t
-        */);
+        char *query =
+          " select st_asbinary(t.geom) as path                 "
+          " from (                                             "
+          "     select st_simplify(geom, $1::float) as geom    "
+          "     from electorates_22_topo.edge_data             "
+          "   ) t                                              ";
 
         string_array *params = NewArray(params, ctx);
 
@@ -111,22 +106,21 @@ Response serve_labels(Request *request, Memory_Context *context)
     PGconn *db = PQconnectdb(DATABASE_URL); //|Speed: We'd rather do this once, not once per request.
     if (PQstatus(db) != CONNECTION_OK)  Fatal("Database connection failed: %s", PQerrorMessage(db));
 
-    char *query = Grab(/*
-        select jsonb_build_object(
-            'labels', jsonb_agg(
-                jsonb_build_object(
-                    'text', upper(name),
-                    'pos', jsonb_build_array(round(st_x(centroid)), round(-st_y(centroid)))
-                  )
-              )
-          )::text as json
-        from (
-            select name,
-              st_centroid(geom) as centroid
-            from electorates_22
-            order by st_area(geom) desc
-          ) t;
-    */);
+    char *query =
+      " select jsonb_build_object(                                                               "
+      "     'labels', jsonb_agg(                                                                 "
+      "         jsonb_build_object(                                                              "
+      "             'text', upper(name),                                                         "
+      "             'pos', jsonb_build_array(round(st_x(centroid)), round(-st_y(centroid)))      "
+      "           )                                                                              "
+      "       )                                                                                  "
+      "   )::text as json                                                                        "
+      " from (                                                                                   "
+      "     select name,                                                                         "
+      "       st_centroid(geom) as centroid                                                      "
+      "     from electorates_22                                                                  "
+      "     order by st_area(geom) desc                                                          "
+      "   ) t;                                                                                   ";
 
     Postgres_result *result = query_database(db, query, NULL, ctx);
 
@@ -146,7 +140,7 @@ int main()
 {
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
     u16  const PORT    = 6008;
-    bool const VERBOSE = true;
+    bool const VERBOSE = false;
 
     Memory_Context *top_context = new_context(NULL);
 
