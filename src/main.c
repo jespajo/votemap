@@ -13,8 +13,7 @@ Response serve_vertices(Request *request, Memory_Context *context)
 {
     Memory_Context *ctx = context;
 
-    PGconn *db = PQconnectdb(DATABASE_URL); //|Speed: We'd rather do this once, not once per request.
-    if (PQstatus(db) != CONNECTION_OK)  Fatal("Database connection failed: %s", PQerrorMessage(db));
+    PGconn *db = connect_to_database(DATABASE_URL);
 
     bool show_voronoi = request->query && *Get(request->query, "voronoi");
     float metres_per_pixel = 4000.0; //|Todo: Get this from the query string.
@@ -94,8 +93,6 @@ Response serve_vertices(Request *request, Memory_Context *context)
     response.headers = NewDict(response.headers, ctx);
     *Set(response.headers, "content-type") = "application/octet-stream";
 
-    PQfinish(db);
-
     return response;
 }
 
@@ -103,8 +100,7 @@ Response serve_labels(Request *request, Memory_Context *context)
 {
     Memory_Context *ctx = context;
 
-    PGconn *db = PQconnectdb(DATABASE_URL); //|Speed: We'd rather do this once, not once per request.
-    if (PQstatus(db) != CONNECTION_OK)  Fatal("Database connection failed: %s", PQerrorMessage(db));
+    PGconn *db = connect_to_database(DATABASE_URL);
 
     char *query =
       " select jsonb_build_object(                                                               "
@@ -131,8 +127,6 @@ Response serve_labels(Request *request, Memory_Context *context)
     response.headers = NewDict(response.headers, ctx);
     *Set(response.headers, "content-type") = "application/json";
 
-    PQfinish(db);
-
     return response;
 }
 
@@ -144,6 +138,8 @@ int main()
 
     Memory_Context *top_context = new_context(NULL);
 
+    PGconn *database = connect_to_database(DATABASE_URL);
+
     Server *server = create_server(ADDR, PORT, VERBOSE, top_context);
 
     *Add(&server->routes) = (Route){GET, "/bin/vertices",    &serve_vertices};
@@ -154,6 +150,7 @@ int main()
 
 
 
+    PQfinish(database);
 
     free_context(top_context);
 

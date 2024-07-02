@@ -5,6 +5,21 @@
 
 #define QueryError(...)  (Error(__VA_ARGS__), NULL)
 
+enum WKB_Byte_Order {
+    WKB_BIG_ENDIAN    = 0,
+    WKB_LITTLE_ENDIAN = 1,
+};
+
+enum WKB_Geometry_Type {
+    WKB_POINT              = 1,
+    WKB_LINESTRING         = 2,
+    WKB_POLYGON            = 3,
+    WKB_MULTIPOINT         = 4,
+    WKB_MULTILINESTRING    = 5,
+    WKB_MULTIPOLYGON       = 6,
+    WKB_GEOMETRYCOLLECTION = 7,
+};
+
 static u64 hash_query(char *query, string_array *params)
 {
     u64 hash = hash_string(query);
@@ -25,6 +40,21 @@ static void add_s32(u8_array *array, s32 number)
     }
     memcpy(array->data + array->count, &number, sizeof(s32));
     array->count = new_count;
+}
+
+PGconn *connect_to_database(char *url)
+// An expedient static variable means we can call this function first from the function that's also
+// responsible for closing the connection with PQfinish(PGconn *), and then from anywhere for the
+// life of the connection.
+// This function supports one database only; we don't bother checking the url after the first call.
+{
+    static PGconn *conn = NULL; //|Threadsafety
+
+    if (!conn)  conn = PQconnectdb(url);
+
+    if (PQstatus(conn) != CONNECTION_OK)  Fatal("Database connection failed: %s", PQerrorMessage(conn));
+
+    return conn;
 }
 
 void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
@@ -441,5 +471,3 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
     // Return the result.
     return result;
 }
-
-#undef QueryError

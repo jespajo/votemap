@@ -16,6 +16,28 @@
 #include "http.h"
 #include "strings.h"
 
+struct Client {
+    Memory_Context         *context;
+
+    s32                     socket_no;      // The client socket's file descriptor.
+    s64                     start_time;     // When we accepted the connection.
+
+    enum Request_phase {
+        PARSING_REQUEST=1,
+        HANDLING_REQUEST,
+        SENDING_REPLY,
+        READY_TO_CLOSE,
+    }                       phase;
+
+    char_array              message;        // A buffer for storing bytes received.
+    Request                 request;
+
+    Response                response;
+
+    char_array              reply_header;   // Our response's header in raw text form.
+    s64                     num_bytes_sent; // The total number of bytes we've sent of our response. Includes both header and body.
+};
+
 static char *get_error(int errno_)
 {
 #if OS != LINUX
@@ -505,15 +527,15 @@ void start_server(Server *server)
                 } else {
                     // We've fully sent our reply.
                     assert(*num_bytes_sent == full_reply_size);
-                    if (server->verbose) {
+                    {
                         Memory_Context *ctx = client->context;
                         Request *req = &client->request;
                         char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
                         char *path   = req->path.count ? req->path.data : "";
                         char *query  = req->query ? encode_query_string(req->query, ctx)->data : "";
+
                         Log("[%d] %s %s%s", response->status, method, path, query);
                     }
-
                     client->phase = READY_TO_CLOSE;
                 }
             }

@@ -12,9 +12,6 @@ typedef struct Route      Route;
 typedef Array(Route)      Route_array;
 typedef Map(s32, Client)  Client_map;  // A map from client socket file descriptors to their associated Client structs.
 
-// A Request_handler is a function that takes a pointer to a Request and returns a Response.
-typedef Response Request_handler(Request *, Memory_Context *);
-
 struct Server {
     Memory_Context         *context;
 
@@ -44,27 +41,8 @@ struct Response {
     s64                     size;           // The number of bytes in the body. If 0, body (if set) points to a zero-terminated string.
 };
 
-struct Client {
-    Memory_Context         *context;
-
-    s32                     socket_no;      // The client socket's file descriptor.
-    s64                     start_time;     // When we accepted the connection.
-
-    enum Request_phase {
-        PARSING_REQUEST=1,
-        HANDLING_REQUEST,
-        SENDING_REPLY,
-        READY_TO_CLOSE,
-    }                       phase;
-
-    char_array              message;        // A buffer for storing bytes received.
-    Request                 request;
-
-    Response                response;
-
-    char_array              reply_header;   // Our response's header in raw text form.
-    s64                     num_bytes_sent; // The total number of bytes we've sent of our response. Includes both header and body.
-};
+// A Request_handler is a function that takes a pointer to a Request and returns a Response.
+typedef Response Request_handler(Request *, Memory_Context *);
 
 struct Route {
     enum HTTP_method        method;
