@@ -1,54 +1,7 @@
-#include "http.h"
-#include "strings.h"
-
-Response handle_request(Request *request, Memory_Context *context)
-// Testing the Request_handler typedef.
-{
-    int status = 200;
-
-    string_dict *headers = NewDict(headers, context);
-
-    *Set(headers, "content-type") = "text/html";
-
-    char_array *body = NewArray(body, context);
-
-    if (request->query) {
-        char *name = *Get(request->query, "name");
-
-        if (name)  print_string(body, "Hello, %s.\n", name);
-        else       print_string(body, "What?\n");
-    } else {
-        print_string(body, "Hello, person.\n");
-    }
-
-    return (Response){status, headers, body->data, body->count};
-}
-
-int main()
-{
-    u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
-    u16  const PORT    = 6008;
-    bool const VERBOSE = true;
-
-    Memory_Context *top_context = new_context(NULL);
-
-    Server *server = create_server(ADDR, PORT, VERBOSE, top_context);
-
-    *Add(&server->routes) = (Route){GET, "/",          &handle_request};
-    *Add(&server->routes) = (Route){GET, "/web/.*",    &serve_file};
-    *Add(&server->routes) = (Route){GET, "/bin/.*",    &serve_file};
-    *Add(&server->routes) = (Route){GET, "/fonts/.*",  &serve_file};
-
-    start_server(server);
-
-    free_context(top_context);
-
-    return 0;
-}
-
 #include <string.h>
 
 #include "draw.h"
+#include "http.h"
 #include "json.h"
 #include "map.h"
 #include "pg.h"
@@ -56,18 +9,19 @@ int main()
 
 #include "grab.h" // |Leak
 
-int oaf_main()
-{
-    Memory_Context *ctx = new_context(NULL);
+#define DATABASE_URL "postgres://postgres:postgisclarity@osm.tal/gis"
 
-    PGconn *db = PQconnectdb("postgres://postgres:postgisclarity@osm.tal/gis");
-    if (PQstatus(db) != CONNECTION_OK)  Error("Database connection failed: %s", PQerrorMessage(db));
+Response serve_vertices(Request *request, Memory_Context *context)
+{
+    Memory_Context *ctx = context;
+
+    PGconn *db = PQconnectdb(DATABASE_URL); //|Speed: We'd rather do this once, not once per request.
+    if (PQstatus(db) != CONNECTION_OK)  Fatal("Database connection failed: %s", PQerrorMessage(db));
+
+    bool show_voronoi = request->query && *Get(request->query, "voronoi");
+    float metres_per_pixel = 4000.0; //|Todo: Get this from the query string.
 
     Vertex_array *verts = NewArray(verts, ctx);
-
-    float metres_per_pixel = 4000.0;
-
-    bool show_voronoi = true;
 
     if (show_voronoi) {
         // Draw the Voronoi map polygons.
@@ -140,36 +94,74 @@ int oaf_main()
         }
     }
 
-    write_array_to_file(verts, "/home/jpj/src/webgl/bin/vertices");
+    Response response = {200, .body = verts->data, .size = verts->count*sizeof(Vertex)};
 
-    // Output map labels as JSON.
-    {
-        char *query = Grab(/*
-            select jsonb_build_object(
-                'labels', jsonb_agg(
-                    jsonb_build_object(
-                        'text', upper(name),
-                        'pos', jsonb_build_array(round(st_x(centroid)), round(-st_y(centroid)))
-                      )
-                  )
-              )::text as json
-            from (
-                select name,
-                  st_centroid(geom) as centroid
-                from electorates_22
-                order by st_area(geom) desc
-              ) t;
-        */);
-
-        Postgres_result *result = query_database(db, query, NULL, ctx);
-
-        u8_array *json = *Get(result->data[0], "json");
-
-        write_array_to_file(json, "/home/jpj/src/webgl/bin/labels.json"); // |Temporary: Change directory structure.
-    }
+    response.headers = NewDict(response.headers, ctx);
+    *Set(response.headers, "content-type") = "application/octet-stream";
 
     PQfinish(db);
-    free_context(ctx);
+
+    return response;
+}
+
+Response serve_labels(Request *request, Memory_Context *context)
+{
+    Memory_Context *ctx = context;
+
+    PGconn *db = PQconnectdb(DATABASE_URL); //|Speed: We'd rather do this once, not once per request.
+    if (PQstatus(db) != CONNECTION_OK)  Fatal("Database connection failed: %s", PQerrorMessage(db));
+
+    char *query = Grab(/*
+        select jsonb_build_object(
+            'labels', jsonb_agg(
+                jsonb_build_object(
+                    'text', upper(name),
+                    'pos', jsonb_build_array(round(st_x(centroid)), round(-st_y(centroid)))
+                  )
+              )
+          )::text as json
+        from (
+            select name,
+              st_centroid(geom) as centroid
+            from electorates_22
+            order by st_area(geom) desc
+          ) t;
+    */);
+
+    Postgres_result *result = query_database(db, query, NULL, ctx);
+
+    u8_array *json = *Get(result->data[0], "json");
+
+    Response response = {200, .body = json->data, .size = json->count};
+
+    response.headers = NewDict(response.headers, ctx);
+    *Set(response.headers, "content-type") = "application/json";
+
+    PQfinish(db);
+
+    return response;
+}
+
+int main()
+{
+    u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
+    u16  const PORT    = 6008;
+    bool const VERBOSE = true;
+
+    Memory_Context *top_context = new_context(NULL);
+
+    Server *server = create_server(ADDR, PORT, VERBOSE, top_context);
+
+    *Add(&server->routes) = (Route){GET, "/bin/vertices",    &serve_vertices};
+    *Add(&server->routes) = (Route){GET, "/bin/labels.json", &serve_labels};
+    *Add(&server->routes) = (Route){GET, "/.*",              &serve_file};
+
+    start_server(server);
+
+
+
+
+    free_context(top_context);
 
     return 0;
 }

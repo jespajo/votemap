@@ -11,13 +11,16 @@ typedef struct Client     Client;
 typedef struct Route      Route;
 typedef Array(Route)      Route_array;
 typedef Map(s32, Client)  Client_map;  // A map from client socket file descriptors to their associated Client structs.
+
+// A Request_handler is a function that takes a pointer to a Request and returns a Response.
 typedef Response Request_handler(Request *, Memory_Context *);
 
 struct Server {
+    Memory_Context         *context;
+
     u32                     address;
     u16                     port;
     bool                    verbose;
-    Memory_Context         *context;
 
     s32                     socket_no;
 
@@ -71,6 +74,8 @@ struct Route {
 
 Server *create_server(u32 address, u16 port, bool verbose, Memory_Context *context);
 void start_server(Server *server);
+
+// Request_handler functions:
 Response serve_file(Request *request, Memory_Context *context);
 Response serve_404(Request *request, Memory_Context *context);
 

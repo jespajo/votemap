@@ -1,3 +1,11 @@
+Web server:
+    Get Request_handlers to accept a void * argument for ad-hoc data.
+    serve_file() should not support following symlinks or going up a directory with '..'. It should work like NGINX's try_files directive.
+
+Remove grab.h.
+
+Compile with clang.
+
 Write up database schema plan docs/database.txt.
 Upload XML files to database:
     polling booth info
@@ -47,7 +55,8 @@ C framework: copy_string() (and others?) should take optional length params so t
 C framework: I can never decide whether to use char or u8 for data. u8 feels better but we can't call print_string() on it. Maybe we could achieve this if we turn print_string() into a macro that calls a function, print_string_((ARRAY)->data, (ARRAY)->count, ...). The first argument is a char *. I think the compiler might be fine with implicitly casting a u8 * to a char * in that case? Or if we have to make it void *, can we assert(sizeof((ARRAY)->data[0]) == sizeof(char))?
 
 Web server:
-    serve_file() should not support following symlinks or going up a directory with '..'.
+    Use getaddrinfo().
+    Support IPv6.
     Parse request headers.
     Parse request bodies; support POST requests.
     Make it multithreaded.

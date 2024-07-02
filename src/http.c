@@ -296,7 +296,7 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_Context *conte
     int QUEUE_LENGTH = 32;
     if (listen(server->socket_no, QUEUE_LENGTH) < 0)  Fatal("Couldn't listen on socket (%s).", get_error(errno));
 
-    Log("Listening on http://...", address>>24, address>>16&0xff, address>>8&0xff, address&0xff, port);
+    Log("Listening on http://%d.%d.%d.%d:%d...", address>>24, address>>16&0xff, address>>8&0xff, address&0xff, port);
 
     return server;
 }
@@ -372,6 +372,8 @@ void start_server(Server *server)
 
                 // Exit if the input was just the letter 'q'. Otherwise ignore it.
                 if (input.count == 1 && input.data[0] == 'q') {
+                    if (server->verbose)  Log("Shutting down.");
+
                     server_should_stop = true;
                     goto cleanup;
                 }
@@ -542,10 +544,13 @@ void start_server(Server *server)
                 for (s64 i = 0; i < routes->count; i++) {
                     Route *route = &routes->data[i];
 
-                    bool match = (route->method == request->method);
-                    match &= is_match(route->path, request->path.data);
+                    bool match = (request->method == route->method);
+                    match &= is_match(request->path.data, route->path);
 
-                    if (match)  handler = route->handler;
+                    if (match) {
+                        handler = route->handler;
+                        break;
+                    }
                 }
                 if (!handler) {
                     if (server->verbose)  Log("We couldn't find a handler for this request, so we're returning a 404.");
@@ -564,12 +569,12 @@ void start_server(Server *server)
             char_array *reply_header = &client->reply_header;
             *reply_header = (char_array){.context = client->context};
 
-            print_string(reply_header, "HTTP/1.0 %d\n", response->status);
+            print_string(reply_header, "HTTP/1.0 %d\r\n", response->status);
             if (response->headers) {
                 string_dict *h = response->headers;
-                for (s64 i = 0; i < h->count; i++)  print_string(reply_header, "%s: %s\n", h->keys[i], h->vals[i]);
+                for (s64 i = 0; i < h->count; i++)  print_string(reply_header, "%s: %s\r\n", h->keys[i], h->vals[i]);
             }
-            print_string(reply_header, "\n");
+            print_string(reply_header, "\r\n");
 
             client->phase = SENDING_REPLY;
             //|Todo: Can we jump straight to trying to write to the socket?
