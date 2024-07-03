@@ -1,10 +1,6 @@
-Web server:
-    Get Request_handlers to accept a void * argument for ad-hoc data.
-    serve_file() should not support following symlinks or going up a directory with '..'. It should work like NGINX's try_files directive.
-
-Remove grab.h.
-
-Compile with clang.
+serve_file_NEW():
+    Better than what we're doing would be... write a procedure that recursively visits files under the working directory and puts all of their full paths into a big array. We should also keep track of whether each one is a regular file or a directory. Keep the array sorted for quick searching. Then if the request path matches a path in the array, we know it's a valid file, so we'll try to load it into memory. Then you can do the normalisation of the URL (i.e. making '..' mean to go up a directory) in a separate function, which would simply take the request path as an argument and return the normalised path. This would be much quicker as we wouldn't need to make a thousand syscalls to serve every single file!
+    My main question is: if we're going to cache the files under our directory, when and how do we update this cache? Ideally---for as long as we're single-threaded---we would never update the cache until we've dealt with all pending requests. Then we would update it as soon as possible after that.
 
 Write up database schema plan docs/database.txt.
 Upload XML files to database:

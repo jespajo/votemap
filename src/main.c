@@ -144,7 +144,7 @@ int main()
 
     *Add(&server->routes) = (Route){GET, "/bin/vertices",    &serve_vertices};
     *Add(&server->routes) = (Route){GET, "/bin/labels.json", &serve_labels};
-    *Add(&server->routes) = (Route){GET, "/.*",              &serve_file};
+    *Add(&server->routes) = (Route){GET, "/.*",              &serve_file_NEW};
 
     start_server(server);
 

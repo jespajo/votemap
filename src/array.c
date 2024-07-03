@@ -1,19 +1,3 @@
-// Change the signature of aprintf to:
-//
-//      char_array *aprintf(Memory_Context *context, char *format, ...);
-//
-// Then the string builder can be as easy as:
-//
-//      char_array2 *builder = NewArray(builder, ctx);
-//
-//      *Add(builder) = aprintf("%d\n", num);
-//      *Add(builder) = a_different_char_array;
-//
-// Then there's just:
-//
-//      char_array merge_strings(char_array2 string_array);
-//
-
 #include <errno.h> // For diagnosing file read/write errors.
 #include <stdarg.h>
 #include <stdio.h>

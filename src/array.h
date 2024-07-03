@@ -13,7 +13,7 @@
 
 typedef Array(char)          char_array;
 typedef Array(u8)            u8_array;
-typedef Array(char_array *)  char_array2;
+typedef Array(char_array)    char_array2;
 typedef Array(char *)        string_array; // An array of null-terminated strings.
 typedef Array(int)           int_array;
 

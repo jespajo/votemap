@@ -55,6 +55,7 @@ void start_server(Server *server);
 
 // Request_handler functions:
 Response serve_file(Request *request, Memory_Context *context);
+Response serve_file_NEW(Request *request, Memory_Context *context);//|Temporary
 Response serve_404(Request *request, Memory_Context *context);
 
 #endif // HTTP_H_INCLUDED
