@@ -37,7 +37,7 @@ all:  bin/main
 all:  tags
 
 # Run targets:
-#all:  ; bin/main
+all:  ; bin/main
 
 sources    := $(shell find src -type f)
 non_mains  := $(shell grep -L '^int main' $(sources))
