@@ -291,7 +291,7 @@ static Memory_Block *grow_context(Memory_Context *context, u64 size)
 }
 
 static void delete_block(Memory_Block *blocks, s64 *count, Memory_Block *block)
-// Remove the block at block_index from an array of blocks. Decrement *count.
+// Remove a block from an array of blocks. Decrement *count.
 {
     s64 index = block - blocks;
     assert(0 <= index && index < *count);
@@ -362,7 +362,7 @@ static Memory_Block *dealloc_block(Memory_Context *context, Memory_Block *used_b
     Memory_Context *c = context;
 
     assert(in_range(c->used_blocks, used_block, c->used_blocks+c->used_count));
-    assert(!used_block->sentinel); // |Cleanup: If we're only going to do this during debug builds, we should probably not bother with the `sentinel` flag and we can make the whole check more expensive:.
+    assert(!used_block->sentinel); // |Cleanup: If we're only going to do this during debug builds, we should probably not bother with the `sentinel` flag and we can make the whole check more expensive.
 
     // |Speed: For now we're just going to add and delete the relevant blocks one at a time.
 
@@ -371,7 +371,7 @@ static Memory_Block *dealloc_block(Memory_Context *context, Memory_Block *used_b
     s64 used_index = used_block - c->used_blocks;
 
     // These asserts should always be true due to the presence of sentinels. If they are untrue
-    // the pointer arithmetic used blow to check the neighbouring used blocks is invalid.
+    // the pointer arithmetic used below to check the neighbouring used blocks is invalid.
     assert(used_index > 0);
     assert(used_index < c->used_count-1);
 

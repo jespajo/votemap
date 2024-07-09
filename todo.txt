@@ -1,5 +1,20 @@
+Before we can do a writeup showcasing context.h, map.h and array.h:
+    1. s/Memory_Context/Memory_context/g etc.
+    2. Remove the sentinel flag. We can still have sentinels in the used_blocks arrays---they will just be marked by having a size of 0.
+    3. Allow NewMap to take a hashing function.
+    4. Allow NewMap to take a "get id from key" function. As in, the key can be a big struct but if only one or two members actually matter for making the key distinct, the function extracts those two members. Some uses:
+        - Variable-length keys e.g. zero-terminated strings.
+        - Say we want to store values with our keys rather than in a separate array, to avoid cache misses. In theory we could obsolete the whole .vals array. Though I guess we would want to implement a GetKey() macro since Get() returns the val.
+        - Say we have some weird case where we have an array of structs where we can't modify the structs' type, but we want to use only one member as the key in a map. E.g. for our HTTP server, we could have pollfd structs in an array and only use the socket file descriptor as the ID. Although because we couldn't do that we ended up implementing the HTTP server in a way that was probably just better, so this isn't a big one, but maybe there are cases where we'd want this.
+    5. Add some memory-use reporting. This will mean Memory_context's need to track their children. Since it's a shame to have to do that, we probably want to put everything behind a DEBUG_MEMORY flag (but don't also include all the baggage currently hidden behind DEBUG_MEMORY_CONTEXT).
+    6. array_insert()
+    7. is_undefined() for map values: syntactic sugar for `Get() == &map.vals[-1]`.
+    8. We would probably need to address the worries about strict aliasing. Not because this is an inherently worthwhile improvement but because if we share this online then dickheads will declare it worthless if there's undefined behaviour. Two ways we could address our issues:
+        a. Instead of just passing a void * to the map functions, we could pass pointers to all the individual members of the map struct that we need to modify, casting the key/value pointers to char * or void *. This is the stbds approach.
+        b. We could keep using Alias_map and memcpy in and out... but that just seems worse.
+
 serve_file_NEW():
-    Better than what we're doing would be... write a procedure that recursively visits files under the working directory and puts all of their full paths into a big array. We should also keep track of whether each one is a regular file or a directory. Keep the array sorted for quick searching. Then if the request path matches a path in the array, we know it's a valid file, so we'll try to load it into memory. Then you can do the normalisation of the URL (i.e. making '..' mean to go up a directory) in a separate function, which would simply take the request path as an argument and return the normalised path. This would be much quicker as we wouldn't need to make a thousand syscalls to serve every single file!
+    Better than what we're doing would be: When the server starts up, recursively visit all files under the working directory and put their full paths into a big array. Also keep track of whether each one is a regular file or a directory. Keep the array sorted for quick searching. Then if the request path matches a path in the array, we know it's a valid file, so we'll try to load it into memory. Then you can do the normalisation of the URL (i.e. making '..' mean to go up a directory) in a separate function, which would simply take the request path as an argument and return the normalised path. This would be much quicker as we wouldn't need to make a thousand syscalls to serve every single file!
     My main question is: if we're going to cache the files under our directory, when and how do we update this cache? Ideally---for as long as we're single-threaded---we would never update the cache until we've dealt with all pending requests. Then we would update it as soon as possible after that.
 
 Write up database schema plan docs/database.txt.
