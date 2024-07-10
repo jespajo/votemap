@@ -138,14 +138,36 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                 break;
             case '*':
                 if (!regex->count)  return parse_error(pattern, pattern_index);
-
+              {
                 Instruction popped = regex->data[regex->count-1];
                 regex->count -= 1;
+
                 Instruction *ops[3];
                 for (s64 i = 0; i < 3; i++)  ops[i] = Add(regex);
+
                 *ops[0] = (Instruction){SPLIT, .args = {ops[1], ops[2]+1}};
                 *ops[1] = popped;
                 *ops[2] = (Instruction){JUMP, .arg = ops[0]};
+              }
+                break;
+            case '?':
+                if (!regex->count)  return parse_error(pattern, pattern_index);
+              {
+                Instruction popped = regex->data[regex->count-1];
+                regex->count -= 1;
+
+                Instruction *ops[2];
+                for (s64 i = 0; i < countof(ops); i++)  ops[i] = Add(regex);
+
+                *ops[0] = (Instruction){SPLIT, .args = {ops[1], ops[1]+1}};
+                *ops[1] = popped;
+              }
+                break;
+            case '+':
+              {
+                Instruction *op = Add(regex);
+                *op = (Instruction){SPLIT, .args = {op-1, op+1}};
+              }
                 break;
             default:
                 *Add(regex) = (Instruction){CHAR, .c = c};

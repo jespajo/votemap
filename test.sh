@@ -1,4 +1,5 @@
 #!/bin/bash
+set -eu
 
 (deno run --allow-read - > bin/deno-output) <<'EOJS'
 import { TextLineStream } from 'https://deno.land/std/streams/mod.ts'
@@ -38,6 +39,7 @@ for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
 }
 EOJS
 
+make > /dev/null
 bin/main > bin/our-output
 
 git diff --no-index -- bin/{deno,our}-output

@@ -27,3 +27,19 @@ babe
 beef
 baaaaaaaaaab
 
+/abc?def/
+abdef
+abcdef
+abde
+
+/lo+ng/
+lng
+long
+loong
+loooooooooooooooong
+loooo
+
+/a(b+)cd?e*f(g*)/
+abcdefg
+abbbbbcefggggg
+abcfgggggfgg
