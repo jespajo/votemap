@@ -1,0 +1,29 @@
+# Lines starting with # are comments.
+# Two (or more) newlines indicate the start of a new block.
+# The first line of each block is a regex to be compiled. It is sandwiched by '/' chars.
+# Subsequent lines in the block are strings to be tested against the compiled regex.
+# We don't include the expected output in this file; instead we test our output against that of another regex implementation.
+
+/xyz/
+xyz
+xy
+xyza
+xyaz
+zyxyxyxyxyxz
+
+/a(b)(123)cdef/
+ab123cdef
+
+/a*b/
+ab
+aab
+bab
+b
+aa
+
+/b(a*)b/
+bab
+babe
+beef
+baaaaaaaaaab
+
