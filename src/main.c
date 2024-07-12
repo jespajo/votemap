@@ -75,15 +75,15 @@ static void log_regex(Regex *regex) //|Debug
     char_array out = {.context = ctx};
 
     for (s64 i = 0; i < regex->count; i++) {
-        Instruction *op = &regex->data[i];
+        Instruction *inst = &regex->data[i];
 
-        print_address(&out, op);
+        print_address(&out, inst);
         print_string(&out, ":  ");
 
-        switch (op->opcode) {
+        switch (inst->opcode) {
             case CHAR:
                 print_string(&out, "%-14s", "CHAR");
-                print_string(&out, "'%c'", op->c);
+                print_string(&out, "'%c'", inst->c);
                 break;
             case CHAR_CLASS:
                 print_string(&out, "%-14s", "CHAR_CLASS");
@@ -91,7 +91,7 @@ static void log_regex(Regex *regex) //|Debug
                 int j = 0;
                 bool prev_is_set = false;
                 while (j < 128) {
-                    bool is_set = op->class[j/8] & (1<<(7-(j%8)));
+                    bool is_set = inst->class[j/8] & (1<<(7-(j%8)));
                     if (!prev_is_set) {
                         if (is_set)  *Add(&out) = isprint(j) ? (char)j : '.';
                     } else {
@@ -107,13 +107,13 @@ static void log_regex(Regex *regex) //|Debug
                 break;
             case JUMP:
                 print_string(&out, "%-14s", "JUMP");
-                print_address(&out, op->next[0]);
+                print_address(&out, inst->next[0]);
                 break;
             case SPLIT:
                 print_string(&out, "%-14s", "SPLIT");
-                print_address(&out, op->next[0]);
+                print_address(&out, inst->next[0]);
                 print_string(&out, ", ");
-                print_address(&out, op->next[1]);
+                print_address(&out, inst->next[1]);
                 break;
             case SAVE:
                 print_string(&out, "%-14s", "SAVE");
@@ -165,36 +165,36 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
 
         for (s64 thread_index = 0; thread_index < cur_threads.count; thread_index++) {
             Thread  *thread = &cur_threads.data[thread_index];
-            Instruction *op = thread->instruction;
+            Instruction *inst = thread->instruction;
 
-            switch (op->opcode) {
+            switch (inst->opcode) {
                 case CHAR:
-                    if (c == op->c)  *Add(&next_threads) = (Thread){op+1, thread->captures};
+                    if (c == inst->c)  *Add(&next_threads) = (Thread){inst+1, thread->captures};
                     break;
                 case CHAR_CLASS:
                   {
                     u8 byte_index = ((u8)c)/8;
                     u8 bit_index  = ((u8)c)%8;
-                    bool is_set   = op->class[byte_index] & (1<<(7-bit_index));
-                    if (is_set)  *Add(&next_threads) = (Thread){op+1, thread->captures};
+                    bool is_set   = inst->class[byte_index] & (1<<(7-bit_index));
+                    if (is_set)  *Add(&next_threads) = (Thread){inst+1, thread->captures};
                   }
                     break;
                 case ANY:
-                    *Add(&next_threads) = (Thread){op+1, thread->captures};
+                    *Add(&next_threads) = (Thread){inst+1, thread->captures};
                     break;
                 case JUMP:
-                    *Add(&cur_threads) = (Thread){op->next[0], thread->captures};
+                    *Add(&cur_threads) = (Thread){inst->next[0], thread->captures};
                     break;
                 case SPLIT:
-                    *Add(&cur_threads) = (Thread){op->next[0], thread->captures};
-                    *Add(&cur_threads) = (Thread){op->next[1], thread->captures};
+                    *Add(&cur_threads) = (Thread){inst->next[0], thread->captures};
+                    *Add(&cur_threads) = (Thread){inst->next[1], thread->captures};
                     break;
                 case SAVE:
                   {
                     Capture *capture = New(Capture, tmp_ctx);
                     capture->prev    = thread->captures;
                     capture->offset  = string_index;
-                    *Add(&cur_threads) = (Thread){op+1, capture};
+                    *Add(&cur_threads) = (Thread){inst+1, capture};
                   }
                     break;
                 case MATCH:
@@ -274,8 +274,8 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                 break;
             case '[':
               {
-                Instruction *op = Add(regex);
-                *op = (Instruction){CHAR_CLASS};
+                Instruction *inst = Add(regex);
+                *inst = (Instruction){CHAR_CLASS};
 
                 bool negate = false;
                 c += 1;
@@ -294,18 +294,18 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                         for (s64 i = 0; i < range_end-range_start; i++) {
                             u8 byte_index = ((u8)range_start + i)/8;
                             u8 bit_index  = ((u8)range_start + i)%8;
-                            op->class[byte_index] |= (1 << (7 - bit_index));
+                            inst->class[byte_index] |= (1 << (7 - bit_index));
                         }
                         c += 2;
                     } else {
                         u8 byte_index = ((u8)*c)/8;
                         u8 bit_index  = ((u8)*c)%8;
-                        op->class[byte_index] |= (1 << (7 - bit_index));
+                        inst->class[byte_index] |= (1 << (7 - bit_index));
                         c += 1;
                     }
                 } while (*c != ']');
 
-                if (negate)  for (s64 i = 0; i < countof(op->class); i++)  op->class[i] = ~op->class[i];
+                if (negate)  for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
               }
                 break;
             case '.':
