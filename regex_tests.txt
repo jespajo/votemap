@@ -43,3 +43,23 @@ loooo
 abcdefg
 abbbbbcefggggg
 abcfgggggfgg
+
+/[abc]+/
+abc
+ababab
+ababc
+efg
+abcd
+ccccccccccc
+
+/[a-z0-9]/
+abcdef
+ABCDEF
+a0b0c0
+a0b0c0!!
+
+/hello+ ([0-9]+)/
+hello 0123
+hello hello
+hell 23
+helloooooo 234

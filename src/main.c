@@ -1,3 +1,12 @@
+//|Todo:
+//| '.' to match any.
+//| Backslash to escape special chars.
+//| Special classes e.g. \d, \s, \w.
+//| Alternation.
+//| Anchors.
+//| Named capture groups.
+//| Count specifiers, i.e. \d{3}.
+
 #include <stdio.h>
 #include <string.h>
 
@@ -12,12 +21,15 @@
         memcpy((B), tmp, sizeof(*(A)));         \
     } while (0)
 
+typedef Array(s64)         s64_array;
+
 typedef struct Instruction Instruction;
 typedef Array(Instruction) Regex;
-typedef Array(s64)         s64_array;
+
 
 enum Opcode {
     CHAR = 1,
+    CHAR_CLASS,
     JUMP,
     SPLIT,
     SAVE,
@@ -27,11 +39,96 @@ enum Opcode {
 struct Instruction {
     enum Opcode      opcode;
     union {
-        char         c;          // If opcode == CHAR, the character to match.
-        Instruction *arg;        // If opcode == JUMP, the instruction to execute next.
-        Instruction *args[2];    // If opcode == SPLIT, the two instructions to execute next.
+        // If opcode == CHAR, the character to match.
+        char c;
+
+        // If opcode == SPLIT, pointers to the two instructions to execute next.
+        // If opcode == JUMP, the same, but we only use the first one.
+        Instruction *next[2];
+
+        // For use by the regex compiler only. Until a regex is fully compiled, we can't put in absolute pointers to instructions,
+        // because the whole array might move. So instead we make a note of the index of the instruction relative to the current
+        // instruction's index, and replace them with absolute pointers just before returning.
+        s64 rel_next[2];
+
+        // If opcode == CHAR_CLASS, a bitfield describing the characters in the class. There is one
+        // bit for each byte in the range 0--127 (i.e. ASCII characters).
+        u8 class[128/8];
     };
 };
+
+#include "strings.h"
+
+
+#include <ctype.h> //|Todo: make our own isprint
+
+
+static void print_address(char_array *out, void *address) //|Debug
+// Not for general use. Only prints the last 6 hexadecimal digits of the address.
+{
+    u64 number = ((u64)address) & 0xffffff;
+    print_string(out, "0x%06x", number);
+}
+static void log_regex(Regex *regex) //|Debug
+{
+    Memory_Context *ctx = new_context(regex->context);
+    char_array out = {.context = ctx};
+
+    for (s64 i = 0; i < regex->count; i++) {
+        Instruction *op = &regex->data[i];
+
+        print_address(&out, op);
+        print_string(&out, ":  ");
+
+        switch (op->opcode) {
+            case CHAR:
+                print_string(&out, "%-14s", "CHAR");
+                print_string(&out, "'%c'", op->c);
+                break;
+            case CHAR_CLASS:
+                print_string(&out, "%-14s", "CHAR_CLASS");
+              {
+                int j = 0;
+                bool prev_is_set = false;
+                while (j < 128) {
+                    bool is_set = op->class[j/8] & (1<<(7-(j%8)));
+                    if (!prev_is_set) {
+                        if (is_set)  *Add(&out) = isprint(j) ? (char)j : '.';
+                    } else {
+                        if (!is_set)  print_string(&out, "-%c", isprint(j-1) ? (char)(j-1) : '.');
+                    }
+                    prev_is_set = is_set;
+                    j += 1;
+                }
+              }
+                break;
+            case JUMP:
+                print_string(&out, "%-14s", "JUMP");
+                print_address(&out, op->next[0]);
+                break;
+            case SPLIT:
+                print_string(&out, "%-14s", "SPLIT");
+                print_address(&out, op->next[0]);
+                print_string(&out, ", ");
+                print_address(&out, op->next[1]);
+                break;
+            case SAVE:
+                print_string(&out, "%-14s", "SAVE");
+                break;
+            case MATCH:
+                print_string(&out, "%-14s", "MATCH");
+                break;
+            default:
+                assert(!"Unexpected opcode.");
+        }
+        print_string(&out, "\n");
+    }
+
+    Log(out.data);
+
+    free_context(ctx);
+}
+
 
 bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *capture_offsets)
 {
@@ -71,18 +168,28 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
                 case CHAR:
                     if (c == op->c)  *Add(&next_threads) = (Thread){op+1, thread->captures};
                     break;
+                case CHAR_CLASS:
+                  {
+                    u8 byte_index = ((u8)c)/8;
+                    u8 bit_index  = ((u8)c)%8;
+                    bool is_set   = op->class[byte_index] & (1<<(7-bit_index));
+                    if (is_set)  *Add(&next_threads) = (Thread){op+1, thread->captures};
+                  }
+                    break;
                 case JUMP:
-                    *Add(&cur_threads) = (Thread){op->arg, thread->captures};
+                    *Add(&cur_threads) = (Thread){op->next[0], thread->captures};
                     break;
                 case SPLIT:
-                    *Add(&cur_threads) = (Thread){op->args[0], thread->captures};
-                    *Add(&cur_threads) = (Thread){op->args[1], thread->captures};
+                    *Add(&cur_threads) = (Thread){op->next[0], thread->captures};
+                    *Add(&cur_threads) = (Thread){op->next[1], thread->captures};
                     break;
-                case SAVE:;
+                case SAVE:
+                  {
                     Capture *capture = New(Capture, tmp_ctx);
                     capture->prev    = thread->captures;
                     capture->offset  = string_index;
                     *Add(&cur_threads) = (Thread){op+1, capture};
+                  }
                     break;
                 case MATCH:
                     is_match = true;
@@ -90,6 +197,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
                     cur_threads.count = 0;
                     break;
                 default:
+                    log_regex(regex);
                     assert(!"Unexpected opcode.");
             }
         }
@@ -122,64 +230,99 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
 {
     Regex *regex = NewArray(regex, context);
 
-    s64 length = strlen(pattern);
     s64 num_parens = 0;
+    char *c = pattern;
 
-    for (s64 pattern_index = 0; pattern_index < length; pattern_index++) {
-        char c = pattern[pattern_index];
-
-        switch (c) {
+    while (*c) {
+        switch (*c) {
             case '(':
             case ')':
-                if ((num_parens % 2) ^ (c == ')'))  return parse_error(pattern, pattern_index);
+                if ((num_parens % 2) ^ (*c == ')'))  return parse_error(pattern, c-pattern);
 
                 *Add(regex) = (Instruction){SAVE};
                 num_parens += 1;
                 break;
             case '*':
-                if (!regex->count)  return parse_error(pattern, pattern_index);
+                if (!regex->count)  return parse_error(pattern, c-pattern);
               {
                 Instruction popped = regex->data[regex->count-1];
                 regex->count -= 1;
 
-                Instruction *ops[3];
-                for (s64 i = 0; i < 3; i++)  ops[i] = Add(regex);
-
-                *ops[0] = (Instruction){SPLIT, .args = {ops[1], ops[2]+1}};
-                *ops[1] = popped;
-                *ops[2] = (Instruction){JUMP, .arg = ops[0]};
+                *Add(regex) = (Instruction){SPLIT, .rel_next = {1, 3}};
+                *Add(regex) = popped;
+                *Add(regex) = (Instruction){JUMP, .rel_next = {-2}};
               }
                 break;
             case '?':
-                if (!regex->count)  return parse_error(pattern, pattern_index);
+                if (!regex->count)  return parse_error(pattern, c-pattern);
               {
                 Instruction popped = regex->data[regex->count-1];
                 regex->count -= 1;
 
-                Instruction *ops[2];
-                for (s64 i = 0; i < countof(ops); i++)  ops[i] = Add(regex);
-
-                *ops[0] = (Instruction){SPLIT, .args = {ops[1], ops[1]+1}};
-                *ops[1] = popped;
+                *Add(regex) = (Instruction){SPLIT, .rel_next = {1, 2}};
+                *Add(regex) = popped;
               }
                 break;
             case '+':
+                *Add(regex) = (Instruction){SPLIT, .rel_next = {-1, 1}};
+                break;
+            case '[':
               {
                 Instruction *op = Add(regex);
-                *op = (Instruction){SPLIT, .args = {op-1, op+1}};
+                *op = (Instruction){CHAR_CLASS};
+
+                bool negate = false;
+                c += 1;
+                if (*c == '^') {
+                    negate = true;
+                    c += 1;
+                }
+
+                do { //|Cleanup: This is too ugly to live...
+                    if (*c == '\0')  return parse_error(pattern, c-pattern);
+
+                    if (*(c+1) == '-') {
+                        char range_start = *c;
+                        char range_end   = *(c+2); //|Fixme: What if this is a special character? What if it's negative?
+                        if (range_start >= range_end)  return parse_error(pattern, c-pattern);
+                        for (s64 i = 0; i < range_end-range_start; i++) {
+                            u8 byte_index = ((u8)range_start + i)/8;
+                            u8 bit_index  = ((u8)range_start + i)%8;
+                            op->class[byte_index] |= (1 << (7 - bit_index));
+                        }
+                        c += 2;
+                    } else {
+                        u8 byte_index = ((u8)*c)/8;
+                        u8 bit_index  = ((u8)*c)%8;
+                        op->class[byte_index] |= (1 << (7 - bit_index));
+                        c += 1;
+                    }
+                } while (*c != ']');
+
+                if (negate)  for (s64 i = 0; i < countof(op->class); i++)  op->class[i] = ~op->class[i];
               }
                 break;
             default:
-                *Add(regex) = (Instruction){CHAR, .c = c};
+                *Add(regex) = (Instruction){CHAR, .c = *c};
         }
+        c += 1;
     }
 
     *Add(regex) = (Instruction){MATCH};
 
+    for (s64 i = 0; i < regex->count; i++) {
+        Instruction *inst = &regex->data[i];
+
+        if (inst->opcode == JUMP || inst->opcode == SPLIT) {
+            Instruction *next0 = inst + inst->rel_next[0];
+            Instruction *next1 = inst + inst->rel_next[1];
+            inst->next[0] = next0;
+            inst->next[1] = next1;
+        }
+    }
+
     return regex;
 }
-
-#include "strings.h"
 
 //|Todo: If we keep the below, it should maybe print to a supplied char_array.
 char_array *extract_string(char *data, s64 first_char_offset, s64 last_char_offset, Memory_Context *context)
@@ -259,13 +402,11 @@ int main()
         // If we get here, we have a regex and a string to match.
 
         s64_array offsets = {.context = regex_ctx};
-
         bool result = match_regex(line->data, line->count, regex, &offsets);
 
         assert(offsets.count % 2 == 0 || !"There should be an even number of offsets.");
 
         char_array out = {.context = regex_ctx};
-
         print_string(&out, "Regex:  %s\n", regex_source->data);
         print_string(&out, "String: %s\n", line->data);
         print_string(&out, "Match:  %s\n", result ? "yes" : "no");
@@ -273,10 +414,8 @@ int main()
             s64 start = offsets.data[i];
             s64 end   = offsets.data[i+1];
             char_array *substring = extract_string(line->data, start, end, regex_ctx);
-
             print_string(&out, "  %s\n", substring->data);
         }
-
         Log(out.data);
     }
 
