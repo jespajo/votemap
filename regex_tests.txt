@@ -63,3 +63,14 @@ hello 0123
 hello hello
 hell 23
 helloooooo 234
+
+/a.c/
+abc
+abbc
+ac
+a6c
+
+/ab(.*)cde/
+abcde
+ab1235cde
+ab

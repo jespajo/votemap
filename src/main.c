@@ -1,5 +1,4 @@
 //|Todo:
-//| '.' to match any.
 //| Backslash to escape special chars.
 //| Special classes e.g. \d, \s, \w.
 //| Alternation.
@@ -30,6 +29,7 @@ typedef Array(Instruction) Regex;
 enum Opcode {
     CHAR = 1,
     CHAR_CLASS,
+    ANY,
     JUMP,
     SPLIT,
     SAVE,
@@ -101,6 +101,9 @@ static void log_regex(Regex *regex) //|Debug
                     j += 1;
                 }
               }
+                break;
+            case ANY:
+                print_string(&out, "%-14s", "ANY");
                 break;
             case JUMP:
                 print_string(&out, "%-14s", "JUMP");
@@ -175,6 +178,9 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
                     bool is_set   = op->class[byte_index] & (1<<(7-bit_index));
                     if (is_set)  *Add(&next_threads) = (Thread){op+1, thread->captures};
                   }
+                    break;
+                case ANY:
+                    *Add(&next_threads) = (Thread){op+1, thread->captures};
                     break;
                 case JUMP:
                     *Add(&cur_threads) = (Thread){op->next[0], thread->captures};
@@ -301,6 +307,9 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
 
                 if (negate)  for (s64 i = 0; i < countof(op->class); i++)  op->class[i] = ~op->class[i];
               }
+                break;
+            case '.':
+                *Add(regex) = (Instruction){ANY};
                 break;
             default:
                 *Add(regex) = (Instruction){CHAR, .c = *c};
