@@ -68,9 +68,14 @@ helloooooo 234
 abc
 abbc
 ac
-a6c
+a7c
 
 /ab(.*)cde/
 abcde
 ab1235cde
 ab
+
+/(\d+)/
+123
+0/1
+9:8

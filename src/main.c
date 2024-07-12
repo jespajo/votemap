@@ -1,6 +1,6 @@
 //|Todo:
-//| Backslash to escape special chars.
 //| Special classes e.g. \d, \s, \w.
+//| Backslash to escape special chars.
 //| Alternation.
 //| Anchors.
 //| Named capture groups.
@@ -310,6 +310,16 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                 break;
             case '.':
                 *Add(regex) = (Instruction){ANY};
+                break;
+            case '\\':
+                c += 1;
+                if (*c == 'd') {
+                    Instruction *inst = Add(regex);
+                    *inst = (Instruction){CHAR_CLASS};
+                    for (char d = '0'; d <= '9'; d++)  inst->class[d/8] |= (1<<(7-d%8));
+                } else {
+                    return parse_error(pattern, c-pattern);
+                }
                 break;
             default:
                 *Add(regex) = (Instruction){CHAR, .c = *c};
