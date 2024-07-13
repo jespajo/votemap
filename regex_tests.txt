@@ -26,6 +26,7 @@ bab
 babe
 beef
 baaaaaaaaaab
+bb
 
 /abc?def/
 abdef
@@ -74,6 +75,19 @@ a7c
 abcde
 ab1235cde
 ab
+
+/abc(\S+)def/
+abc def
+abcd   edef
+abcaaab cg  d
+a:::::bcaaabcb cg  d
+
+/tab:\t<--a tab/
+not a tab:    <--a tab
+tab:	<--a tab
+
+/what/
+so what!
 
 /(\d+)/
 123
