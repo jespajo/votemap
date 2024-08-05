@@ -67,12 +67,69 @@ struct Instruction {
 
 #include "strings.h"
 
+
+bool parse_error_NEW(char *pattern, s64 index)
+{
+    Log("Unexpected character in regex pattern at index %ld: '%c'.", index, pattern[index]);
+    return false;
+}
+bool parse_regex(char *pattern, s64 offset, s64 length, Regex *result)
+// Return true on success.
+{
+    s64  index   = offset-1;
+    bool escaped = false;
+    int  nested  =  0;    // How many parentheticals deep we are.
+    s64  special = -1;    // The index of the first '+', '*' or '?' encountered.
+
+    while (++index < length) {
+        char c = pattern[index];
+
+        if (escaped || c == '\\') {
+            escaped = !escaped;
+            continue;
+        }
+
+        if (c == '(') {
+            nested += 1;
+        } else if (c == ')') {
+            if (!nested)  return parse_error_NEW(pattern, index); // Unmatched right parenthesis.
+            nested -= 1;
+        }
+        if (nested)  continue;
+
+        if (c == '|')  break;
+
+        if (!special && Contains("+*?", c))  special = index;
+    }
+
+    if (escaped)  return parse_error_NEW(pattern, index); // Escape symbol but nothing to escape.
+    if (nested)   return parse_error_NEW(pattern, index); // Unmatched left parenthesis.
+
+    
+
+    
+
+    return true;
+}
+Regex *compile_regex_NEW(char *pattern, Memory_Context *context)
+{
+    Regex *regex = NewArray(regex, context);
+
+    s64 length = strlen(pattern);
+
+    bool success = parse_regex(pattern, 0, length, regex);
+    if (!success)  return NULL;
+
+    *Add(regex) = (Instruction){MATCH};
+
+    return regex;
+}
+
 static Regex *parse_error(char *pattern, s64 index)
 {
     Log("Unexpected character in regex pattern at index %ld: '%c'.", index, pattern[index]);
     return NULL;
 }
-
 Regex *compile_regex(char *pattern, Memory_Context *context)
 {
     Regex *regex = NewArray(regex, context);
@@ -191,6 +248,7 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
 
     *Add(regex) = (Instruction){MATCH};
 
+    // Turn .rel_next members into actual pointers.
     for (s64 i = 0; i < regex->count; i++) {
         Instruction *inst = &regex->data[i];
 

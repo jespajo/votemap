@@ -93,3 +93,10 @@ so what!
 123
 0/1
 9:8
+
+/a...b/
+abababbb
+
+/XXXXXX/
+..XXXXXX
+
