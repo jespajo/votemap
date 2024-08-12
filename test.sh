@@ -32,7 +32,10 @@ for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     output    += `String: ${line}\n`;
     output    += `Match:  ${match ? "yes" : "no"}\n`;
     if (match) {
-        for (let i = 1; i < match.length; i++)  output += `  ${match[i]}\n`;
+        for (let i = 1; i < match.length; i++) {
+            if (match[i]===undefined)  continue; //|Jank!! We need a better way to specify that certain capture groups did not match anything.
+            output += `  ${match[i]}\n`;
+        }
     }
 
     console.log(output);

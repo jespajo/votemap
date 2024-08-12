@@ -28,6 +28,12 @@ beef
 baaaaaaaaaab
 bb
 
+/b(cd)*b/
+bb
+bcdbe
+bcdcdcdb
+bcdefb
+
 /abc?def/
 abdef
 abcdef
@@ -99,4 +105,3 @@ abababbb
 
 /XXXXXX/
 ..XXXXXX
-

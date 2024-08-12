@@ -61,66 +61,214 @@ struct Instruction {
         // If opcode == ASCII_CLASS, a bitfield describing the characters in the class.
         // There is one bit for each byte in the range 0--127 (i.e. ASCII characters).
         u8                 class[128/8];
+
+        // If opcode == SAVE, a number identifying the capture group. Even numbers are the starts of captures, odds the ends.
+        // For example,
+        //                 /xxx(xx)xx(xxx(xx)xx)xxx/     <-- In this regular expression,
+        //                     2  3  4   6  7  5         <-- these are the capture_id's.
+        s64                capture_id;
     };
 };
 
 
 #include "strings.h"
 
+static Regex *parse_error(char *pattern, s64 index);
 
-bool parse_error_NEW(char *pattern, s64 index)
-{
-    Log("Unexpected character in regex pattern at index %ld: '%c'.", index, pattern[index]);
-    return false;
-}
-bool parse_regex(char *pattern, s64 offset, s64 length, Regex *result)
-// Return true on success.
-{
-    s64  index   = offset-1;
-    bool escaped = false;
-    int  nested  =  0;    // How many parentheticals deep we are.
-    s64  special = -1;    // The index of the first '+', '*' or '?' encountered.
-
-    while (++index < length) {
-        char c = pattern[index];
-
-        if (escaped || c == '\\') {
-            escaped = !escaped;
-            continue;
-        }
-
-        if (c == '(') {
-            nested += 1;
-        } else if (c == ')') {
-            if (!nested)  return parse_error_NEW(pattern, index); // Unmatched right parenthesis.
-            nested -= 1;
-        }
-        if (nested)  continue;
-
-        if (c == '|')  break;
-
-        if (!special && Contains("+*?", c))  special = index;
-    }
-
-    if (escaped)  return parse_error_NEW(pattern, index); // Escape symbol but nothing to escape.
-    if (nested)   return parse_error_NEW(pattern, index); // Unmatched left parenthesis.
-
-    
-
-    
-
-    return true;
-}
 Regex *compile_regex_NEW(char *pattern, Memory_Context *context)
+//|Todo Speed: Merge CHAR instructions into a CHARS instruction if there's room.
 {
     Regex *regex = NewArray(regex, context);
 
-    s64 length = strlen(pattern);
+    // *shift_index is the index of the first instruction to shift right if we encounter a ?, + or *.
+    // *(shift_index-1) is the index of the first instruction to shift right if we encounter a |.
+    #define MAX_NESTED_CAPTURE_GROUPS 10
+    s64 shift_indices[MAX_NESTED_CAPTURE_GROUPS+1] = {0};
+    s64 *shift_index = &shift_indices[1];
 
-    bool success = parse_regex(pattern, 0, length, regex);
-    if (!success)  return NULL;
+    char *c = pattern;
+
+    if (*c != '^') {
+        // The regex doesn't start with an anchor, so add the implicit `.*?` (non-greedy match-anything).
+        *Add(regex) = (Instruction){SPLIT, .rel_next = {3, 1}};
+        *Add(regex) = (Instruction){ANY};
+        *Add(regex) = (Instruction){JUMP, .rel_next = {-2}};
+    } else {
+        c += 1;
+    }
+
+    while (*c) switch (*c) {
+        case '\\':
+          {
+            if (*(c+1) == 'd' || *(c+1) == 'D') {                   // \d or \D
+                Instruction *inst = Add(regex);
+                *inst = (Instruction){ASCII_CLASS};
+                for (char d = '0'; d <= '9'; d++)  inst->class[d/8] |= (1<<(7-d%8));
+                if (*(c+1) == 'D') {
+                    for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
+                }
+            } else if (*(c+1) == 's' || *(c+1) == 'S') {            // \s or \S
+                Instruction *inst = Add(regex);
+                *inst = (Instruction){ASCII_CLASS};
+                for (char *s = WHITESPACE; *s; s++)  inst->class[(*s)/8] |= (1<<(7-(*s)%8));
+                if (*(c+1) == 'S') {
+                    for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
+                }
+            } else if (*(c+1) == 't') {                             // \t
+                *Add(regex) = (Instruction){CHAR, .c = '\t'};
+            } else if (*(c+1) == 'n') {                             // \n
+                *Add(regex) = (Instruction){CHAR, .c = '\n'};
+            } else if (Contains("()*?+[.\\", *(c+1))) {             // escaped special character
+                *Add(regex) = (Instruction){CHAR, .c = *(c+1)};
+            } else {
+                return parse_error(pattern, c-pattern);
+            }
+            *shift_index = regex->count-1;
+            c += 2;
+            continue;
+          }
+        case '[':
+          {
+            Instruction *inst = Add(regex);
+            *inst = (Instruction){ASCII_CLASS};
+
+            bool negate = false;
+            c += 1;
+            if (*c == '^') {
+                negate = true;
+                c += 1;
+            }
+
+            do { //|Cleanup: This is too ugly to live...
+                if (*c == '\0')  return parse_error(pattern, c-pattern);
+
+                if (*(c+1) == '-') {
+                    char range_start = *c;
+                    char range_end   = *(c+2); //|Fixme: What if this is a special character? What if it's negative?
+                    if (range_start >= range_end)  return parse_error(pattern, c-pattern);
+                    for (s64 i = 0; i < range_end-range_start; i++) {
+                        u8 byte_index = ((u8)range_start + i)/8;
+                        u8 bit_index  = ((u8)range_start + i)%8;
+                        inst->class[byte_index] |= (1 << (7 - bit_index));
+                    }
+                    c += 2;
+                } else {
+                    u8 byte_index = ((u8)*c)/8;
+                    u8 bit_index  = ((u8)*c)%8;
+                    inst->class[byte_index] |= (1 << (7 - bit_index));
+                    c += 1;
+                }
+            } while (*c != ']');
+
+            if (negate) {
+                for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
+            }
+
+            c += 1;
+            *shift_index = regex->count-1;
+            continue;
+          }
+        case '(':
+          {
+            s64 capture_id = 2;
+            for (s64 i = regex->count-1; i >= 0; i--) {
+                Instruction *inst = &regex->data[i];
+                if (inst->opcode == SAVE && inst->capture_id % 2 == 0) {
+                    capture_id = inst->capture_id + 2;
+                    break;
+                }
+            }
+            *Add(regex) = (Instruction){SAVE, .capture_id = capture_id};
+            *shift_index = regex->count-1;
+            shift_index += 1;
+            if (shift_index-shift_indices >= countof(shift_indices))  return parse_error(pattern, c-pattern); // Max nested capture groups exceeded.
+            c += 1;
+            continue;
+          }
+        case ')':
+          {
+            Instruction *save_start = &regex->data[*(shift_index-1)];
+            if (save_start->opcode != SAVE)  return parse_error(pattern, c-pattern); // There is a right-parenthesis without a matching left-parenthesis before it.
+            assert(save_start->capture_id % 2 == 0);
+            *Add(regex) = (Instruction){SAVE, .capture_id = save_start->capture_id+1};
+            *shift_index = 0;
+            shift_index -= 1;
+            assert(shift_index > shift_indices);
+            c += 1;
+            continue;
+          }
+        case '*':
+          {
+            if (*shift_index == 0)  return parse_error(pattern, c-pattern);
+            
+            // Shift instructions right.
+            s64 shift_count = regex->count - *shift_index;
+            Add(regex);
+            for (s64 i = regex->count-1; i > *shift_index; i--)  regex->data[i] = regex->data[i-1];
+
+            regex->data[*shift_index] = (Instruction){SPLIT, .rel_next = {1, 2+shift_count}};
+
+            *Add(regex) = (Instruction){JUMP, .rel_next = {-shift_count-1}};
+
+            *shift_index = 0;
+            c += 1;
+            continue;
+          }
+        case '?':
+          {
+            if (*shift_index == 0)  return parse_error(pattern, c-pattern);
+
+            // Shift instructions right.
+            s64 shift_count = regex->count - *shift_index;
+            Add(regex);
+            for (s64 i = regex->count-1; i > *shift_index; i--)  regex->data[i] = regex->data[i-1];
+
+            regex->data[*shift_index] = (Instruction){SPLIT, .rel_next = {1, 1+shift_count}};
+
+            *shift_index = 0;
+            c += 1;
+            continue;
+          }
+        case '+':
+          {
+            if (*shift_index == 0)  return parse_error(pattern, c-pattern);
+        
+            s64 shift_count = regex->count - *shift_index;
+            *Add(regex) = (Instruction){SPLIT, .rel_next = {-shift_count, 1}};
+
+            *shift_index = 0;
+            c += 1;
+            continue;
+          }
+        case '.':
+          {
+            *Add(regex) = (Instruction){ANY};
+            c += 1;
+            *shift_index = regex->count-1;
+            continue;
+          }
+        default:
+          {
+            *Add(regex) = (Instruction){CHAR, .c = *c};
+            c += 1;
+            *shift_index = regex->count-1;
+            continue;
+          }
+    }
 
     *Add(regex) = (Instruction){MATCH};
+
+    // Turn .rel_next members into actual pointers.
+    for (s64 i = 0; i < regex->count; i++) {
+        Instruction *inst = &regex->data[i];
+
+        if (inst->opcode == JUMP || inst->opcode == SPLIT) {
+            Instruction *next0 = inst + inst->rel_next[0];
+            Instruction *next1 = inst + inst->rel_next[1];
+            inst->next[0] = next0;
+            inst->next[1] = next1;
+        }
+    }
 
     return regex;
 }
@@ -343,7 +491,8 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
     // Inside this function, we store captures as a singly-linked list, but convert them to a s64_array before returning.
     struct Capture {
         Capture *prev;
-        s64      offset; // The index of the character in the source string we were up to when we encountered a parenthesis.
+        s64      offset; // The index of the character in the source string we were up to when we encountered the SAVE instruction.
+        s64      id;
     };
 
     struct Thread {
@@ -351,8 +500,10 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
         Capture     *captures;
     };
 
-    bool     is_match = false;
+    bool is_match = false;
+
     Capture *captures = NULL;
+    s64  num_captures = -1;
 
     // Create a child memory context for temporary data.
     Memory_Context *tmp_ctx = new_context(regex->context);
@@ -394,8 +545,10 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
                 case SAVE:
                   {
                     Capture *capture = New(Capture, tmp_ctx);
-                    capture->prev    = thread.captures;
-                    capture->offset  = string_index;
+                    capture->prev   = thread.captures;
+                    capture->offset = string_index;
+                    capture->id     = inst->capture_id;
+                    if (capture->id >= num_captures)  num_captures = capture->id+1;
                     *Add(&cur_threads) = (Thread){inst+1, capture};
                   }
                     break;
@@ -411,8 +564,8 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
         }
 
         // We consumed the current threads in LIFO order; the lowest-priority threads executed last.
-        // That means that the next threads are currently ordered from highest to lowest priority.
-        // Before we start consuming them as a stack, we need to reverse them.
+        // That means that the next threads are currently ordered with the lowest-priority threads
+        // at the top of the stack. Before we start consuming them, we need to reverse them.
         reverse_array(&next_threads);
 
         cur_threads.count = 0;
@@ -423,8 +576,16 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
         // If the caller didn't initialise capture_offsets with a context, we'll use the regex context.
         if (!capture_offsets->context)  capture_offsets->context = regex->context;
 
-        for (Capture *c = captures; c != NULL; c = c->prev)  *Add(capture_offsets) = c->offset;
-        reverse_array(capture_offsets);
+        // Initialise them all to -1.
+        array_reserve(capture_offsets, num_captures);
+        for (s64 i = 0; i < num_captures; i++)  capture_offsets->data[i] = -1;
+
+        for (Capture *c = captures; c != NULL; c = c->prev)  capture_offsets->data[c->id] = c->offset;
+        capture_offsets->count = num_captures;
+
+        // Currently we don't use capture id's 0 and 1, so pretend they're not there. |Temporary |Hack
+        capture_offsets->count -= 2;
+        capture_offsets->data  += 2;
     }
 
     free_context(tmp_ctx);
@@ -501,7 +662,7 @@ int main()
             line->data[line->count] = '\0';
 
             regex_source = line;
-            regex = compile_regex(regex_source->data, regex_ctx);
+            regex = compile_regex_NEW(regex_source->data, regex_ctx);
             //|Todo: Do something if compilation failed.
 
             continue;
