@@ -1,5 +1,4 @@
 //|Todo:
-//| Non-greedy + and *.
 //| Count specifiers, i.e. \d{3}.
 //| Named capture groups.
 //| Remove anchors
@@ -171,14 +170,38 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
         case '*':
           {
             if (*shift_index == 0)  return parse_error(pattern, p-pattern); //|Todo: Validate at the top so we can just assert here?
-            
+
             s64 shift_count = regex->count - *shift_index;
             Add(regex);
             for (s64 i = regex->count-1; i > *shift_index; i--)  regex->data[i] = regex->data[i-1];
 
-            regex->data[*shift_index] = (Instruction){SPLIT, .rel_next = {1, shift_count+2}}; //|Todo: Swap order if next char is '?' (non-greedy).
+            Instruction *split = &regex->data[*shift_index];
+            if (*(p+1) == '?') {
+                *split = (Instruction){SPLIT, .rel_next = {shift_count+2, 1}}; // Non-greedy match.
+                p += 1;
+            } else {
+                *split = (Instruction){SPLIT, .rel_next = {1, shift_count+2}}; // Greedy match.
+            }
 
             *Add(regex) = (Instruction){JUMP, .rel_next = {-shift_count-1}};
+
+            *shift_index = 0;
+            p += 1;
+            continue;
+          }
+        case '+':
+          {
+            if (*shift_index == 0)  return parse_error(pattern, p-pattern); //|Todo: Validate at the top so we can just assert here?
+
+            s64 inst_count = regex->count - *shift_index;
+
+            Instruction *split = Add(regex);
+            if (*(p+1) == '?') {
+                *split = (Instruction){SPLIT, .rel_next = {1, -inst_count}}; // Non-greedy match.
+                p += 1;
+            } else {
+                *split = (Instruction){SPLIT, .rel_next = {-inst_count, 1}}; // Greedy match.
+            }
 
             *shift_index = 0;
             p += 1;
@@ -193,17 +216,6 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
             for (s64 i = regex->count-1; i > *shift_index; i--)  regex->data[i] = regex->data[i-1];
 
             regex->data[*shift_index] = (Instruction){SPLIT, .rel_next = {1, 1+shift_count}};
-
-            *shift_index = 0;
-            p += 1;
-            continue;
-          }
-        case '+':
-          {
-            if (*shift_index == 0)  return parse_error(pattern, p-pattern); //|Todo: Validate at the top so we can just assert here?
-        
-            s64 inst_count = regex->count - *shift_index;
-            *Add(regex) = (Instruction){SPLIT, .rel_next = {-inst_count, 1}}; //|Todo: Swap order if next char is '?' (non-greedy).
 
             *shift_index = 0;
             p += 1;
@@ -545,7 +557,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
 }
 
 //|Todo: If we keep the below, it should maybe print to a supplied char_array?
-char_array *extract_string(char *data, s64 start_offset, s64 end_offset, Memory_Context *context) 
+char_array *extract_string(char *data, s64 start_offset, s64 end_offset, Memory_Context *context)
 // start_offset is the index of the first character in the desired substring.
 // end_offset is the index of the character after the last desired character.
 // In other words, if start_ and end_offset are the same, the result will be the empty string.

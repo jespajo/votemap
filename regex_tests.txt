@@ -129,6 +129,18 @@ abcdefghijklmh
 axxh
 abcdefghij
 
+/(.*)(def...)/
+abcdefdefdefghi
+
+/(.*?)(def...)/
+abcdefdefdefghi
+
+/((..)+)(def...)/
+aabcdefdefdefghi
+
+/((..)+?)(def...)/
+aabcdefdefdefghi
+
 #
 # Standard regex tests:
 #
