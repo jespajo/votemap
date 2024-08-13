@@ -1,7 +1,9 @@
 //|Todo:
 //| Count specifiers, i.e. \d{3}.
+//| Return captures as a Map somehow?
 //| Named capture groups.
-//| Remove anchors
+//| Fix up tests.
+//| Remove anchors.
 
 //|Speed:
 //| Merge adjacent chars into strings.
@@ -161,7 +163,7 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
             // how far away that will be, so we'll leave .rel_next[0] zero to signify our intent.
             *Add(regex) = (Instruction){JUMP};
 
-            //|Temporary? I think the way this is implemented at the moment means that if you have multiple strings separated by | pipes, the last one will take priority. This does not align with any regex standard---it's meant to be either the first one or the longest one.
+            // The way this is implemented means that if you have multiple strings separated by | pipes, the first one will take priority. This does not align with any regex standard---it's meant to be either the first one or the longest one.
 
             *shift_index = 0;
             p += 1;
