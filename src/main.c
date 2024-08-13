@@ -2,6 +2,7 @@
 //| Non-greedy + and *.
 //| Count specifiers, i.e. \d{3}.
 //| Named capture groups.
+//| Remove anchors
 
 //|Speed:
 //| Merge adjacent chars into strings.
@@ -83,10 +84,6 @@ static Regex *parse_error(char *pattern, s64 index)
 }
 
 Regex *compile_regex(char *pattern, Memory_Context *context)
-//|Todo |Speed: Merge CHAR instructions into a CHARS instruction if there's room.
-//|Todo: Validate pattern at the top of the function?
-//| Make sure the brackets make sense and that the max number of nested capture groups is not exceeded.
-//| Make sure that +, ? and * only come after tokens or capture groups.
 {
     Regex *regex = NewArray(regex, context);
 

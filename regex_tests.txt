@@ -118,6 +118,17 @@ abxxxef
 abxxxxef
 ababxxef
 
+/a(..(..(.)g)h)/
+abcdefgh
+axxxxxgh
+axxxxxxgh
+
+/a(..(..(.)+.)*h)/
+abcdefgh
+abcdefghijklmh
+axxh
+abcdefghij
+
 #
 # Standard regex tests:
 #
