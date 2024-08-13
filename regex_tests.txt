@@ -105,3 +105,20 @@ abababbb
 
 /XXXXXX/
 ..XXXXXX
+
+/ab|cd/
+ab
+cd
+ef
+
+/(ab|cd)xx/
+abxx
+cdxx
+efxx
+
+/ab(xx)+ef/
+abef
+abxxef
+abxxxef
+abxxxxef
+ababxxef
