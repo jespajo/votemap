@@ -71,9 +71,13 @@ struct Instruction {
 
 #include "strings.h"
 
-static Regex *parse_error(char *pattern, s64 index);
+static Regex *parse_error(char *pattern, s64 index)
+{
+    Log("Unexpected character in regex pattern at index %ld: '%c'.", index, pattern[index]);
+    return NULL;
+}
 
-Regex *compile_regex_NEW(char *pattern, Memory_Context *context)
+Regex *compile_regex(char *pattern, Memory_Context *context)
 //|Todo |Speed: Merge CHAR instructions into a CHARS instruction if there's room.
 //|Todo: Validate pattern at the top of the function?
 //| Make sure the brackets make sense and that the max number of nested capture groups is not exceeded.
@@ -308,144 +312,6 @@ Regex *compile_regex_NEW(char *pattern, Memory_Context *context)
                 inst->next[0] = next;
             }
         } else if (inst->opcode == SPLIT) {
-            Instruction *next0 = inst + inst->rel_next[0];
-            Instruction *next1 = inst + inst->rel_next[1];
-            inst->next[0] = next0;
-            inst->next[1] = next1;
-        }
-    }
-
-    return regex;
-}
-
-static Regex *parse_error(char *pattern, s64 index)
-{
-    Log("Unexpected character in regex pattern at index %ld: '%c'.", index, pattern[index]);
-    return NULL;
-}
-Regex *compile_regex(char *pattern, Memory_Context *context)
-{
-    Regex *regex = NewArray(regex, context);
-
-    s64 num_parens = 0;
-    char *c = pattern;
-
-    if (*c != '^') {
-        // The regex doesn't start with an anchor, so add the implicit `.*?` (non-greedy match-anything).
-        *Add(regex) = (Instruction){SPLIT, .rel_next = {3, 1}};
-        *Add(regex) = (Instruction){ANY};
-        *Add(regex) = (Instruction){JUMP, .rel_next = {-2}};
-    } else {
-        c += 1;
-    }
-
-    while (*c) {
-        switch (*c) {
-            case '(':
-            case ')':
-                if ((num_parens % 2) ^ (*c == ')'))  return parse_error(pattern, c-pattern);
-
-                *Add(regex) = (Instruction){SAVE};
-                num_parens += 1;
-                break;
-            case '*':
-                if (!regex->count)  return parse_error(pattern, c-pattern);
-              {
-                Instruction popped = regex->data[regex->count-1];
-                regex->count -= 1;
-
-                *Add(regex) = (Instruction){SPLIT, .rel_next = {1, 3}};
-                *Add(regex) = popped;
-                *Add(regex) = (Instruction){JUMP, .rel_next = {-2}};
-              }
-                break;
-            case '?':
-                if (!regex->count)  return parse_error(pattern, c-pattern);
-              {
-                Instruction popped = regex->data[regex->count-1];
-                regex->count -= 1;
-
-                *Add(regex) = (Instruction){SPLIT, .rel_next = {1, 2}};
-                *Add(regex) = popped;
-              }
-                break;
-            case '+':
-                *Add(regex) = (Instruction){SPLIT, .rel_next = {-1, 1}};
-                break;
-            case '[':
-              {
-                Instruction *inst = Add(regex);
-                *inst = (Instruction){ASCII_CLASS};
-
-                bool negate = false;
-                c += 1;
-                if (*c == '^') {
-                    negate = true;
-                    c += 1;
-                }
-
-                do { //|Cleanup: This is too ugly to live...
-                    if (*c == '\0')  return parse_error(pattern, c-pattern);
-
-                    if (*(c+1) == '-') {
-                        char range_start = *c;
-                        char range_end   = *(c+2); //|Fixme: What if this is a special character? What if it's negative?
-                        if (range_start >= range_end)  return parse_error(pattern, c-pattern);
-                        for (s64 i = 0; i < range_end-range_start; i++) {
-                            u8 byte_index = ((u8)range_start + i)/8;
-                            u8 bit_index  = ((u8)range_start + i)%8;
-                            inst->class[byte_index] |= (1 << (7 - bit_index));
-                        }
-                        c += 2;
-                    } else {
-                        u8 byte_index = ((u8)*c)/8;
-                        u8 bit_index  = ((u8)*c)%8;
-                        inst->class[byte_index] |= (1 << (7 - bit_index));
-                        c += 1;
-                    }
-                } while (*c != ']');
-
-                if (negate)  for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
-              }
-                break;
-            case '.':
-                *Add(regex) = (Instruction){ANY};
-                break;
-            case '\\':
-                c += 1;
-                if (*c == 'd' || *c == 'D') {
-                    Instruction *inst = Add(regex);
-                    *inst = (Instruction){ASCII_CLASS};
-                    for (char d = '0'; d <= '9'; d++)  inst->class[d/8] |= (1<<(7-d%8));
-                    if (*c == 'D')  for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
-                } else if (*c == 's' || *c == 'S') {
-                    Instruction *inst = Add(regex);
-                    *inst = (Instruction){ASCII_CLASS};
-                    for (char *s = WHITESPACE; *s; s++)  inst->class[(*s)/8] |= (1<<(7-(*s)%8));
-                    if (*c == 'S')  for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
-                } else if (*c == 't') {
-                    *Add(regex) = (Instruction){CHAR, .c = '\t'};
-                } else if (*c == 'n') {
-                    *Add(regex) = (Instruction){CHAR, .c = '\n'};
-                } else if (Contains("()*?+[.\\", *c)) {
-                    *Add(regex) = (Instruction){CHAR, .c = *c};
-                } else {
-                    return parse_error(pattern, c-pattern);
-                }
-                break;
-            default:
-                *Add(regex) = (Instruction){CHAR, .c = *c};
-        }
-        c += 1;
-    }
-
-    *Add(regex) = (Instruction){MATCH};
-
-    // Turn .rel_next members into actual pointers.
-    for (s64 i = 0; i < regex->count; i++) {
-        Instruction *inst = &regex->data[i];
-
-        if (inst->opcode == JUMP || inst->opcode == SPLIT) {
             Instruction *next0 = inst + inst->rel_next[0];
             Instruction *next1 = inst + inst->rel_next[1];
             inst->next[0] = next0;
@@ -713,7 +579,7 @@ int main()
             line->data[line->count] = '\0';
 
             regex_source = line;
-            regex = compile_regex_NEW(regex_source->data, regex_ctx);
+            regex = compile_regex(regex_source->data, regex_ctx);
             //|Todo: Do something if compilation failed.
 
             continue;
