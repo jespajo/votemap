@@ -1,8 +1,11 @@
 //|Todo:
-//| Use strings instead of chars where possible.
-//| Anchors.
-//| Named capture groups.
+//| Non-greedy + and *.
 //| Count specifiers, i.e. \d{3}.
+//| Named capture groups.
+
+//|Speed:
+//| Merge adjacent chars into strings.
+//| Convert NFAs to DFAs.
 
 #include <stdio.h>
 #include <string.h>
@@ -31,6 +34,8 @@ enum Opcode {
     SPLIT,
     SAVE,
     MATCH,
+    ANCHOR_START,
+    ANCHOR_END,
 };
 
 //
@@ -62,7 +67,7 @@ struct Instruction {
 
         // If opcode == SAVE, a number identifying the capture group. Even numbers are the starts of captures, odds the ends.
         // For example,
-        //                 /xxx(xx)xx(xxx(xx)xx)xxx/     <-- In this regular expression,
+        //                 /...(..)..(...(..)..).../     <-- In this regular expression,
         //                     2  3  4   6  7  5         <-- these are the capture_id's.
         s64                capture_id;
     };
@@ -127,7 +132,7 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
             if (save_start->opcode != SAVE || save_start->capture_id % 2)  return parse_error(pattern, p-pattern); // There's an unmatched right parenthesis. |Todo: Validate at the top so we can just assert here?
 
             // Going back to the start of the capture, look for any JUMP instructions with .rel_next[0] == 0.
-            // These are placeholders for jumping to the end of the current capture, which we now know where that is.
+            // These are placeholders for jumping to the end of the current capture, which we can now fill in.
             s64 start_index = save_start - regex->data;
             for (s64 i = start_index+1; i < regex->count; i++) {
                 if (regex->data[i].opcode != JUMP)  continue;
@@ -256,6 +261,22 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
             *shift_index = regex->count-1;
             continue;
           }
+        case '^':
+          {
+            *Add(regex) = (Instruction){ANCHOR_START};
+
+            *shift_index = 0;
+            p += 1;
+            continue;
+          }
+        case '$':
+          {
+            *Add(regex) = (Instruction){ANCHOR_END};
+
+            *shift_index = 0;
+            p += 1;
+            continue;
+          }
         case '\\':
           {
             if (*(p+1) == 'd' || *(p+1) == 'D') {                   // \d or \D
@@ -276,7 +297,7 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                 *Add(regex) = (Instruction){CHAR, .c = '\t'};
             } else if (*(p+1) == 'n') {                             // \n
                 *Add(regex) = (Instruction){CHAR, .c = '\n'};
-            } else if (Contains("()*?+[]{}.\\", *(p+1))) {          // escaped special character
+            } else if (Contains("()*?+[]{}.\\^$", *(p+1))) {        // escaped special character
                 *Add(regex) = (Instruction){CHAR, .c = *(p+1)};
             } else {
                 return parse_error(pattern, p-pattern);
@@ -382,6 +403,12 @@ static void log_regex(Regex *regex) //|Debug
             case MATCH:
                 print_string(&out, "%-14s", "MATCH");
                 break;
+            case ANCHOR_START:
+                print_string(&out, "%-14s", "ANCHOR_START");
+                break;
+            case ANCHOR_END:
+                print_string(&out, "%-14s", "ANCHOR_END");
+                break;
             default:
                 assert(!"Unexpected opcode.");
         }
@@ -395,17 +422,20 @@ static void log_regex(Regex *regex) //|Debug
 
 bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *capture_offsets)
 {
-    typedef struct Capture  Capture;
-    typedef struct Thread   Thread; // Russ Cox calls these "threads", in the sense that the compiled regex executes in a virtual machine, which has multiple parallel instructions being executed for each letter in the string being tested. Where the metaphor fails, though, is that the order of execution of the regex threads is deterministic---and must be for greedy matching. If we think of a better word, we'll use that. E.g. Try?
-    typedef Array(Thread)   Thread_array;
-
     // Inside this function, we store captures as a singly-linked list, but convert them to a s64_array before returning.
+    typedef struct Capture Capture;
     struct Capture {
         Capture *prev;
         s64      offset; // The index of the character in the source string we were up to when we encountered the SAVE instruction.
         s64      id;
     };
 
+    // Russ Cox calls these "threads", in the sense that the compiled regex executes in a virtual
+    // machine, which has multiple parallel instructions being executed for each letter in the
+    // string being tested. Where the metaphor fails, though, is that the order of execution of the
+    // regex threads is deterministic---and must be for greedy matching to work.
+    typedef struct Thread Thread;
+    typedef Array(Thread) Thread_array;
     struct Thread {
         Instruction *instruction;
         Capture     *captures;
@@ -414,7 +444,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
     bool is_match = false;
 
     Capture *captures = NULL;
-    s64  num_captures = -1;
+    s64  num_captures = 0;
 
     // Create a child memory context for temporary data.
     Memory_Context *tmp_ctx = new_context(regex->context);
@@ -441,8 +471,8 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
                     u8 bit_index  = ((u8)c)%8;
                     bool is_set   = inst->class[byte_index] & (1<<(bit_index));
                     if (is_set)  *Add(&next_threads) = (Thread){inst+1, thread.captures};
-                  }
                     break;
+                  }
                 case ANY:
                     *Add(&next_threads) = (Thread){inst+1, thread.captures};
                     break;
@@ -455,24 +485,32 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
                     break;
                 case SAVE:
                   {
-                    Capture *capture = New(Capture, tmp_ctx);
+                    Capture *capture = New(Capture, tmp_ctx); //|Speed: We could store these in a tmp_ctx array to speed up allocation. That would mean the ->prev members would become invalid pointers when the array moves.
                     capture->prev   = thread.captures;
                     capture->offset = string_index;
                     capture->id     = inst->capture_id;
                     if (capture->id%2 && capture->id >= num_captures)  num_captures = capture->id+1;
                     *Add(&cur_threads) = (Thread){inst+1, capture};
-                  }
                     break;
+                  }
                 case MATCH:
                     is_match = true;
                     captures = thread.captures;
                     cur_threads.count = 0;
+                    break;
+                case ANCHOR_START:
+                    if (string_index == 0)              *Add(&cur_threads) = (Thread){inst+1, thread.captures};
+                    break;
+                case ANCHOR_END:
+                    if (string_index == string_length)  *Add(&cur_threads) = (Thread){inst+1, thread.captures};
                     break;
                 default:
                     log_regex(regex);
                     assert(!"Unexpected opcode.");
             }
         }
+
+        if (!next_threads.count)  break;
 
         // We consumed the current threads in LIFO order; the lowest-priority threads executed last.
         // That means that the next threads are currently ordered with the lowest-priority threads
@@ -509,12 +547,15 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
     return is_match;
 }
 
-//|Todo: If we keep the below, it should maybe print to a supplied char_array.
-char_array *extract_string(char *data, s64 first_char_offset, s64 last_char_offset, Memory_Context *context)
+//|Todo: If we keep the below, it should maybe print to a supplied char_array?
+char_array *extract_string(char *data, s64 start_offset, s64 end_offset, Memory_Context *context) 
+// start_offset is the index of the first character in the desired substring.
+// end_offset is the index of the character after the last desired character.
+// In other words, if start_ and end_offset are the same, the result will be the empty string.
 {
     char_array *result = NewArray(result, context);
 
-    for (s64 i = first_char_offset; i < last_char_offset; i++)  *Add(result) = data[i];
+    for (s64 i = start_offset; i < end_offset; i++)  *Add(result) = data[i];
 
     *Add(result) = '\0';
     result->count -= 1;

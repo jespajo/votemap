@@ -122,8 +122,8 @@ ababxxef
 # Standard regex tests:
 #
 
-#/abracadabra$/
-#abracadabracadabra
+/abracadabra$/
+abracadabracadabra
 
 /a...b/
 abababbb
@@ -153,6 +153,23 @@ a]a
 abcd
 a
 
+/^abc/
+abc
+ab
+defghi
+
+/a$/
+aa
+
+/a\$/
+a$
+
+/a($)/
+aa
+
+/a*(^a)/
+aa
+
 /(a|b)c|a(b|c)/
 ac
-#ab
+#       ab
