@@ -82,7 +82,6 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
 //|Todo: Validate pattern at the top of the function?
 //| Make sure the brackets make sense and that the max number of nested capture groups is not exceeded.
 //| Make sure that +, ? and * only come after tokens or capture groups.
-//|Cleanup: Our ascii-class bit operations don't need the "7 minus" part, as long as we're consistent.
 {
     Regex *regex = NewArray(regex, context);
 
@@ -238,13 +237,13 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                     for (s64 i = 0; i < range_end-range_start; i++) {
                         u8 byte_index = ((u8)range_start + i)/8;
                         u8 bit_index  = ((u8)range_start + i)%8;
-                        inst->class[byte_index] |= (1 << (7 - bit_index));
+                        inst->class[byte_index] |= (1 << bit_index);
                     }
                     p += 2;
                 } else {
                     u8 byte_index = ((u8)*p)/8;
                     u8 bit_index  = ((u8)*p)%8;
-                    inst->class[byte_index] |= (1 << (7 - bit_index));
+                    inst->class[byte_index] |= (1 << bit_index);
                     p += 1;
                 }
             } while (*p != ']');
@@ -262,14 +261,14 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
             if (*(p+1) == 'd' || *(p+1) == 'D') {                   // \d or \D
                 Instruction *inst = Add(regex);
                 *inst = (Instruction){ASCII_CLASS};
-                for (char d = '0'; d <= '9'; d++)  inst->class[d/8] |= (1<<(7-d%8));
+                for (char d = '0'; d <= '9'; d++)  inst->class[d/8] |= (1<<(d%8));
                 if (*(p+1) == 'D') {
                     for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
                 }
             } else if (*(p+1) == 's' || *(p+1) == 'S') {            // \s or \S
                 Instruction *inst = Add(regex);
                 *inst = (Instruction){ASCII_CLASS};
-                for (char *s = WHITESPACE; *s; s++)  inst->class[(*s)/8] |= (1<<(7-(*s)%8));
+                for (char *s = WHITESPACE; *s; s++)  inst->class[(*s)/8] |= (1<<((*s)%8));
                 if (*(p+1) == 'S') {
                     for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
                 }
@@ -352,7 +351,7 @@ static void log_regex(Regex *regex) //|Debug
                 int j = 0;
                 bool prev_is_set = false;
                 while (j < 128) {
-                    bool is_set = inst->class[j/8] & (1<<(7-(j%8)));
+                    bool is_set = inst->class[j/8] & (1<<((j%8)));
                     if (!prev_is_set) {
                         if (is_set)  *Add(&out) = isprint(j) ? (char)j : '.';
                     } else {
@@ -440,7 +439,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
                   {
                     u8 byte_index = ((u8)c)/8;
                     u8 bit_index  = ((u8)c)%8;
-                    bool is_set   = inst->class[byte_index] & (1<<(7-bit_index));
+                    bool is_set   = inst->class[byte_index] & (1<<(bit_index));
                     if (is_set)  *Add(&next_threads) = (Thread){inst+1, thread.captures};
                   }
                     break;
