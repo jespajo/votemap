@@ -21,6 +21,7 @@ bab
 b
 aa
 
+
 /b(a*)b/
 bab
 babe
@@ -100,12 +101,6 @@ so what!
 0/1
 9:8
 
-/a...b/
-abababbb
-
-/XXXXXX/
-..XXXXXX
-
 /ab|cd/
 ab
 cd
@@ -122,3 +117,42 @@ abxxef
 abxxxef
 abxxxxef
 ababxxef
+
+#
+# Standard regex tests:
+#
+
+#/abracadabra$/
+#abracadabracadabra
+
+/a...b/
+abababbb
+
+/XXXXXX/
+..XXXXXX
+
+/\)/
+()
+
+/a]/
+a]a
+
+/}/
+}
+
+/\}/
+}
+
+/\]/
+]
+
+/]/
+]
+
+/(..)*(...)*/
+abcd
+a
+
+/(a|b)c|a(b|c)/
+ac
+#ab

@@ -273,7 +273,7 @@ Regex *compile_regex_NEW(char *pattern, Memory_Context *context)
                 *Add(regex) = (Instruction){CHAR, .c = '\t'};
             } else if (*(p+1) == 'n') {                             // \n
                 *Add(regex) = (Instruction){CHAR, .c = '\n'};
-            } else if (Contains("()*?+[.\\", *(p+1))) {             // escaped special character
+            } else if (Contains("()*?+[]{}.\\", *(p+1))) {          // escaped special character
                 *Add(regex) = (Instruction){CHAR, .c = *(p+1)};
             } else {
                 return parse_error(pattern, p-pattern);
@@ -512,6 +512,7 @@ static void log_regex(Regex *regex) //|Debug
                 break;
             case SAVE:
                 print_string(&out, "%-14s", "SAVE");
+                print_string(&out, "%ld", inst->capture_id);
                 break;
             case MATCH:
                 print_string(&out, "%-14s", "MATCH");
@@ -593,7 +594,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
                     capture->prev   = thread.captures;
                     capture->offset = string_index;
                     capture->id     = inst->capture_id;
-                    if (capture->id >= num_captures)  num_captures = capture->id+1;
+                    if (capture->id%2 && capture->id >= num_captures)  num_captures = capture->id+1;
                     *Add(&cur_threads) = (Thread){inst+1, capture};
                   }
                     break;
@@ -621,11 +622,16 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
         // If the caller didn't initialise capture_offsets with a context, we'll use the regex context.
         if (!capture_offsets->context)  capture_offsets->context = regex->context;
 
-        // Initialise them all to -1.
+        // Initialise all offsets to -1.
         array_reserve(capture_offsets, num_captures);
         for (s64 i = 0; i < num_captures; i++)  capture_offsets->data[i] = -1;
 
-        for (Capture *c = captures; c != NULL; c = c->prev)  capture_offsets->data[c->id] = c->offset;
+        for (Capture *c = captures; c != NULL; c = c->prev) {
+            // Only write over the -1 once. Because we are iterating over the captures backwards, this makes sure
+            // regular expressions like /(ab)+/ matches "ababab" but only captures the last "ab".
+            if (capture_offsets->data[c->id] >= 0)  continue;
+            capture_offsets->data[c->id] = c->offset;
+        }
         capture_offsets->count = num_captures;
 
         // Currently we don't use capture id's 0 and 1, so pretend they're not there. |Temporary |Hack
