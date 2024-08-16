@@ -21,7 +21,6 @@ bab
 b
 aa
 
-
 /b(a*)b/
 bab
 babe
@@ -195,10 +194,37 @@ aa
 
 /(a|b)c|a(b|c)/
 ac
-#       ab
+#       ab # Commented out because we need to standardise how we print the results across Deno and our own module
+
+/(a*)(b{0,1})(b{1,})b{3}/
+aaabbbbbbb
+
+/(:::1:::0:|:::1:1:0:)/
+:::0:::1:::1:::0:
+
+/(:::1:::0:|:::1:1:1:)/
+:::0:::1:::1:::0:
+
+/.*(\\XXX).*/
+\XXX
+
+/\\XXX/
+\XXX
+
+#/.*(/000).*/ # Formatting output issue
+#/000
+
+/.*(\\000).*/
+\000
+
+/\\000/
+\000
+
+#/.*(/XXX).*/ # Formatting output issue
+#/XXX
 
 #
-# End standard tests
+# End standard tests. Non-standard tests below!!
 #
 
 /(cat|cathedral|ca|c)/
@@ -207,3 +233,91 @@ cathedral
 colour
 catnip
 canape
+
+# /(|a)*/  # Runs forever
+# aaa
+
+# /(|a)+/  # Runs forever
+# aaa
+
+/^a{1}/
+a
+b
+ba
+ab
+
+/a{2}/
+a
+ab
+aab
+bab
+baab
+babab
+babaab
+bababab
+babababaa
+
+/(a{3,}.)/
+ba
+baa
+baaa
+baaab
+baabaaac
+baaabaaac
+baaaaaaaabaaac
+
+/(a{3,}?.)/
+bab
+baab
+baaab
+baaaaaaab
+
+/((a{1,}.){1,})/
+bab
+baab
+baaab
+baaaaaaaabaaaaa
+
+/(.(.{2,4}.){2,5})/
+abc
+abcd
+abcdef
+abcdefghijkl
+
+/([a-z]{1,2})([^a-z]{4,50}?).*([a-z]{2,})/
+abc0123def
+ac012345def
+ac012345def
+a0123033545defgajio
+xyz123033545defgajio
+
+/([a-z]{1,2})([^a-z]{4,50}).*([a-z]{2,})/
+abc0123def
+ac012345def
+ac012345def
+a0123033545defgajio
+xyz123033545defgajio
+
+/(.)((.)*?[g-l]+)/
+abcdefghijklmnopqrstuvwxyz
+
+/(.)((.|[g-x]+)*)(...)/
+abcdefghijklmnopqrstuvwxyz
+
+/^([a-z0-9_\.\-]+)@([\da-z\.\-]+)\.([a-z\.]{2,5})$/
+abc@gmail.com
+hello@hotmail.com.au
+asoij
+
+/employ(er|ee|ment|ing|able)/
+employer
+employee
+employment
+employing
+employable
+
+/(ab+c|de+f)/
+abc
+def
+abbbcdef
+abcdeeeeef
