@@ -1,7 +1,3 @@
-//|Cleanup:
-//| Factor out negate_ascii_class().
-//| Factor out fill_in_jumps()? I.e. used in compile case ')' and after main compile loop.
-
 //|Todo:
 //| Return captures as a Map somehow?
 //| Named capture groups.
@@ -88,6 +84,12 @@ static Regex *parse_error(char *pattern, s64 index)
 {
     Log("Unexpected character in regex pattern at index %ld: '%c'.", index, pattern[index]);
     return NULL;
+}
+
+void negate_ascii_class(Instruction *inst)
+{
+    assert(inst->opcode == ASCII_CLASS);
+    for (int i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
 }
 
 Regex *compile_regex(char *pattern, Memory_Context *context)
@@ -369,9 +371,7 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                     }
                 } while (*p != ']');
 
-                if (negate) {
-                    for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
-                }
+                if (negate)  negate_ascii_class(inst);
 
                 p += 1;
                 *shift_index = regex->count-1;
@@ -383,16 +383,12 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                     Instruction *inst = Add(regex);
                     *inst = (Instruction){ASCII_CLASS};
                     for (char d = '0'; d <= '9'; d++)  inst->class[d/8] |= (1<<(d%8));
-                    if (*(p+1) == 'D') {
-                        for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
-                    }
+                    if (*(p+1) == 'D')  negate_ascii_class(inst);
                 } else if (*(p+1) == 's' || *(p+1) == 'S') {            // \s or \S
                     Instruction *inst = Add(regex);
                     *inst = (Instruction){ASCII_CLASS};
                     for (char *s = WHITESPACE; *s; s++)  inst->class[(*s)/8] |= (1<<((*s)%8));
-                    if (*(p+1) == 'S') {
-                        for (s64 i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
-                    }
+                    if (*(p+1) == 'S')  negate_ascii_class(inst);
                 } else if (*(p+1) == 't') {                             // \t
                     *Add(regex) = (Instruction){CHAR, .c = '\t'};
                 } else if (*(p+1) == 'n') {                             // \n
