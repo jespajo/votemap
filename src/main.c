@@ -2,12 +2,19 @@
 //| Return captures as a Map somehow?
 //| Named capture groups.
 //| Fix up tests.
+//| ?? - non-greedy ? modifier.
 //| Remove anchors.
 //| Factor into module.
+//| Plug into web server!
 
 //|Speed:
 //| Merge adjacent chars into strings.
 //| Convert NFAs to DFAs.
+
+//|Cleanup:
+//| Make while/switch indentation & braces consistent.
+//| Factor out negate_ascii_class().
+//| Factor out fill_in_jumps()? I.e. used in compile case ')' and after main compile loop.
 
 #include <stdio.h>
 #include <string.h>
@@ -45,7 +52,7 @@ enum Opcode {
 // none of that UTF-8
 // or we'll all be runed
 //
-// - https://jeune.us/haiku-slam.html#1410830961
+// - Junyer (https://jeune.us/haiku-slam.html#1410830961)
 //
 
 struct Instruction {
@@ -88,8 +95,25 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
 {
     Regex *regex = NewArray(regex, context);
 
-    // *shift_index will be the index of the first instruction to shift if we encounter a ?, + or *.
-    // *(shift_index-1) will be the index of the first instruction to shift if we encounter a |.
+    // Unlike other regex compilers, which rely on creating an intermediate representation of the expression in the structure of a
+    // tree, we validate, parse and compile in a single loop. For this to work, we sometimes need to shift previously-added
+    // instructions to the right to place something before them. E.g. when we're compiling `.?`, we place an ANY instruction for
+    // the dot, and then, when we encounter the question mark, we shift the ANY instruction right to make room for a SPLIT that
+    // creates two branches: one executes the ANY and another goes straight to whatever follows the question mark.
+    //
+    // Most of these problematic past-modifying characters affect either the previous token---like `.*`---or, if a capture group
+    // was just exited, the whole capture group---like `(...)*`. The exception is `|`, which requires that we branch before all
+    // previous tokens going back to the start of the current capture group (or the start of the pattern as a whole if there is no
+    // current capture group).
+    //
+    // So, here's how we do it. We keep a stack of indexes into the regex->data array that we're building (`shift_stack`). On the
+    // top of the stack is the index of the last token we placed---i.e. the instruction to shift if we get a modifier like `*`.
+    // Just under this on the stack is the index of the start of the current capture group. When we enter a new capture group, we
+    // push to the stack, and pop when we leave the capture group---and thus, if we just left a capture group, a `*` automatically
+    // modifies the whole group we just exited instead of a single token.
+    //
+    // `shift_index` points to the top of the stack, so *shift_index will be the index of the first instruction to shift if we encounter
+    // a modifier like ?, + or *. Whereas *(shift_index-1) will be the index of the first instruction to shift if we encounter a |.
     #define MAX_NESTED_CAPTURE_GROUPS 10
     s64 shift_stack[MAX_NESTED_CAPTURE_GROUPS+1] = {0};
     s64 *shift_index = &shift_stack[1];
@@ -109,6 +133,8 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
     while (*p) switch (*p) {
         case '(':
           {
+            if (shift_index-shift_stack >= countof(shift_stack)-1)  return parse_error(pattern, p-pattern); // The expression exceeds the maximum of nested capture groups.
+
             s64 capture_id = 2;
             // Look for the previous start-capture.
             for (s64 i = regex->count-1; i >= 0; i--) {
@@ -461,8 +487,8 @@ static void log_regex(Regex *regex) //|Debug
                 print_string(&out, "'%c'", inst->c);
                 break;
             case ASCII_CLASS:
-                print_string(&out, "%-14s", "ASCII_CLASS");
               {
+                print_string(&out, "%-14s", "ASCII_CLASS");
                 int j = 0;
                 bool prev_is_set = false;
                 while (j < 128) {
@@ -475,8 +501,8 @@ static void log_regex(Regex *regex) //|Debug
                     prev_is_set = is_set;
                     j += 1;
                 }
-              }
                 break;
+              }
             case ANY:
                 print_string(&out, "%-14s", "ANY");
                 break;
@@ -524,10 +550,9 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
         s64      id;
     };
 
-    // Russ Cox calls these "threads", in the sense that the compiled regex executes in a virtual
-    // machine, which has multiple parallel instructions being executed for each letter in the
-    // string being tested. Where the metaphor fails, though, is that the order of execution of the
-    // regex threads is deterministic---and must be for greedy matching to work.
+    // Russ Cox calls these "threads", in the sense that the compiled regex executes in a virtual machine, which has multiple
+    // parallel instructions being executed for each letter in the string being tested. Where the metaphor fails, though, is
+    // that the order of execution of the regex threads is controlled---and must be for greedy matching to work.
     typedef struct Thread Thread;
     typedef Array(Thread) Thread_array;
     struct Thread {
@@ -624,8 +649,8 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
         for (s64 i = 0; i < num_captures; i++)  capture_offsets->data[i] = -1;
 
         for (Capture *c = captures; c != NULL; c = c->prev) {
-            // Only write over the -1 once. Because we are iterating over the captures backwards, this makes sure
-            // regular expressions like /(ab)+/ matches "ababab" but only captures the last "ab".
+            // Only write over each -1 once. Because we are iterating over the captures backwards, this makes sure
+            // a regular expression like /(ab)+/ matches "ababab" but only captures the last "ab".
             if (capture_offsets->data[c->id] >= 0)  continue;
             capture_offsets->data[c->id] = c->offset;
         }
@@ -644,8 +669,8 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
 //|Todo: If we keep the below, it should maybe print to a supplied char_array?
 char_array *extract_string(char *data, s64 start_offset, s64 end_offset, Memory_Context *context)
 // start_offset is the index of the first character in the desired substring.
-// end_offset is the index of the character after the last desired character.
-// In other words, if start_ and end_offset are the same, the result will be the empty string.
+// end_offset is the index of the character after the last character.
+// If start_ and end_offset are the same, the result will be the empty string.
 {
     char_array *result = NewArray(result, context);
 
