@@ -327,3 +327,12 @@ abc
 
 /((?<hellothere>(?<abc>\d*)(.*)(xyz)))/
 abc1234defxyz
+
+/x(hi??)x/
+xhx
+xhix
+xhiiiix
+
+/there (hello)??!/
+there hello!
+there hellohello!

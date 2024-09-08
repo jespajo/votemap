@@ -1,5 +1,4 @@
 //|Todo:
-//| ?? - non-greedy ? modifier.
 //| Remove anchors.
 //| Factor into module.
 //| Plug into web server!
@@ -226,11 +225,11 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                 for (s64 i = regex->count-1; i > *shift_index; i--)  regex->data[i] = regex->data[i-1];
 
                 Instruction *split = &regex->data[*shift_index];
+                *split = (Instruction){SPLIT, .rel_next = {1, shift_count+2}};
+
                 if (*(p+1) == '?') {
-                    *split = (Instruction){SPLIT, .rel_next = {shift_count+2, 1}}; // Non-greedy match.
+                    Swap(&split->rel_next[0], &split->rel_next[1]); // It's non-greedy. Swap the SPLIT's priority.
                     p += 1;
-                } else {
-                    *split = (Instruction){SPLIT, .rel_next = {1, shift_count+2}}; // Greedy match.
                 }
 
                 *Add(regex) = (Instruction){JUMP, .rel_next = {-shift_count-1}};
@@ -246,11 +245,11 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                 s64 inst_count = regex->count - *shift_index;
 
                 Instruction *split = Add(regex);
+                *split = (Instruction){SPLIT, .rel_next = {-inst_count, 1}};
+
                 if (*(p+1) == '?') {
-                    *split = (Instruction){SPLIT, .rel_next = {1, -inst_count}}; // Non-greedy match.
+                    Swap(&split->rel_next[0], &split->rel_next[1]); // It's non-greedy. Swap the SPLIT's priority.
                     p += 1;
-                } else {
-                    *split = (Instruction){SPLIT, .rel_next = {-inst_count, 1}}; // Greedy match.
                 }
 
                 *shift_index = -1;
@@ -265,7 +264,13 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                 Add(regex);
                 for (s64 i = regex->count-1; i > *shift_index; i--)  regex->data[i] = regex->data[i-1];
 
-                regex->data[*shift_index] = (Instruction){SPLIT, .rel_next = {1, 1+shift_count}};
+                Instruction *split = &regex->data[*shift_index];
+                *split = (Instruction){SPLIT, .rel_next = {1, 1+shift_count}};
+
+                if (*(p+1) == '?') {
+                    Swap(&split->rel_next[0], &split->rel_next[1]); // It's non-greedy. Swap the SPLIT's priority.
+                    p += 1;
+                }
 
                 *shift_index = -1;
                 p += 1;
@@ -346,7 +351,7 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                 p += 1;
 
                 if (*p == '?') {
-                    // It's non-greedy. Swap the priority of the SPLIT instructions we've added in this case.
+                    // It's non-greedy. Swap the priority of all the SPLIT instructions we've added in this case.
                     for (s64 i = *shift_index; i < regex->count; i++) {
                         Instruction *inst = &regex->data[i];
                         if (inst->opcode == SPLIT)  Swap(&inst->rel_next[0], &inst->rel_next[1]);
