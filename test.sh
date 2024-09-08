@@ -33,11 +33,16 @@ for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     output    += `Match:  ${match ? "yes" : "no"}\n`;
     if (match) {
         for (let i = 1; i < match.length; i++) {
-            if (match[i]===undefined)  continue;//output += `\n`; //|Jank!! We need a better way to specify that certain capture groups did not match anything.
-            else                       output += `  ${match[i]}\n`;
+            output += `  ${i-1}: `;
+            if (match[i]!==undefined)  output += match[i];
+            else                       output += "(null)"; // This means our output distinguishes between "nothing captured" and "empty string captured".
+            output += `\n`;
+        }
+        let groups = match.groups || {};
+        for (const key of Object.keys(groups)) {
+            if (groups[key])  output += `  ${key}: ${groups[key]}\n`;
         }
     }
-
     console.log(output);
 }
 EOJS

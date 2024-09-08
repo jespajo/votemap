@@ -1,6 +1,4 @@
 //|Todo:
-//| Return captures as a Map somehow?
-//| Named capture groups.
 //| Fix up tests.
 //| ?? - non-greedy ? modifier.
 //| Remove anchors.
@@ -598,7 +596,6 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
     bool is_match = false;
 
     Save *saves = NULL;
-    s64 num_saves = 0;
 
     // Create a child memory context for temporary data.
     Memory_Context *tmp_ctx = new_context(regex->context);
@@ -635,7 +632,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
                     break;
                 case SPLIT:
                     *Add(&cur_threads) = (Thread){inst->next[1], thread.saves};
-                    *Add(&cur_threads) = (Thread){inst->next[0], thread.saves}; // This is the one we want to run straight away, so we push it right to the top of the stack.
+                    *Add(&cur_threads) = (Thread){inst->next[0], thread.saves}; // This is the one we want to run straight away, so push it right to the top of the stack.
                     break;
                 case SAVE:
                   {
@@ -644,7 +641,6 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
                     save->id     = inst->save_id;
                     save->name   = inst->save_name;
                     save->offset = string_index;
-                    if (save->id%2 && save->id >= num_saves)  num_saves = save->id+1;
                     *Add(&cur_threads) = (Thread){inst+1, save};
                     break;
                   }
@@ -676,15 +672,21 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
         Swap(&cur_threads, &next_threads);
     }
 
-    if (captures && saves) {
-        // If the caller didn't specify a context, use the regex context.
+    if (is_match && captures) {
+        // Use the regex's memory context for the captures if the caller didn't specify a different one.
         Memory_Context *ctx = captures->context ? captures->context : regex->context;
-        *captures = (Captures){.context = ctx}; // This makes sure captures->dict is initialised to zero.
+        *captures = (Captures){.context = ctx}; // This makes sure captures->dict is initialised to NULL.
 
-        assert(num_saves % 2 == 0); //|Temporary
+        // Figure out how many capture groups there are. We do this in a separate loop over the instructions, rather than
+        // keeping a running total in the loop above, because we can't guarantee that every SAVE actually executed.
+        for (s64 i = 0; i < regex->count; i++) {
+            if (regex->data[i].opcode != SAVE)  continue;
 
-        captures->count = num_saves/2;
-        captures->data  = New(captures->count, char*, ctx);
+            s64 save_id = regex->data[i].save_id;
+            if (save_id%2 && (save_id+1)/2 > captures->count)  captures->count = (save_id+1)/2;
+        }
+
+        if (captures->count)  captures->data = New(captures->count, char*, ctx);
 
         for (Save *save = saves; save != NULL; save = save->prev) {
             if (save->id % 2 == 0)  continue; // Skip the start-captures.
@@ -809,7 +811,14 @@ int main()
         print_string(&out, "Match:  %s\n", result ? "yes" : "no");
         for (s64 i = 0; i < captures.count; i++) {
             char *substring = captures.data[i];
-            print_string(&out, "  %s\n", substring);
+            print_string(&out, "  %ld: %s\n", i, substring);
+        }
+        if (captures.dict) {
+            for (s64 i = 0; i < captures.dict->count; i++) {
+                char *key = captures.dict->keys[i];
+                char *val = captures.dict->vals[i];
+                print_string(&out, "  %s: %s\n", key, val);
+            }
         }
         Log(out.data);
     }
