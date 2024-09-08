@@ -321,3 +321,6 @@ abc
 def
 abbbcdef
 abcdeeeeef
+
+/(?<test>abc)/
+abc

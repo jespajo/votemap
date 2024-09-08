@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "strings.h"
+#include "map.h"
 
 #define Swap(A, B)                              \
     do {                                        \
@@ -69,16 +70,18 @@ struct Instruction {
         // There is one bit for each byte in the range 0--127 (i.e. ASCII characters).
         u8                 class[128/8];
 
-        // If opcode == SAVE, a number identifying the capture group. Even numbers are the starts of captures, odds the ends.
-        // For example,
-        //                 /...(..)..(...(..)..).../     <-- In this regular expression,
-        //                     2  3  4   6  7  5         <-- these are the capture_id's.
-        s64                capture_id;
+        // If opcode == SAVE:
+        struct {
+            // A number identifying the capture group. Even numbers are the starts of captures, odds the ends.
+            // For example,
+            //             /...(..)..(...(..)..).../     <-- In this regular expression,
+            //                 0  1  2   4  5  3         <-- these are the save_ids.
+            s64            save_id;
+            // The name of the capture group, if it is named. The name only appears with the starts of captures, not the ends.
+            char          *save_name;
+        };
     };
 };
-
-
-#include "strings.h"
 
 static Regex *parse_error(char *pattern, s64 index)
 {
@@ -86,7 +89,7 @@ static Regex *parse_error(char *pattern, s64 index)
     return NULL;
 }
 
-void negate_ascii_class(Instruction *inst)
+static void negate_ascii_class(Instruction *inst)
 {
     assert(inst->opcode == ASCII_CLASS);
     for (int i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
@@ -136,16 +139,38 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
               {
                 if (shift_index-shift_stack >= countof(shift_stack)-1)  return parse_error(pattern, p-pattern); // The expression exceeds the maximum of nested capture groups.
 
-                s64 capture_id = 2;
+                s64   save_id   = 0;
+                char *save_name = NULL;
+
                 // Look for the previous start-capture.
                 for (s64 i = regex->count-1; i >= 0; i--) {
                     if (regex->data[i].opcode != SAVE)  continue;
-                    if (regex->data[i].capture_id % 2)  continue;
+                    if (regex->data[i].save_id % 2)  continue;
 
-                    capture_id = regex->data[i].capture_id + 2;
+                    save_id = regex->data[i].save_id + 2;
                     break;
                 }
-                *Add(regex) = (Instruction){SAVE, .capture_id = capture_id};
+
+                // If it's a named group, grab the name as well.
+                if (*(p+1) == '?') {
+                    if (*(p+2) != '<')  return parse_error(pattern, p-pattern);
+                    p += 3; // Point to the first character in the name.
+
+                    s64 name_length = 0;
+                    while (*(p + name_length) != '>') {
+                        if (*(p + name_length) == '\0')  return parse_error(pattern, p-pattern);
+                        name_length += 1;
+                    }
+                    // We could disallow a zero-length name, but we can have zero-length dict keys, so it's fine.
+
+                    save_name = alloc(context, name_length+1, sizeof(char));
+                    memcpy(save_name, p, name_length);
+                    save_name[name_length] = '\0';
+
+                    p += name_length;
+                }
+
+                *Add(regex) = (Instruction){SAVE, .save_id=save_id, .save_name=save_name};
 
                 *shift_index = regex->count;
                 shift_index += 1;
@@ -155,7 +180,7 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
             case ')':
               {
                 Instruction *save_start = &regex->data[*(shift_index-1)-1];
-                if (save_start->opcode != SAVE || save_start->capture_id % 2)  return parse_error(pattern, p-pattern); // There's an unmatched right parenthesis.
+                if (save_start->opcode != SAVE || save_start->save_id % 2)  return parse_error(pattern, p-pattern); // There's an unmatched right parenthesis.
 
                 // Going back to the start of the capture, look for any JUMP instructions with .rel_next[0] == 0.
                 // These are placeholders for jumping to the end of the current capture, which we can now fill in.
@@ -167,13 +192,13 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                     regex->data[i].rel_next[0] = regex->count - i;
                 }
 
-                *Add(regex) = (Instruction){SAVE, .capture_id = save_start->capture_id+1};
+                *Add(regex) = (Instruction){SAVE, .save_id = save_start->save_id+1};
 
                 *shift_index = -1;
                 shift_index -= 1;
                 assert(shift_index > shift_stack);
                 // shift_index is currently the index of the instruction after the SAVE that opens this capture group.
-                // Decrement it to point to the SAVE instruction itself so that +, ? and * work on the group as a whole.
+                // Decrement it to point to the SAVE instruction itself. This way +, ? and * work on the group as a whole.
                 *shift_index -= 1;
                 p += 1;
                 continue;
@@ -514,7 +539,7 @@ static void log_regex(Regex *regex) //|Debug
                 break;
             case SAVE:
                 print_string(&out, "%-14s", "SAVE");
-                print_string(&out, "%ld", inst->capture_id);
+                print_string(&out, "%ld", inst->save_id);
                 break;
             case MATCH:
                 print_string(&out, "%-14s", "MATCH");
@@ -536,14 +561,28 @@ static void log_regex(Regex *regex) //|Debug
     free_context(ctx);
 }
 
-bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *capture_offsets)
+typedef struct Captures Captures;
+struct Captures {
+    Memory_Context *context;
+
+    // For every capture group, a copy of the matching substring, or NULL if there was no match.
+    char          **data;
+    s64             count; // Including the NULLs.
+
+    // For named capture groups only, the matching substrings. We don't make more copies of the
+    // strings for this; they're the same pointers as in the above array.
+    string_dict    *dict;
+};
+
+bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captures)
 {
-    // Inside this function, we store captures as a singly-linked list, but convert them to a s64_array before returning.
-    typedef struct Capture Capture;
-    struct Capture {
-        Capture *prev;
-        s64      offset; // The index of the character in the source string we were up to when we encountered the SAVE instruction.
-        s64      id;
+    // Inside this function, we store saves as a singly-linked list.
+    typedef struct Save Save;
+    struct Save {
+        Save *prev;
+        s64   id;
+        char *name;
+        s64   offset; // The index of the character in the source string we were up to when we encountered the SAVE instruction.
     };
 
     // Russ Cox calls these "threads", in the sense that the compiled regex executes in a virtual machine, which has multiple
@@ -553,13 +592,13 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
     typedef Array(Thread) Thread_array;
     struct Thread {
         Instruction *instruction;
-        Capture     *captures;
+        Save        *saves;
     };
 
     bool is_match = false;
 
-    Capture *captures = NULL;
-    s64  num_captures = 0;
+    Save *saves = NULL;
+    s64 num_saves = 0;
 
     // Create a child memory context for temporary data.
     Memory_Context *tmp_ctx = new_context(regex->context);
@@ -578,46 +617,47 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
 
             switch (inst->opcode) {
                 case CHAR:
-                    if (c == inst->c)  *Add(&next_threads) = (Thread){inst+1, thread.captures};
+                    if (c == inst->c)  *Add(&next_threads) = (Thread){inst+1, thread.saves};
                     break;
                 case ASCII_CLASS:
                   {
                     u8 byte_index = ((u8)c)/8;
                     u8 bit_index  = ((u8)c)%8;
                     bool is_set   = inst->class[byte_index] & (1<<(bit_index));
-                    if (is_set)  *Add(&next_threads) = (Thread){inst+1, thread.captures};
+                    if (is_set)  *Add(&next_threads) = (Thread){inst+1, thread.saves};
                     break;
                   }
                 case ANY:
-                    *Add(&next_threads) = (Thread){inst+1, thread.captures};
+                    *Add(&next_threads) = (Thread){inst+1, thread.saves};
                     break;
                 case JUMP:
-                    *Add(&cur_threads) = (Thread){inst->next[0], thread.captures};
+                    *Add(&cur_threads) = (Thread){inst->next[0], thread.saves};
                     break;
                 case SPLIT:
-                    *Add(&cur_threads) = (Thread){inst->next[1], thread.captures};
-                    *Add(&cur_threads) = (Thread){inst->next[0], thread.captures}; // This is the one we want to run straight away, so we push it right to the top of the stack.
+                    *Add(&cur_threads) = (Thread){inst->next[1], thread.saves};
+                    *Add(&cur_threads) = (Thread){inst->next[0], thread.saves}; // This is the one we want to run straight away, so we push it right to the top of the stack.
                     break;
                 case SAVE:
                   {
-                    Capture *capture = New(Capture, tmp_ctx); //|Speed: We could store these in a tmp_ctx array to speed up allocation. That would mean the ->prev members would become invalid pointers when the array moves.
-                    capture->prev   = thread.captures;
-                    capture->offset = string_index;
-                    capture->id     = inst->capture_id;
-                    if (capture->id%2 && capture->id >= num_captures)  num_captures = capture->id+1;
-                    *Add(&cur_threads) = (Thread){inst+1, capture};
+                    Save *save = New(Save, tmp_ctx); //|Speed: We could store these in a tmp_ctx array. It would speed up allocation. Though it would also mean the ->prev members would become invalid pointers when the array moves.
+                    save->prev   = thread.saves;
+                    save->id     = inst->save_id;
+                    save->name   = inst->save_name;
+                    save->offset = string_index;
+                    if (save->id%2 && save->id >= num_saves)  num_saves = save->id+1;
+                    *Add(&cur_threads) = (Thread){inst+1, save};
                     break;
                   }
                 case MATCH:
                     is_match = true;
-                    captures = thread.captures;
+                    saves = thread.saves;
                     cur_threads.count = 0;
                     break;
                 case ANCHOR_START:
-                    if (string_index == 0)              *Add(&cur_threads) = (Thread){inst+1, thread.captures};
+                    if (string_index == 0)              *Add(&cur_threads) = (Thread){inst+1, thread.saves};
                     break;
                 case ANCHOR_END:
-                    if (string_index == string_length)  *Add(&cur_threads) = (Thread){inst+1, thread.captures};
+                    if (string_index == string_length)  *Add(&cur_threads) = (Thread){inst+1, thread.saves};
                     break;
                 default:
                     log_regex(regex);
@@ -636,25 +676,43 @@ bool match_regex(char *string, s64 string_length, Regex *regex, s64_array *captu
         Swap(&cur_threads, &next_threads);
     }
 
-    if (captures && capture_offsets) {
-        // If the caller didn't initialise capture_offsets with a context, we'll use the regex context.
-        if (!capture_offsets->context)  capture_offsets->context = regex->context;
+    if (captures && saves) {
+        // If the caller didn't specify a context, use the regex context.
+        Memory_Context *ctx = captures->context ? captures->context : regex->context;
+        *captures = (Captures){.context = ctx}; // This makes sure captures->dict is initialised to zero.
 
-        // Initialise all offsets to -1.
-        array_reserve(capture_offsets, num_captures);
-        for (s64 i = 0; i < num_captures; i++)  capture_offsets->data[i] = -1;
+        assert(num_saves % 2 == 0); //|Temporary
 
-        for (Capture *c = captures; c != NULL; c = c->prev) {
-            // Only write over each -1 once. Because we are iterating over the captures backwards, this makes sure
-            // a regular expression like /(ab)+/ matches "ababab" but only captures the last "ab".
-            if (capture_offsets->data[c->id] >= 0)  continue;
-            capture_offsets->data[c->id] = c->offset;
+        captures->count = num_saves/2;
+        captures->data  = New(captures->count, char*, ctx);
+
+        for (Save *save = saves; save != NULL; save = save->prev) {
+            if (save->id % 2 == 0)  continue; // Skip the start-captures.
+
+            s64 capture_index = save->id/2;
+            // Only overwrite each NULL once. Because we are iterating over the saves backwards, this makes sure
+            // a regular expression like /(ab)+/ matches "ababab" but only saves the last "ab".
+            if (captures->data[capture_index])  continue;
+
+            // Look for the corresponding start-capture. |Speed: Are we missing the cache a million times?
+            Save *end   = save;
+            Save *start = end->prev;
+            while (start->id != end->id-1)  start = start->prev;
+
+            s64 length = end->offset - start->offset;
+
+            char *substring = alloc(ctx, length+1, sizeof(char));
+            memcpy(substring, &string[start->offset], length);
+            substring[length] = '\0';
+
+            captures->data[capture_index] = substring;
+
+            if (start->name) {
+                if (!captures->dict)  captures->dict = NewDict(captures->dict, ctx);
+
+                *Set(captures->dict, start->name) = substring;
+            }
         }
-        capture_offsets->count = num_captures;
-
-        // Currently we don't use capture id's 0 and 1, so pretend they're not there. |Temporary |Hack
-        capture_offsets->count -= 2;
-        capture_offsets->data  += 2;
     }
 
     free_context(tmp_ctx);
@@ -735,27 +793,23 @@ int main()
 
             regex_source = line;
             regex = compile_regex(regex_source->data, regex_ctx);
-            //|Todo: Do something if compilation failed.
+            assert(regex);
 
             continue;
         }
 
         // If we get here, we have a regex and a string to match.
 
-        s64_array offsets = {.context = regex_ctx};
-        bool result = match_regex(line->data, line->count, regex, &offsets);
-
-        assert(offsets.count % 2 == 0 || !"There should be an even number of offsets.");
+        Captures captures = {0};
+        bool result = match_regex(line->data, line->count, regex, &captures);
 
         char_array out = {.context = regex_ctx};
         print_string(&out, "Regex:  %s\n", regex_source->data);
         print_string(&out, "String: %s\n", line->data);
         print_string(&out, "Match:  %s\n", result ? "yes" : "no");
-        for (s64 i = 0; i < offsets.count; i += 2) {
-            s64 start = offsets.data[i];
-            s64 end   = offsets.data[i+1];
-            char_array *substring = extract_string(line->data, start, end, regex_ctx);
-            print_string(&out, "  %s\n", substring->data);
+        for (s64 i = 0; i < captures.count; i++) {
+            char *substring = captures.data[i];
+            print_string(&out, "  %s\n", substring);
         }
         Log(out.data);
     }
