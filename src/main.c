@@ -1,5 +1,4 @@
 //|Todo:
-//| Fix up tests.
 //| ?? - non-greedy ? modifier.
 //| Remove anchors.
 //| Factor into module.

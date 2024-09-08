@@ -40,7 +40,7 @@ for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
         }
         let groups = match.groups || {};
         for (const key of Object.keys(groups)) {
-            if (groups[key])  output += `  ${key}: ${groups[key]}\n`;
+            if (groups[key]!==undefined)  output += `  ${key}: ${groups[key]}\n`;
         }
     }
     console.log(output);
