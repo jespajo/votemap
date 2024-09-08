@@ -1,7 +1,7 @@
 MAKEFLAGS += --jobs=$(shell nproc)
 
-cc := clang
-#cc := gcc
+#cc := clang
+cc := gcc
 #fsan := -fsanitize=address,undefined # Our memory manager breaks it. Use valgrind.
 
 cflags += -Wall -Werror

@@ -299,7 +299,10 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
 
                 // First just append the reference instructions min_repeats times.
                 for (int i = 0; i < min_repeats; i++) {
-                    for (s64 j = 0; j < inst_count; j++)  *Add(regex) = regex->data[*shift_index+j];
+                    for (s64 j = 0; j < inst_count; j++) {
+                        Instruction inst = regex->data[*shift_index+j];
+                        *Add(regex) = inst;
+                    }
                 }
 
                 if (*p == ',') {
@@ -308,7 +311,10 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                     if (*p == '}') {
                         // There is no given maximum, e.g. \d{1,} meaning 1 or more.
                         *Add(regex) = (Instruction){SPLIT, .rel_next = {1, inst_count+2}};
-                        for (s64 j = 0; j < inst_count; j++)  *Add(regex) = regex->data[*shift_index+j];
+                        for (s64 j = 0; j < inst_count; j++) {
+                            Instruction inst = regex->data[*shift_index+j];
+                            *Add(regex) = inst;
+                        }
                         *Add(regex) = (Instruction){JUMP, .rel_next = {-inst_count-1}};
                     } else {
                         int max_repeats; {
@@ -328,7 +334,10 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                         for (int i = min_repeats; i < max_repeats; i++) {
                             s64 count_to_end = expect_count - regex->count;
                             *Add(regex) = (Instruction){SPLIT, .rel_next = {1, count_to_end}};
-                            for (s64 j = 0; j < inst_count; j++)  *Add(regex) = regex->data[*shift_index+j];
+                            for (s64 j = 0; j < inst_count; j++) {
+                                Instruction inst = regex->data[*shift_index+j];
+                                *Add(regex) = inst;
+                            }
                         }
                         assert(expect_count == regex->count);
                     }
