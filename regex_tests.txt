@@ -336,3 +336,9 @@ xhiiiix
 /there (hello)??!/
 there hello!
 there hellohello!
+
+/((?<name>(abc)|def(ghi))|(jkl)mno)|pqr/
+abcdefghijklmnopqr
+abc
+jklmno
+pqr

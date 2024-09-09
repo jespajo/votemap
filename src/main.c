@@ -68,7 +68,7 @@ struct Instruction {
 
         // If opcode == SAVE:
         struct {
-            // A number identifying the capture group. Even numbers are the starts of captures, odds the ends.
+            // A number identifying the parenthesis. Even numbers are the starts of captures, odds the ends.
             // For example,
             //             /...(..)..(...(..)..).../     <-- In this regular expression,
             //                 0  1  2   4  5  3         <-- these are the save_ids.
@@ -692,11 +692,13 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
 
         // Figure out how many capture groups there are. We do this in a separate loop over the instructions, rather than
         // keeping a running total in the loop above, because we can't guarantee that every SAVE actually executed.
-        for (s64 i = 0; i < regex->count; i++) {
+        // But we can guarantee that the last start-capture is the last capture group, so iterate in reverse.
+        for (s64 i = regex->count-1; i >= 0; i--) {
             if (regex->data[i].opcode != SAVE)  continue;
+            if (regex->data[i].save_id % 2)     continue;
 
-            s64 save_id = regex->data[i].save_id;
-            if (save_id%2 && (save_id+1)/2 > captures->count)  captures->count = (save_id+1)/2;
+            captures->count = regex->data[i].save_id/2 + 1;
+            break;
         }
 
         if (captures->count)  captures->data = New(captures->count, char*, ctx);
