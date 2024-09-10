@@ -59,11 +59,12 @@ efg
 abcd
 ccccccccccc
 
-/[a-z0-9]/
+/.*?([a-z0-9]).*/
 abcdef
 ABCDEF
 a0b0c0
 a0b0c0!!
+!!a0b0c0!!
 
 /hello+ ([0-9]+)/
 hello 0123
@@ -144,7 +145,7 @@ aabcdefdefdefghi
 # Standard regex tests:
 #
 
-/abracadabra$/
+/abracadabra/
 abracadabracadabra
 
 /a...b/
@@ -175,12 +176,12 @@ a]a
 abcd
 a
 
-/^abc/
+/abc/
 abc
 ab
 defghi
 
-/a$/
+/a/
 aa
 
 /a\$/
@@ -240,7 +241,7 @@ canape
 # /(|a)+/  # Runs forever
 # aaa
 
-/^a{1}/
+/a{1}/
 a
 b
 ba
@@ -304,7 +305,7 @@ abcdefghijklmnopqrstuvwxyz
 /(.)((.|[g-x]+)*)(...)/
 abcdefghijklmnopqrstuvwxyz
 
-/^([a-z0-9_\.\-]+)@([\da-z\.\-]+)\.([a-z\.]{2,5})$/
+/([a-z0-9_\.\-]+)@([\da-z\.\-]+)\.([a-z\.]{2,5})/
 abc@gmail.com
 hello@hotmail.com.au
 asoij

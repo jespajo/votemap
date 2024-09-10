@@ -1,5 +1,4 @@
 //|Todo:
-//| Remove anchors.
 //| Factor into module.
 //| Plug into web server!
 
@@ -35,8 +34,6 @@ enum Opcode {
     SPLIT,
     SAVE,
     MATCH,
-    ANCHOR_START,
-    ANCHOR_END,
 };
 
 //
@@ -119,15 +116,6 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
     *shift_index = -1; // -1 means there is not currently an instruction that can be validly quantified by ?, + or *.
 
     char *p = pattern;
-
-    if (*p != '^') {
-        // The regex doesn't start with an anchor, so add an implicit .*? (non-greedy match-anything).
-        *Add(regex) = (Instruction){SPLIT, .rel_next = {3, 1}};
-        *Add(regex) = (Instruction){ANY};
-        *Add(regex) = (Instruction){JUMP, .rel_next = {-2}};
-    } else {
-        p += 1;
-    }
 
     while (*p) {
         switch (*p) {
@@ -439,22 +427,6 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                 p += 2;
                 continue;
               }
-            case '^':
-              {
-                *Add(regex) = (Instruction){ANCHOR_START};
-
-                *shift_index = -1;
-                p += 1;
-                continue;
-              }
-            case '$':
-              {
-                *Add(regex) = (Instruction){ANCHOR_END};
-
-                *shift_index = -1;
-                p += 1;
-                continue;
-              }
             default:
               {
                 *Add(regex) = (Instruction){CHAR, .c = *p};
@@ -555,12 +527,6 @@ static void log_regex(Regex *regex) //|Debug
             case MATCH:
                 print_string(&out, "%-14s", "MATCH");
                 break;
-            case ANCHOR_START:
-                print_string(&out, "%-14s", "ANCHOR_START");
-                break;
-            case ANCHOR_END:
-                print_string(&out, "%-14s", "ANCHOR_END");
-                break;
             default:
                 assert(!"Unexpected opcode.");
         }
@@ -658,15 +624,10 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
                     break;
                   }
                 case MATCH:
+                    if (string_index != string_length)  break; // Only match if we've come to the end of the source string.
                     is_match = true;
                     saves = thread.saves;
                     cur_threads.count = 0;
-                    break;
-                case ANCHOR_START:
-                    if (string_index == 0)              *Add(&cur_threads) = (Thread){inst+1, thread.saves};
-                    break;
-                case ANCHOR_END:
-                    if (string_index == string_length)  *Add(&cur_threads) = (Thread){inst+1, thread.saves};
                     break;
                 default:
                     log_regex(regex);

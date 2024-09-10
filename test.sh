@@ -22,18 +22,21 @@ for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     if (!regex) {
         if (line[0] != '/' || line[line.length-1] != '/')  throw new Error("Expected regex to start and end with '/'.");
 
-        regex = new RegExp(line.slice(1, line.length-1));
+        const anchored = `^(${line.slice(1, line.length-1)})$`;
+
+        regex = new RegExp(anchored);
+
         continue;
     }
 
     const match = line.match(regex);
 
-    let output = `Regex:  ${regex.source}\n`;
+    let output = `Regex:  ${regex.source.slice(2, regex.source.length-2)}\n`;
     output    += `String: ${line}\n`;
     output    += `Match:  ${match ? "yes" : "no"}\n`;
     if (match) {
-        for (let i = 1; i < match.length; i++) {
-            output += `  ${i-1}: `;
+        for (let i = 2; i < match.length; i++) {
+            output += `  ${i-2}: `;
             if (match[i]!==undefined)  output += match[i];
             else                       output += "(null)"; // This means our output distinguishes between "nothing captured" and "empty string captured".
             output += `\n`;
