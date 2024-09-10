@@ -2,7 +2,6 @@ MAKEFLAGS += --jobs=$(shell nproc)
 
 #cc := clang
 cc := gcc
-#fsan := -fsanitize=address,undefined # Our memory manager breaks it. Use valgrind.
 
 cflags += -Wall -Werror
 cflags += -Wno-unused
@@ -12,17 +11,15 @@ cflags += -g3
 cflags += -MMD -MP
 cflags += -MT bin/$*.o
 cflags += -o $@
-cflags += -DDEBUG
+cflags += -DDEBUG #|Deprecated
 #cflags += -DNDEBUG
 cflags += -I/usr/include/postgresql
-cflags += $(fsan)
 
 ifeq ($(cc),gcc)
   cflags += -Wno-missing-braces
 endif
 
 lflags += -o $@
-lflags += $(fsan)
 lflags += -lm
 
 # |Cleanup: Surely all this isn't necessary to link with Postgres?
@@ -32,27 +29,27 @@ lflags += -L/usr/local/src/postgresql-14.8/build/src/port
 lflags += -Wl,-Bstatic -lpq -lpgcommon -lpgport -Wl,-Bdynamic
 lflags += -lpthread
 
-# Build targets:
-all:  bin/main
-all:  tags
-
-# Run targets:
-#all:  ; bin/main
-
 sources    := $(shell find src -type f)
 non_mains  := $(shell grep -L '^int main' $(sources))
 shared_obj := $(patsubst src/%.c,bin/%.o,$(filter %.c,$(non_mains)))
 deps       := $(patsubst src/%.c,bin/%.d,$(filter %.c,$(sources)))
 src_dirs   := $(dir $(sources))
+exes       := $(patsubst src/%.c,bin/%,$(filter-out $(non_mains),$(sources)))
 
 $(shell mkdir -p $(patsubst src%,bin%,$(src_dirs)))
 
+# Build targets:
+all:  $(exes)
+all:  tags
+
+# Run targets:
+#all:  ; bin/main
 
 bin/%:  bin/%.o $(shared_obj);  $(cc) $^ $(lflags)
 
 bin/%.o:  src/%.c;  $(cc) -c $(cflags) $<
 
-tags:  $(sources);  ctags --recurse src/
+tags:  $(sources);  ctags --recurse src
 
 tidy:           ;  rm -f core.* vgcore.*
 pgcache-clean:  ;  rm -f /tmp/*.pgcache
