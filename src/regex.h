@@ -5,12 +5,20 @@ typedef struct Instruction Instruction;
 typedef Array(Instruction) Regex;
 typedef struct Captures    Captures;
 
+//|Todo: Document the following
+// - Supported regex concepts
+// - Differences between our regex and others
+//   - Only ascii supported (see haiku below)
+//   - Implied anchors
+//   - No need to escape forward-slash
+
 //
 // stick with ASCII, son
 // none of that UTF-8
 // or we'll all be runed
 //
-// - Junyer (https://jeune.us/haiku-slam.html#1410830961)
+// - Junyer
+//   https://jeune.us/haiku-slam.html#1410830961
 //
 
 struct Captures {

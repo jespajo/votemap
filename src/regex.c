@@ -1,8 +1,8 @@
-//|Todo:
-//| Plug into web server!
-
 //|Speed:
-//| Merge adjacent chars into strings.
+//| Figure out the number of capture groups during compilation and put that on the Regex struct. Then we don't have to figure it out again in match_regex().
+//| Experiment with having each Thread being initialised with an array of saves (once the number of capture groups is on the Regex struct, we'll know the size this array needs to be). Test the impact on performance. In other words, do the saves the way Russ Cox does them instead of with your linked list.
+//| See if there's a better way to deduplicate the next_threads array. Cox seems to just store the last-added instruction as a global variable and make sure he doesn't add it again. But I don't understand how this is enough---what about duplicates added non-consecutively?
+//| Merge adjacent CHAR instructions into a STRING or LITERAL instruction.
 //| Convert NFAs to DFAs.
 
 #include <ctype.h> //|Todo: make our own isprint()
