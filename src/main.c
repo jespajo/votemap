@@ -578,7 +578,7 @@ struct Captures {
 
     // For every capture group, a copy of the matching substring, or NULL if there was no match.
     char          **data;
-    s64             count; // Including the NULLs.
+    s64             count; // The count includes the NULLs.
 
     // For named capture groups only, the matching substrings. We don't make more copies of the
     // strings for this; they're the same pointers as in the above array.
@@ -598,7 +598,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
 
     // Russ Cox calls these "threads", in the sense that the compiled regex executes in a virtual machine, which has multiple
     // parallel instructions being executed for each letter in the string being tested. Where the metaphor fails, though, is
-    // that the order of execution of the regex threads is controlled---and must be for greedy matching to work.
+    // that the order of execution of the regex threads is controlled, as it must be for greedy matching to work.
     typedef struct Thread Thread;
     typedef Array(Thread) Thread_array;
     struct Thread {
@@ -676,9 +676,25 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
 
         if (!next_threads.count)  break;
 
-        // We consumed the current threads in LIFO order; the lowest-priority threads executed last.
-        // That means that the next threads are currently ordered with the lowest-priority threads
-        // at the top of the stack. Before we start consuming them, we need to reverse them.
+        // Deduplicate the next threads. This deduplication keeps the first instance of a thread.
+        // |Todo: Factor this out. The trouble is threads are identified by their .instruction member only.
+        for (s64 i1 = next_threads.count-1; i1 >= 0; i1--) {
+            Thread *target = &next_threads.data[i1];
+            for (s64 i0 = i1-1; i0 >= 0; i0--) {
+                if (next_threads.data[i0].instruction != target->instruction)  continue;
+                // The target has a precursor. Delete the target.
+                for (s64 i2 = i1+1; i2 < next_threads.count; i2++) {
+                    *target = next_threads.data[i2];
+                    target += 1;
+                }
+                next_threads.count -= 1;
+                break;
+            }
+        }
+
+        // We consumed the current threads as a stack, i.e. back to front. The lowest-priority threads executed last.
+        // All the while, we were adding to the next_threads array. Thus the next_threads array currently has the
+        // highest-priority threads at its front. So we need to reverse the array to consume it as a stack.
         reverse_array(&next_threads);
 
         cur_threads.count = 0;
@@ -686,13 +702,14 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
     }
 
     if (is_match && captures) {
-        // Use the regex's memory context for the captures if the caller didn't specify a different one.
+        // Use the regex's memory context for the captures if the caller didn't specify a context.
         Memory_Context *ctx = captures->context ? captures->context : regex->context;
-        *captures = (Captures){.context = ctx}; // This makes sure captures->dict is initialised to NULL.
+        *captures = (Captures){.context = ctx}; // This makes sure captures->dict is set to NULL.
 
         // Figure out how many capture groups there are. We do this in a separate loop over the instructions, rather than
         // keeping a running total in the loop above, because we can't guarantee that every SAVE actually executed.
         // But we can guarantee that the last start-capture is the last capture group, so iterate in reverse.
+        // |Cleanup: This is dumb. Save the number of captures on the Regex struct instead.
         for (s64 i = regex->count-1; i >= 0; i--) {
             if (regex->data[i].opcode != SAVE)  continue;
             if (regex->data[i].save_id % 2)     continue;
