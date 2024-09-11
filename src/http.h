@@ -3,6 +3,7 @@
 
 #include "array.h"
 #include "map.h"
+#include "regex.h"
 
 typedef struct Server     Server;
 typedef struct Request    Request;
@@ -31,6 +32,7 @@ enum HTTP_method {GET=1, POST};
 struct Request {
     enum HTTP_method        method;
     char_array              path;
+    Captures                captures;        // Capture groups from applying the route's path_regex to the request path.
     string_dict            *query;
 };
 
@@ -46,12 +48,13 @@ typedef Response Request_handler(Request *, Memory_context *);
 
 struct Route {
     enum HTTP_method        method;
-    char                   *path;
+    Regex                  *path_regex;
     Request_handler        *handler;
 };
 
 Server *create_server(u32 address, u16 port, bool verbose, Memory_context *context);
 void start_server(Server *server);
+void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler);
 
 // Request_handler functions:
 Response serve_file(Request *request, Memory_context *context);

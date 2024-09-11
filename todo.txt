@@ -1,6 +1,3 @@
-Port over the work you've done recently on the data structures modules.
-Plug the regex module into the HTTP module.
-
 serve_file_NEW():
     Better than what we're doing would be: When the server starts up, recursively visit all files under the working directory and put their full paths into a big array. Also keep track of whether each one is a regular file or a directory. Keep the array sorted for quick searching. Then if the request path matches a path in the array, we know it's a valid file, so we'll try to load it into memory. Then you can do the normalisation of the URL (i.e. making '..' mean to go up a directory) in a separate function, which would simply take the request path as an argument and return the normalised path. This would be much quicker as we wouldn't need to make a thousand syscalls to serve every single file!
     My main question is: if we're going to cache the files under our directory, when and how do we update this cache? Ideally---for as long as we're single-threaded---we would never update the cache until we've dealt with all pending requests. Then we would update it as soon as possible after that.

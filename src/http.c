@@ -41,9 +41,8 @@ struct Client {
 static char *get_error(int errno_)
 {
     // We don't want to have to pass a buffer or Memory_context argument to functions that only need to allocate when
-    // they fail, just so they can print system error messages. So we use a static buffer, which is |Threadunsafe, which
-    // completely defeats the purpose of using strerror_r() rather than strerror(). But if/when we make this program
-    // multithreaded, I think all we'll need to do is lock a mutex before accessing this buffer.
+    // they fail, just so they can print system error messages. So we use a static buffer, which is |Threadunsafe.
+    // Which completely defeats the purpose of using strerror_r() rather than strerror().
     char static message[256] = {0};
 
     if (strerror_r(errno_, message, lengthof(message)))  Fatal("We couldn't get the system's error message!");
@@ -124,6 +123,8 @@ static bool parse_request(Client *client)
     s64   size = client->message.count;
 
     if (size < 4)  return false;
+
+    client->request = (Request){0};
 
     char *d = data; // A pointer to advance as we parse.
 
@@ -558,8 +559,11 @@ void start_server(Server *server)
                 for (s64 i = 0; i < routes->count; i++) {
                     Route *route = &routes->data[i];
 
-                    bool match = (request->method == route->method);
-                    match &= is_match(request->path.data, route->path);
+                    if (request->method != route->method)  continue;
+
+                    request->captures = (Captures){.context = client->context};
+
+                    bool match = match_regex(request->path.data, request->path.count, route->path_regex, &request->captures);
 
                     if (match) {
                         handler = route->handler;
@@ -622,6 +626,14 @@ cleanup:
     }
 
     if (close(server->socket_no) < 0)  Fatal("We couldn't close our own socket (%s).", get_error(errno));
+}
+
+void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler)
+{
+    Regex *regex = compile_regex(path_pattern, server->context);
+    assert(regex);
+
+    *Add(&server->routes) = (Route){method, regex, handler};
 }
 
 Response serve_file(Request *request, Memory_context *context)

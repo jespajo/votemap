@@ -11,6 +11,7 @@ typedef struct Captures    Captures;
 //   - Only ascii supported (see haiku below)
 //   - Implied anchors
 //   - No need to escape forward-slash
+// - How match_regex works, i.e. the captures pointer is optional, as is its context
 
 //
 // stick with ASCII, son

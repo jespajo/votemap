@@ -99,34 +99,3 @@ bool starts_with_(char *string, char *match, s64 match_length)
     }
     return true;
 }
-
-bool is_match(char *str, char *pat)
-// Check whether a string matches a regex pattern. It must be a full match; /^(pat)$/ is implied.
-// For now we only support the special meanings of two symbols: '.' and '*'.
-//
-// |Todo: Backslash to escape. Also when this is not so simplistic, we should create a regex module.
-{
-    if (*str == '\0') {
-        if (*pat == '\0')  return true;
-
-        while (*(pat+1) == '*') {
-            if (*(pat+2) == '\0')  return true;
-            pat += 2;
-        }
-
-        return false;
-    }
-
-    // There's more string to match.
-    if (*pat == '\0')  return false;
-
-    if (*(pat+1) == '*') {
-        if (is_match(str, pat+2))  return true;
-
-        if (*pat == *str || *pat == '.')  return is_match(str+1, pat);
-    } else {
-        if (*pat == *str || *pat == '.')  return is_match(str+1, pat+1);
-    }
-
-    return false;
-}
