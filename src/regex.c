@@ -521,7 +521,7 @@ static void log_regex(Regex *regex) //|Debug
         print_string(&out, "\n");
     }
 
-    printf(out.data);
+    printf("%s", out.data);
 
     free_context(ctx);
 }
