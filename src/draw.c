@@ -38,7 +38,9 @@ void draw_path(Path *path, float width, Vector4 colour, Vertex_array *out)
         //
         Vector2 A = path->data[i];
         Vector2 B = path->data[i+1];
-        Vector2 C = path->data[i+2];
+        // If AB is the last line in the path, C does not exist. Make it the same as B.
+        // That also means ABC will be colinear so we will not draw a mitre below.
+        Vector2 C = (i < path->count-2) ? path->data[i+2] : path->data[i+1];
 
         Vector2 points[3] = {A, B, C};
         float ABC_clockwise = clockwise_value(points, 3);
@@ -64,8 +66,8 @@ void draw_path(Path *path, float width, Vector4 colour, Vertex_array *out)
         *Add(out) = (Vertex){rect[2].v[0], rect[2].v[1], r, g, b, a};
         *Add(out) = (Vertex){rect[3].v[0], rect[3].v[1], r, g, b, a};
 
-        if (ABC_clockwise == 0)  continue; // Don't draw a mitre if the points ABC are colinear.
-        if (i+2 >= path->count)  continue; // Don't draw a mitre if AB is the last line in the path.
+        // Don't draw a mitre if the points ABC are colinear.
+        if (ABC_clockwise == 0)  continue;
 
         //
         // Draw a mitre at point B.
