@@ -4,7 +4,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h> // for exit().
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 // Support `#if OS == LINUX` style macros:
 #define LINUX    1
@@ -17,49 +19,39 @@
   #error "We couldn't identify the operating system."
 #endif
 
-typedef unsigned char   u8;
-typedef unsigned short u16;
-typedef unsigned int   u32;
-typedef size_t         u64;
-typedef signed char     s8;
-typedef signed short   s16;
-typedef signed int     s32;
-typedef ptrdiff_t      s64;
-
-#define S64_MIN  PTRDIFF_MIN
-#define S64_MAX  PTRDIFF_MAX
+typedef  uint8_t  u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef   int8_t  s8;
+typedef  int16_t s16;
+typedef  int32_t s32;
+typedef  int64_t s64;
 
 s64 round_up_pow2(s64 num);
 bool is_power_of_two(s64 num);
 void log_error_(char *file, int line, char *format, ...);
-float frand();
-float lerp(float a, float b, float t);
-void Log(char *format, ...);
 
 #define log_error(...)  log_error_(__FILE__, __LINE__, __VA_ARGS__)
 
-#ifdef DEBUG
+// Our assert is the pretty much the same as the standard C one, i.e. it will be removed during compilation if NDEBUG is defined.
+#ifndef NDEBUG
   #if OS == LINUX
     #define Breakpoint()  __builtin_trap()
   #elif OS == WINDOWS
     #define Breakpoint()  __debugbreak()
   #endif
-#else
-  #define Breakpoint()  ((void)0)
-#endif
 
-#ifdef NDEBUG
-  #define assert(...)   ((void)0)
-#else
   #define assert(COND) \
                ((COND) ? (void)0 \
                        : (log_error("Assertion failed: %s.", #COND), \
                           Breakpoint()))
+#else
+  #define Breakpoint()  ((void)0)
+  #define assert(...)   ((void)0)
 #endif
 
-#define Error(...)  (log_error(__VA_ARGS__), Breakpoint())
-
-#define Fatal(...)  (Error("Fatal error: " __VA_ARGS__), exit(1))
+#define Fatal(...)  (log_error("Fatal error: " __VA_ARGS__), Breakpoint(), exit(1))
 
 #define Min(A, B)  ((A) < (B) ? (A) : (B))
 #define Max(A, B)  ((A) > (B) ? (A) : (B))

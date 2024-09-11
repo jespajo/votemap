@@ -1,7 +1,3 @@
-// Move documentation from new_map() to header file.
-
-#include <string.h>
-
 #include "map.h"
 
 // The below work as long as 1 < BITS < the number of bits in UINT. Otherwise it's undefined behaviour.
@@ -92,7 +88,7 @@ u64 hash_bytes(void *p, u64 size)
 }
 
 u64 hash_string(char *string)
-// Thomas Wang's mix function. Also won't return zero.
+// Thomas Wang's mix function, via Sean Barrett. Also won't return zero.
 {
     u64 seed = hash_seed;
     u64 hash = seed;
@@ -108,14 +104,14 @@ u64 hash_string(char *string)
     return (hash) ? hash : 1;
 }
 
-typedef Map(char, char) AliasMap;
+typedef Map(char, char) Alias_map;
 
-void *new_map(Memory_Context *context, u64 key_size, u64 val_size, bool string_mode)
+void *new_map(Memory_context *context, u64 key_size, u64 val_size, bool string_mode)
 {
-    s64 initial_kv_limit    = 8; // Limit on key/value pairs. Includes the first one which is reserved, accessed as keys[-1] and vals[-1].
-    s64 initial_num_buckets = 8;
+    s64 INITIAL_KV_LIMIT    = 8; // Limit on key/value pairs. Includes the first one which is reserved, accessed as keys[-1] and vals[-1].
+    s64 INITIAL_NUM_BUCKETS = 8;
 
-    AliasMap *map = New(AliasMap, context);
+    Alias_map *map = New(Alias_map, context);
 
     map->context      = context;
 
@@ -124,9 +120,9 @@ void *new_map(Memory_Context *context, u64 key_size, u64 val_size, bool string_m
 
     map->string_mode  = string_mode;
 
-    map->limit        = initial_kv_limit;
-    map->keys         = alloc(context, initial_kv_limit, key_size);
-    map->vals         = alloc(context, initial_kv_limit, val_size);
+    map->limit        = INITIAL_KV_LIMIT;
+    map->keys         = alloc(map->limit, key_size, context);
+    map->vals         = alloc(map->limit, val_size, context);
 
     // Reserve the first key/value pair. keys[-1] will be used as temporary storage for a key we're
     // operating on with Get(), Set() or Delete(). vals[-1] will store the default value for *Get()
@@ -140,23 +136,23 @@ void *new_map(Memory_Context *context, u64 key_size, u64 val_size, bool string_m
     map->keys += key_size;
     map->vals += val_size;
 
-    map->num_buckets = initial_num_buckets;
-    map->buckets     = New(initial_num_buckets, Hash_Bucket, context);
+    map->num_buckets = INITIAL_NUM_BUCKETS;
+    map->buckets     = New(map->num_buckets, Hash_bucket, context);
 
     return map;
 }
 
 static void grow_map_if_needed(void *map)
 {
-    AliasMap *m = map;
+    Alias_map *m = map;
 
     if (m->count >= m->limit-1) {
         // We're out of room in the key/value arrays.
         m->keys -= m->key_size;
         m->vals -= m->val_size;
 
-        m->keys = resize(m->context, m->keys, 2*m->limit, m->key_size);
-        m->vals = resize(m->context, m->vals, 2*m->limit, m->val_size);
+        m->keys = resize(m->keys, 2*m->limit, m->key_size, m->context);
+        m->vals = resize(m->vals, 2*m->limit, m->val_size, m->context);
 
         m->keys += m->key_size;
         m->vals += m->val_size;
@@ -166,32 +162,38 @@ static void grow_map_if_needed(void *map)
 
     if (m->count >= m->num_buckets/4*3) {
         // More than 3/4 of the buckets are used.
-        Hash_Bucket *new_buckets = New(2*m->num_buckets, Hash_Bucket, m->context);
+        Hash_bucket *new_buckets = New(2*m->num_buckets, Hash_bucket, m->context);
 
         for (s64 old_i = 0; old_i < m->num_buckets; old_i++) {
             if (!m->buckets[old_i].hash)  continue;
 
             s64 new_i = m->buckets[old_i].hash % (2*m->num_buckets);
-            while (true) {
-                if (!new_buckets[new_i].hash) {
-                    new_buckets[new_i] = m->buckets[old_i];
-                    break;
-                }
+            while (new_buckets[new_i].hash) {
                 new_i -= 1;
                 if (new_i < 0)  new_i += 2*m->num_buckets;
             }
+            new_buckets[new_i] = m->buckets[old_i];
         }
-        dealloc(m->context, m->buckets);
+        dealloc(m->buckets, m->context);
         m->buckets = new_buckets;
         m->num_buckets *= 2;
     }
+}
+
+static char *copy_string(char *source, Memory_context *context)
+{
+    int length = strlen(source);
+    char *copy = alloc(length+1, sizeof(char), context);
+    memcpy(copy, source, length);
+    copy[length] = '\0';
+    return copy;
 }
 
 s64 set_key(void *map)
 // Assume the key to set is stored in map->keys[-1]. Add the key to the map's hash table if it
 // wasn't already there and return the key's index in the map->keys array.
 {
-    AliasMap *m = map;
+    Alias_map *m = map;
 
     assert(m->context);
     assert(m->count < m->num_buckets); // Assume empty buckets exist so the while loops below aren't infinite loops.
@@ -249,7 +251,7 @@ s64 set_key(void *map)
 
 s64 get_bucket_index(void *map)
 {
-    AliasMap *m = map;
+    Alias_map *m = map;
 
     assert(m->context);
 
@@ -267,7 +269,7 @@ s64 get_bucket_index(void *map)
                 if (!strcmp(key, ((char **)m->keys)[kv_index]))  return bucket_index;
             }
             bucket_index -= 1;
-            if (bucket_index < 0)  bucket_index = m->num_buckets-1; // |Cleanup: += for consistency?
+            if (bucket_index < 0)  bucket_index += m->num_buckets;
         }
     } else {
         // The key is binary.
@@ -283,8 +285,7 @@ s64 get_bucket_index(void *map)
                 if (!memcmp(key, (char *)m->keys + kv_index*m->key_size, m->key_size))  return bucket_index;
             }
             bucket_index -= 1;
-            if (bucket_index < 0)  bucket_index = m->num_buckets-1; // |Cleanup: += for consistency?
-
+            if (bucket_index < 0)  bucket_index += m->num_buckets;
         }
     }
 }
@@ -295,7 +296,7 @@ bool delete_key(void *map)
     s64 bucket_index = get_bucket_index(map);
     if (bucket_index < 0)  return false;
 
-    AliasMap *m = map;
+    Alias_map *m = map;
 
     s64 kv_index = m->buckets[bucket_index].index;
 
@@ -305,7 +306,7 @@ bool delete_key(void *map)
     {
         s64 i = bucket_index;
         while (true) {
-            m->buckets[i] = (Hash_Bucket){0};
+            m->buckets[i] = (Hash_bucket){0};
 
             s64 j = i;
             while (true) {
@@ -330,7 +331,7 @@ bucket_deleted:
     // Delete the key and value.
     {
         // If it's a string-mode map, delete the copy we made of the key.
-        if (m->string_mode)  dealloc(m->context, ((char **)m->keys)[kv_index]);
+        if (m->string_mode)  dealloc(((char **)m->keys)[kv_index], m->context);
 
         if (kv_index < m->count-1) {
             // Copy the final kv pair into the places of the pair we're deleting.

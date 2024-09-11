@@ -22,7 +22,7 @@ typedef struct Captures    Captures;
 //
 
 struct Captures {
-    Memory_Context *context;
+    Memory_context *context;
 
     // For every capture group, a copy of the matching substring, or NULL if there was no match.
     char          **data;
@@ -33,5 +33,5 @@ struct Captures {
     string_dict    *dict;
 };
 
-Regex *compile_regex(char *pattern, Memory_Context *context);
+Regex *compile_regex(char *pattern, Memory_context *context);
 bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captures);

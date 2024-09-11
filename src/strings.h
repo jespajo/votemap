@@ -3,7 +3,7 @@
 
 #include "array.h"
 
-char_array *get_string(Memory_Context *context, char *format, ...);
+char_array *get_string(Memory_context *context, char *format, ...);
 void print_string(char_array *out, char *format, ...);
 void print_double(double number, char_array *out);
 bool string_contains_char(char const *string, s64 length, char c);

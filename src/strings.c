@@ -1,6 +1,4 @@
 #include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
 
 #include "strings.h"
 
@@ -32,7 +30,7 @@ static void vaprintf(char_array *array, char *format, va_list args)
     array->count += length;
 }
 
-char_array *get_string(Memory_Context *context, char *format, ...)
+char_array *get_string(Memory_context *context, char *format, ...)
 {
     char_array *string = NewArray(string, context);
 

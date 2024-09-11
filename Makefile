@@ -11,7 +11,6 @@ cflags += -g3
 cflags += -MMD -MP
 cflags += -MT bin/$*.o
 cflags += -o $@
-cflags += -DDEBUG #|Deprecated
 #cflags += -DNDEBUG
 cflags += -I/usr/include/postgresql
 

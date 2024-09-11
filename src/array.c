@@ -1,11 +1,42 @@
 #include <errno.h> // For diagnosing file read/write errors.
 #include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
 
 #include "array.h"
 
-void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memory_Context *context)
+void *maybe_grow_array(void *data, s64 *limit, s64 count, u64 unit_size, Memory_context *context)
+// If the array doesn't exist yet, create it. If it exists and it's full, double its size. In either case,
+// modify *limit and return a pointer to the new data. Otherwise just return data.
+//
+// You may ask, if this function modifies *limit, why does it rely on its caller to assign the return value
+// to data themselves? Couldn't we just make make the first parameter `void **data` and get the function to
+// modify *data as well? No. The reason is that the compiler lets us implicitly cast e.g. `int *` to `void *`,
+// but not `int **` to `void **`.
+{
+    s64 INITIAL_LIMIT = 4; // If the array is unitialised, how many units to make room for in the first allocation.
+
+    if (!data) {
+        // The array needs to be initialised.
+        assert(*limit == 0 && count == 0);
+
+        *limit = INITIAL_LIMIT;
+        data   = alloc(*limit, unit_size, context);
+    } else if (count >= *limit) {
+        // The array needs to be resized.
+        assert(count == *limit);
+
+        // Make sure we only use this function for arrays that should increase in powers of two. This assert will trip
+        // if we use array_reserve() to reserve a non-power-of-two number of bytes for an array and then exceed this
+        // limit with Add(). In this case, just round up the array_reserve() argument to a power of two.
+        assert(is_power_of_two(*limit));
+
+        *limit *= 2;
+        data    = resize(data, *limit, unit_size, context);
+    }
+
+    return data;
+}
+
+void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memory_context *context)
 // Resize or allocate room for `new_limit` items. Modify *limit and return the new data pointer.
 //
 // This function modifies *limit, so why don't we make the first parameter `void **data` and get
@@ -18,9 +49,9 @@ void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memor
 
     if (!data) {
         assert(*limit == 0);
-        data = alloc(context, new_limit, unit_size);
+        data = alloc(new_limit, unit_size, context);
     } else {
-        data = resize(context, data, new_limit, unit_size);
+        data = resize(data, new_limit, unit_size, context);
     }
 
     *limit = new_limit;
@@ -28,14 +59,14 @@ void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memor
     return data;
 }
 
-char_array *load_text_file(char *file_name, Memory_Context *context)
+char_array *load_text_file(char *file_name, Memory_context *context)
 // Return NULL if the file can't be opened.
 {
     char_array *buffer = NewArray(buffer, context);
 
     FILE *file = fopen(file_name, "r");
     if (!file) {
-        Log("Couldn't open file %s.", file_name);
+        log_error("Couldn't open file %s.", file_name);
         return NULL;
     }
 
@@ -55,14 +86,14 @@ char_array *load_text_file(char *file_name, Memory_Context *context)
     return buffer;
 }
 
-u8_array *load_binary_file(char *file_name, Memory_Context *context)
+u8_array *load_binary_file(char *file_name, Memory_context *context)
 // Return NULL if the file can't be opened.
 {
     u8_array *buffer = NewArray(buffer, context);
 
     FILE *file = fopen(file_name, "rb");
     if (!file) {
-        Log("Couldn't open file %s.", file_name);
+        log_error("Couldn't open file %s.", file_name);
         return NULL;
     }
 
@@ -81,14 +112,14 @@ u8_array *load_binary_file(char *file_name, Memory_Context *context)
 
 void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
 {
-    if (!count)  Error("You probably don't want to write an empty array to %s.", file_name);
+    if (!count)  Fatal("You probably don't want to write an empty array to %s.", file_name);
 
     FILE *file = fopen(file_name, "wb");
 
     if (!file) {
         char *reason = "";
         if (errno == 2)  reason = "Does that directory exist?";
-        Error("Couldn't create file %s. %s", file_name, reason);
+        Fatal("Couldn't create file %s. %s", file_name, reason);
     }
 
     u64 num_chars_written = fwrite(data, unit_size, count, file);
@@ -97,7 +128,7 @@ void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
     fclose(file);
 }
 
-void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_Context *context)
+void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_context *context)
 // Reverse an array's data in place.
 {
     assert(data);
@@ -111,7 +142,7 @@ void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_Cont
     // won't bother to free it later. |Memory
     void *tmp;
     if (count < limit)  tmp = (u8 *)data + count*unit_size;
-    else                tmp = alloc(context, 1, unit_size);
+    else                tmp = alloc(1, unit_size, context);
 
     for (s64 i = 0; i < count/2; i++) {
         void *first = (u8 *)data + i*unit_size;

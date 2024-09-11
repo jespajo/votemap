@@ -1,7 +1,5 @@
 #include <float.h>   // FLT_MIN, FLT_MAX
 #include <math.h>    // HUGE_VAL
-#include <stdlib.h>  // strtod
-#include <string.h>
 
 #include "json.h"
 #include "strings.h"
@@ -25,7 +23,7 @@ static char *find_end_quote(char *source, s64 length)
     return NULL;
 }
 
-static char_array parse_json_string(char *source, s64 length, Memory_Context *context)
+static char_array parse_json_string(char *source, s64 length, Memory_context *context)
 // |Todo: Support extended unicode characters. https://datatracker.ietf.org/doc/html/rfc8259#section-7
 {
     // The string should start and end with quotation marks.
@@ -67,13 +65,13 @@ static char_array parse_json_string(char *source, s64 length, Memory_Context *co
     return result;
 }
 
-Parsed_JSON parse_json(char *source, s64 length, Memory_Context *context)
+Parsed_JSON parse_json(char *source, s64 length, Memory_context *context)
 // |Terrible!
 {
     char *remainder = trim_left(source, WHITESPACE);
 
   #define ParseError(...) \
-      (Error("Parse error: " __VA_ARGS__), \
+      (log_error("Parse error: " __VA_ARGS__), \
        (Parsed_JSON){.num_chars = remainder - source})
 
     Parsed_JSON parsed = {0};
@@ -242,7 +240,7 @@ s64 json_value_to_uint(JSON_value *json)
     if (json->number < 0)     return -1;
 
     // |Fixme: Safely cast with frexp. https://stackoverflow.com/a/26584177
-    if (json->number >= (double)S64_MAX)  return -1;
+    if (json->number >= (double)INT64_MAX)  return -1;
 
     return (s64)json->number;
 }
@@ -335,7 +333,7 @@ void print_json(JSON_value *json, char_array *out)
     out->count -= 1;
 }
 
-char_array *get_json_printed(JSON_value *json, Memory_Context *context)
+char_array *get_json_printed(JSON_value *json, Memory_context *context)
 {
     char_array *result = NewArray(result, context);
 

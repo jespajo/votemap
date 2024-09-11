@@ -70,10 +70,10 @@ static bool point_in_triangle(Vector2 point, Vector2 *triangle)
     return !(negative && positive);
 }
 
-Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context)
+Path_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
 {
     assert(is_polygon(polygon));
-    Memory_Context *ctx = context;
+    Memory_context *ctx = context;
 
     Path_array *triangles = NewArray(triangles, ctx);
 
@@ -159,7 +159,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context)
             break;
         }
 
-        Log("Partial triangulation. Created %d/%d triangles.", triangles->count, expect_num_triangles);
+        log_error("Partial triangulation. Created %ld/%d triangles.", triangles->count, expect_num_triangles);
         break;
     }
 

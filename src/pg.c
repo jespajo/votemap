@@ -1,9 +1,7 @@
-#include <string.h>
-
 #include "pg.h"
 #include "strings.h"
 
-#define QueryError(...)  (Error(__VA_ARGS__), NULL)
+#define QueryError(...)  (log_error(__VA_ARGS__), NULL)
 
 enum WKB_Byte_Order {
     WKB_BIG_ENDIAN    = 0,
@@ -62,7 +60,7 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
 // where this function will save a pointer to the byte after the last byte of data parsed.
 {
     assert(data);
-    Memory_Context *ctx = result->context;
+    Memory_context *ctx = result->context;
     u8 *d = data;
 
     s64 num_geometries = 1;
@@ -130,16 +128,17 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
                 *Add(result) = polygon;
                 break;
             default:
-                Error("Unexpected wkb_type: %d.", wkb_type);
+                Fatal("Unexpected wkb_type: %d.", wkb_type);
         }
     }
 
     if (end_data)  *end_data = d;
 }
 
-Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Memory_Context *context)
+Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Memory_context *context)
 {
     Postgres_result *rows = query_database(db, query, params, context);
+
     if (!rows->count)  return QueryError("A query for polygons returned no results.");
 
     Polygon_array *result = NewArray(result, context);
@@ -192,7 +191,7 @@ void parse_paths(u8 *data, Path_array *result, u8 **end_data)
 // data is a pointer to EWKB geometries. Like strtod, if end_data is not NULL, it is the address
 // where this function will save a pointer to the byte after the last byte of data parsed.
 {
-    Memory_Context *ctx = result->context;
+    Memory_context *ctx = result->context;
     u8 *d = data;
 
     {
@@ -229,7 +228,7 @@ void parse_paths(u8 *data, Path_array *result, u8 **end_data)
     if (end_data)  *end_data = d;
 }
 
-Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_Context *context)
+Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_context *context)
 {
     Postgres_result *rows = query_database(db, query, params, context);
 
@@ -253,11 +252,11 @@ Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_Co
     return result;
 }
 
-static Postgres_result *query_database_uncached(PGconn *db, char *query, string_array *params, Memory_Context *context)
+static Postgres_result *query_database_uncached(PGconn *db, char *query, string_array *params, Memory_context *context)
 // Actually query the database and parse the result into a Postgres_result.
 // This is called by query_database.
 {
-    Memory_Context *ctx = context;
+    Memory_context *ctx = context;
 
     Postgres_result *result = NewArray(result, ctx);
 
@@ -304,14 +303,14 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
     return result;
 }
 
-Postgres_result *query_database(PGconn *db, char *query, string_array *params, Memory_Context *context)
+Postgres_result *query_database(PGconn *db, char *query, string_array *params, Memory_context *context)
 // Parameters are string literals. Cast them in your queries: SELECT $1::int;
 // This function is mostly concerned with caching the results of query_database_uncached().
 {
     char cache_dir[]    = "/tmp"; // |Todo: Create our own directory for cache files.
     char magic_number[] = "PG$$";
 
-    Memory_Context *ctx = context;
+    Memory_context *ctx = context;
 
     Postgres_result *result = NewArray(result, ctx);
 
@@ -322,7 +321,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
     u8_array *cache_file = load_binary_file(cache_file_name, ctx);
 
     if (cache_file) {
-        Log("Found cache file %s.", cache_file_name);
+        printf("Found cache file %s.\n", cache_file_name);
         //
         // Read the cache file.
         //
@@ -405,7 +404,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
         return result;
     }
 
-    Log("No cache file found. Making query.");
+    printf("No cache file found. Making query.\n");
 
     // Make the query and parse the result.
     result = query_database_uncached(db, query, params, ctx);

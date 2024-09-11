@@ -21,6 +21,6 @@ bool same_point(Vector2 p, Vector2 q);
 float clockwise_value(Vector2 *points, s64 num_points);
 bool points_are_clockwise(Vector2 *points, s64 num_points);
 bool points_are_anticlockwise(Vector2 *points, s64 num_points);
-Path_array *triangulate_polygon(Polygon *polygon, Memory_Context *context);
+Path_array *triangulate_polygon(Polygon *polygon, Memory_context *context);
 
 #endif // SHAPES_H_INCLUDED

@@ -8,8 +8,6 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
-#include <stdio.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -19,7 +17,7 @@
 #include "strings.h"
 
 struct Client {
-    Memory_Context         *context;
+    Memory_context         *context;
 
     s32                     socket_no;      // The client socket's file descriptor.
     s64                     start_time;     // When we accepted the connection.
@@ -42,7 +40,7 @@ struct Client {
 
 static char *get_error(int errno_)
 {
-    // We don't want to have to pass a buffer or Memory_Context argument to functions that only need to allocate when
+    // We don't want to have to pass a buffer or Memory_context argument to functions that only need to allocate when
     // they fail, just so they can print system error messages. So we use a static buffer, which is |Threadunsafe, which
     // completely defeats the purpose of using strerror_r() rather than strerror(). But if/when we make this program
     // multithreaded, I think all we'll need to do is lock a mutex before accessing this buffer.
@@ -117,7 +115,7 @@ static bool parse_request(Client *client)
 // set client->phase to HANDLING_REQUEST and return true. If the request is invalid, fill out client->response, set
 // the phase to SENDING_REPLY and return true. Return false only if the request looks fine but incomplete.
 {
-    Memory_Context *ctx = client->context;
+    Memory_context *ctx = client->context;
 
     assert(client->phase == PARSING_REQUEST);
     assert(client->message.count);
@@ -235,7 +233,7 @@ static bool parse_request(Client *client)
     return true;
 }
 
-static char_array *encode_query_string(string_dict *query, Memory_Context *context)
+static char_array *encode_query_string(string_dict *query, Memory_context *context)
 {
     char_array *result = NewArray(result, context);
 
@@ -276,7 +274,7 @@ static char_array *encode_query_string(string_dict *query, Memory_Context *conte
     return result;
 }
 
-Server *create_server(u32 address, u16 port, bool verbose, Memory_Context *context)
+Server *create_server(u32 address, u16 port, bool verbose, Memory_context *context)
 {
     Server *server = New(Server, context);
 
@@ -311,7 +309,7 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_Context *conte
     int QUEUE_LENGTH = 32;
     if (listen(server->socket_no, QUEUE_LENGTH) < 0)  Fatal("Couldn't listen on socket (%s).", get_error(errno));
 
-    Log("Listening on http://%d.%d.%d.%d:%d...", address>>24, address>>16&0xff, address>>8&0xff, address&0xff, port);
+    printf("Listening on http://%d.%d.%d.%d:%d...\n", address>>24, address>>16&0xff, address>>8&0xff, address&0xff, port);
 
     return server;
 }
@@ -323,7 +321,7 @@ void start_server(Server *server)
 
     bool server_should_stop = false;
 
-    Memory_Context *frame_ctx = new_context(server->context); // A "frame" is one iteration of the main loop.
+    Memory_context *frame_ctx = new_context(server->context); // A "frame" is one iteration of the main loop.
 
     while (!server_should_stop)
     {
@@ -355,7 +353,7 @@ void start_server(Server *server)
             *Add(&pollfds) = pollfd;
         }
 
-        if (server->verbose)  Log("Polling %ld open file descriptors.", pollfds.count);
+        if (server->verbose)  printf("Polling %ld open file descriptors.\n", pollfds.count);
 
         // If there aren't any open connections, wait indefinitely. If there are connections, poll
         // once per second so we can check if any connection has expired.
@@ -388,7 +386,7 @@ void start_server(Server *server)
 
                 // Exit if the input was just the letter 'q'. Otherwise ignore it.
                 if (input.count == 1 && input.data[0] == 'q') {
-                    if (server->verbose)  Log("Shutting down.");
+                    if (server->verbose)  printf("Shutting down.\n");
 
                     server_should_stop = true;
                     goto cleanup;
@@ -403,7 +401,7 @@ void start_server(Server *server)
 
                 set_blocking(client_socket_no, false);
 
-                if (server->verbose)  Log("Adding a new client (socket %d).", client_socket_no);
+                if (server->verbose)  printf("Adding a new client (socket %d).\n", client_socket_no);
 
                 *Add(&pollfds) = (struct pollfd){
                     .fd      = client_socket_no,
@@ -425,7 +423,7 @@ void start_server(Server *server)
                 Client *client = Get(clients, client_socket_no);
                 assert(client->phase == PARSING_REQUEST);
 
-                if (server->verbose)  Log("Socket %d has something to say!!", client_socket_no);
+                if (server->verbose)  printf("Socket %d has something to say!!\n", client_socket_no);
 
                 char_array *message = &client->message;
                 if (!message->limit) {
@@ -443,7 +441,7 @@ void start_server(Server *server)
                         continue;
                     }
 
-                    if (server->verbose)  Log("We're about to read socket %d.", client_socket_no);
+                    if (server->verbose)  printf("We're about to read socket %d.\n", client_socket_no);
 
                     int flags = 0;
                     s64 recv_count = recv(client_socket_no, free_data, num_free_bytes, flags);
@@ -451,7 +449,7 @@ void start_server(Server *server)
                     if (recv_count < 0) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK) {
                             // There's nothing more to read now.
-                            if (server->verbose)  Log("There was nothing to read.");
+                            if (server->verbose)  printf("There was nothing to read.\n");
                             break;
                         } else {
                             // There was an actual error.
@@ -459,13 +457,13 @@ void start_server(Server *server)
                         }
                     } else if (recv_count == 0) {
                         // The client has disconnected.
-                        if (server->verbose)  Log("Socket %d has disconnected.", client_socket_no);
+                        if (server->verbose)  printf("Socket %d has disconnected.\n", client_socket_no);
 
                         client->phase = READY_TO_CLOSE;
                         goto cleanup;
                     } else {
                         // We have successfully received some bytes.
-                        if (server->verbose)  Log("Read %ld bytes from socket %d.", recv_count, client_socket_no);
+                        if (server->verbose)  printf("Read %ld bytes from socket %d.\n", recv_count, client_socket_no);
 
                         message->count += recv_count;
                         assert(message->count < message->limit);
@@ -478,7 +476,7 @@ void start_server(Server *server)
                 Client *client = Get(clients, client_socket_no);
                 assert(client->phase == SENDING_REPLY);
 
-                if (server->verbose)  Log("We're about to write to socket %d.", client_socket_no);
+                if (server->verbose)  printf("We're about to write to socket %d.\n", client_socket_no);
 
                 char_array *reply_header   = &client->reply_header;
                 Response   *response       = &client->response;
@@ -517,18 +515,18 @@ void start_server(Server *server)
 
                 if (*num_bytes_sent < full_reply_size) {
                     // We've partially sent our reply.
-                    if (server->verbose)  Log("Sent %ld/%ld bytes to socket %d.", *num_bytes_sent, full_reply_size, client_socket_no);
+                    if (server->verbose)  printf("Sent %ld/%ld bytes to socket %d.\n", *num_bytes_sent, full_reply_size, client_socket_no);
                 } else {
                     // We've fully sent our reply.
                     assert(*num_bytes_sent == full_reply_size);
                     {
-                        Memory_Context *ctx = client->context;
+                        Memory_context *ctx = client->context;
                         Request *req = &client->request;
                         char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
                         char *path   = req->path.count ? req->path.data : "";
                         char *query  = req->query ? encode_query_string(req->query, ctx)->data : "";
 
-                        Log("[%d] %s %s%s", response->status, method, path, query);
+                        printf("[%d] %s %s%s\n", response->status, method, path, query);
                     }
                     client->phase = READY_TO_CLOSE;
                 }
@@ -552,7 +550,7 @@ void start_server(Server *server)
             bool parsed = parse_request(client);
             if (!parsed)  continue;
 
-            if (server->verbose)  Log("Successfully parsed a message from socket %d.", client->socket_no);
+            if (server->verbose)  printf("Successfully parsed a message from socket %d.\n", client->socket_no);
 
             if (client->phase == HANDLING_REQUEST) {
                 // Find a matching handler.
@@ -569,7 +567,7 @@ void start_server(Server *server)
                     }
                 }
                 if (!handler) {
-                    if (server->verbose)  Log("We couldn't find a handler for this request, so we're returning a 404.");
+                    if (server->verbose)  printf("We couldn't find a handler for this request, so we're returning a 404.\n");
                     handler = &serve_404;
                 }
 
@@ -619,14 +617,14 @@ cleanup:
             free_context(client->context);
             Delete(clients, client_socket_no);
 
-            if (server->verbose)  Log("Closed and deleted socket %d.", client_socket_no);
+            if (server->verbose)  printf("Closed and deleted socket %d.\n", client_socket_no);
         }
     }
 
     if (close(server->socket_no) < 0)  Fatal("We couldn't close our own socket (%s).", get_error(errno));
 }
 
-Response serve_file(Request *request, Memory_Context *context)
+Response serve_file(Request *request, Memory_context *context)
 //|Insecure!! This function will serve any file in your filesystem, even supporting '..' in paths to go up a directory.
 {
     char *path = request->path.data;
@@ -669,11 +667,11 @@ Response serve_file(Request *request, Memory_Context *context)
 }
 
 //|Todo: Move to strings.h.
-static char_array2 *split_string(char *string, s64 length, char split_char, Memory_Context *context)
+static char_array2 *split_string(char *string, s64 length, char split_char, Memory_context *context)
 {
     char_array2 *result = NewArray(result, context);
 
-    char *copy = alloc(context, length+1, sizeof(char));
+    char *copy = alloc(length+1, sizeof(char), context);
     memcpy(copy, string, length);
     copy[length] = '\0';
 
@@ -699,7 +697,7 @@ static char_array2 *split_string(char *string, s64 length, char split_char, Memo
     return result;
 }
 
-char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_Context *context)
+char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_context *context)
 // dir_path shouldn't have a trailing '/'.
 {
     char_array2 *paths = NewArray(paths, context);
@@ -721,10 +719,10 @@ char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_Context
     return paths;
 }
 
-Response serve_file_NEW(Request *request, Memory_Context *context)
+Response serve_file_NEW(Request *request, Memory_context *context)
 // Serve the request path as a file. For directories, serve index.html if it exists, otherwise display the files in the directory.
 {
-    Memory_Context *ctx = context;
+    Memory_context *ctx = context;
     char_array    *path = &request->path;
 
     if (path->data[0] != '/')  return (Response){505, .body = "We expected the path to start with '/'\n."}; // 505 because I think an early version does support this?
@@ -805,7 +803,7 @@ Response serve_file_NEW(Request *request, Memory_Context *context)
     }
 }
 
-Response serve_404(Request *request, Memory_Context *context)
+Response serve_404(Request *request, Memory_context *context)
 {
     char const static body[] = "Can't find it.\n";
 

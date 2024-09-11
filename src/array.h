@@ -8,7 +8,7 @@
         TYPE           *data;    \
         s64             count;   \
         s64             limit;   \
-        Memory_Context *context; \
+        Memory_context *context; \
     }
 
 typedef Array(char)          char_array;
@@ -17,20 +17,21 @@ typedef Array(char_array)    char_array2;
 typedef Array(char *)        string_array; // An array of null-terminated strings.
 typedef Array(int)           int_array;
 
-void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memory_Context *context);
-char_array *load_text_file(char *file_name, Memory_Context *context);
-u8_array *load_binary_file(char *file_name, Memory_Context *context);
+void *maybe_grow_array(void *data, s64 *limit, s64 count, u64 unit_size, Memory_context *context);
+void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memory_context *context);
+char_array *load_text_file(char *file_name, Memory_context *context);
+u8_array *load_binary_file(char *file_name, Memory_context *context);
 void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name);
-void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_Context *context);
+void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_context *context);
 void array_unordered_remove_by_index_(void *data, s64 *count, u64 unit_size, s64 index_to_remove);
 
 #define NewArray(ARRAY, CONTEXT) \
-    ((ARRAY) = zero_alloc((CONTEXT), 1, sizeof(*ARRAY)), \
+    ((ARRAY) = zero_alloc(1, sizeof(*ARRAY), (CONTEXT)), \
      (ARRAY)->context = (CONTEXT), \
      (ARRAY))
 
 #define Add(ARRAY) \
-    ((ARRAY)->data = double_if_needed((ARRAY)->data, &(ARRAY)->limit, (ARRAY)->count, sizeof((ARRAY)->data[0]), (ARRAY)->context), \
+    ((ARRAY)->data = maybe_grow_array((ARRAY)->data, &(ARRAY)->limit, (ARRAY)->count, sizeof((ARRAY)->data[0]), (ARRAY)->context), \
      (ARRAY)->count += 1, \
      &(ARRAY)->data[(ARRAY)->count-1])
 

@@ -1,5 +1,3 @@
-#include <string.h>
-
 #include "draw.h"
 #include "http.h"
 #include "json.h"
@@ -9,9 +7,14 @@
 
 #define DATABASE_URL "postgres://postgres:postgisclarity@osm.tal/gis"
 
-Response serve_vertices(Request *request, Memory_Context *context)
+float frand()
 {
-    Memory_Context *ctx = context;
+    return rand()/(float)RAND_MAX;
+}
+
+Response serve_vertices(Request *request, Memory_context *context)
+{
+    Memory_context *ctx = context;
 
     PGconn *db = connect_to_database(DATABASE_URL);
 
@@ -96,9 +99,9 @@ Response serve_vertices(Request *request, Memory_Context *context)
     return response;
 }
 
-Response serve_labels(Request *request, Memory_Context *context)
+Response serve_labels(Request *request, Memory_context *context)
 {
-    Memory_Context *ctx = context;
+    Memory_context *ctx = context;
 
     PGconn *db = connect_to_database(DATABASE_URL);
 
@@ -136,7 +139,7 @@ int main()
     u16  const PORT    = 6008;
     bool const VERBOSE = false;
 
-    Memory_Context *top_context = new_context(NULL);
+    Memory_context *top_context = new_context(NULL);
 
     PGconn *database = connect_to_database(DATABASE_URL);
 

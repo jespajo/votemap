@@ -6,8 +6,6 @@
 //| Convert NFAs to DFAs.
 
 #include <ctype.h> //|Todo: make our own isprint()
-#include <stdio.h>
-#include <string.h>
 
 #include "regex.h"
 #include "strings.h" // For WHITESPACE
@@ -69,7 +67,7 @@ struct Instruction {
 
 static Regex *parse_error(char *pattern, s64 index)
 {
-    Log("Unexpected character in regex pattern at index %ld: '%c'.", index, pattern[index]);
+    log_error("Unexpected character in regex pattern at index %ld: '%c'.", index, pattern[index]);
     return NULL;
 }
 
@@ -79,7 +77,7 @@ static void negate_ascii_class(Instruction *inst)
     for (int i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
 }
 
-Regex *compile_regex(char *pattern, Memory_Context *context)
+Regex *compile_regex(char *pattern, Memory_context *context)
 {
     Regex *regex = NewArray(regex, context);
 
@@ -138,7 +136,7 @@ Regex *compile_regex(char *pattern, Memory_Context *context)
                     }
                     // We could disallow a zero-length name, but we can have zero-length dict keys, so it's fine.
 
-                    save_name = alloc(context, name_length+1, sizeof(char));
+                    save_name = alloc(name_length+1, sizeof(char), context);
                     memcpy(save_name, p, name_length);
                     save_name[name_length] = '\0';
 
@@ -466,7 +464,7 @@ static void print_address(char_array *out, void *address) //|Debug
 
 static void log_regex(Regex *regex) //|Debug
 {
-    Memory_Context *ctx = new_context(regex->context);
+    Memory_context *ctx = new_context(regex->context);
     char_array out = {.context = ctx};
 
     for (s64 i = 0; i < regex->count; i++) {
@@ -523,7 +521,7 @@ static void log_regex(Regex *regex) //|Debug
         print_string(&out, "\n");
     }
 
-    Log(out.data);
+    printf(out.data);
 
     free_context(ctx);
 }
@@ -554,7 +552,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
     Save *saves = NULL;
 
     // Create a child memory context for temporary data.
-    Memory_Context *tmp_ctx = new_context(regex->context);
+    Memory_context *tmp_ctx = new_context(regex->context);
 
     Thread_array cur_threads  = {.context = tmp_ctx};
     Thread_array next_threads = {.context = tmp_ctx};
@@ -641,7 +639,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
 
     if (is_match && captures) {
         // Use the regex's memory context for the captures if the caller didn't specify a context.
-        Memory_Context *ctx = captures->context ? captures->context : regex->context;
+        Memory_context *ctx = captures->context ? captures->context : regex->context;
         *captures = (Captures){.context = ctx}; // This makes sure captures->dict is set to NULL.
 
         // Figure out how many capture groups there are. We do this in a separate loop over the instructions, rather than
@@ -673,7 +671,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
 
             s64 length = end->offset - start->offset;
 
-            char *substring = alloc(ctx, length+1, sizeof(char));
+            char *substring = alloc(length+1, sizeof(char), ctx);
             memcpy(substring, &string[start->offset], length);
             substring[length] = '\0';
 
