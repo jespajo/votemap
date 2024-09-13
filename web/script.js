@@ -193,12 +193,53 @@ document.addEventListener("DOMContentLoaded", async () => {
     const u_view = gl.getUniformLocation(program, "u_view"); // Applies current pan/zoom. User-controlled.
 
     let vertices = new Float32Array(0);
-    ;(async function fetchVertices() {
-        const response = await fetch("../bin/vertices");
+    async function fetchVertices() {
+        /**
+         * @type Box
+         */
+        let box; { //|Copypasta! Factor this out.
+            /** @type Box */
+            const screenBoxScreenCoords = [
+                {x: 0,                         y: 0},
+                {x: 0,                         y: document.body.clientHeight},
+                {x: document.body.clientWidth, y: document.body.clientHeight},
+                {x: document.body.clientWidth, y: 0}
+            ];
+            /** @type Box */
+            const screenBoxMapCoords = screenBoxScreenCoords.map(v => inverseXform(map.currentTransform, v));
+
+            // Find the map-axis-aligned rectangle enclosing the screen's bounding box:
+            let minX, minY, maxX, maxY; {
+                minX = maxX = screenBoxMapCoords[0].x;
+                minY = maxY = screenBoxMapCoords[0].y;
+                for (let i = 1; i < 4; i++) {
+                    const {x, y} = screenBoxMapCoords[i];
+                    if (x < minX)       minX = x;
+                    else if (x > maxX)  maxX = x;
+                    if (y < minY)       minY = y;
+                    else if (y > maxY)  maxY = y;
+                }
+            }
+
+            box = [{x: minX, y: minY}, {x: maxX, y: maxY}];
+        }
+
+        let url = '../bin/vertices';
+        url += '?';
+        url += '&x0=' + box[0].x;
+        url += '&y0=' + box[0].y;
+        url += '&x1=' + box[1].x;
+        url += '&y1=' + box[1].y;
+        url += '&voronoi';
+
+        const upp = 1/map.currentTransform.scale;
+        url += '&upp=' + upp;
+
+        const response = await fetch(url);
         const data = await response.arrayBuffer();
 
         vertices = new Float32Array(data);
-    })();
+    }
 
     /**
      * @typedef {{text: string, pos: [number, number]}} Label
@@ -214,7 +255,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Load some fonts.
     {
         const fonts = {
-            "SourceSerif": "url(../fonts/SourceSerif4-Light.ttf)",
+            "SourceSerif": "url(../fonts/SourceSerif4-Medium.ttf)",
             "Inconsolata": "url(../fonts/Inconsolata_Condensed-Medium.ttf)",
         };
         for (const name in fonts) {
@@ -588,6 +629,12 @@ document.addEventListener("DOMContentLoaded", async () => {
                 debugFPS = !debugFPS;
                 delete input.pressed['f'];
             }
+
+            // Reload the vertices if the user presses R.
+            if (input.pressed['r']) {
+                fetchVertices();
+                delete input.pressed['r'];
+            }
         }
 
         // Apply animations.
@@ -849,7 +896,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         }
                     }
 
-                    ui.fillStyle = 'white';
+                    ui.fillStyle = 'black';
                     ui.fillText(label.text, textX, textY);
                 }
 
@@ -988,6 +1035,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         const screen = {x: 0,        y: 0,       width: document.body.clientWidth, height: document.body.clientHeight};
 
         map.currentTransform = fitRect(aust, screen);
+
+        fetchVertices();
     }
 
     // For debugging:

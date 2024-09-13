@@ -12,6 +12,29 @@ float frand()
     return rand()/(float)RAND_MAX;
 }
 
+Vertex_array *clip_triangle_verts(Vertex_array *verts, float min_x, float min_y, float max_x, float max_y, Memory_context *context)
+//|Temporary. Misnamed (doesn't clip to a clean rectangle), misplaced (should go in draw.h), probably stupid. Also should operate on triangles instead of verts.
+{
+    Vertex_array *result = NewArray(result, context);
+
+    assert(verts->count % 3 == 0);
+
+    for (s64 i = 0; i < verts->count; i += 3) {
+        Vertex *v = &verts->data[i];
+
+        if (v[0].x < min_x && v[1].x < min_x && v[2].x < min_x)  continue;
+        if (v[0].y < min_y && v[1].y < min_y && v[2].y < min_y)  continue;
+        if (v[0].x > max_x && v[1].x > max_x && v[2].x > max_x)  continue;
+        if (v[0].y > max_y && v[1].y > max_y && v[2].y > max_y)  continue;
+
+        *Add(result) = v[0];
+        *Add(result) = v[1];
+        *Add(result) = v[2];
+    }
+
+    return result;
+}
+
 Response serve_vertices(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
@@ -19,7 +42,13 @@ Response serve_vertices(Request *request, Memory_context *context)
     PGconn *db = connect_to_database(DATABASE_URL);
 
     bool show_voronoi = request->query && *Get(request->query, "voronoi");
-    float metres_per_pixel = 8000.0; //|Todo: Get this from the query string.
+
+    float metres_per_pixel = 8000.0;
+    {
+        char *upp = *Get(request->query, "upp");
+
+        if (upp)  metres_per_pixel = strtof(upp, NULL); //|Todo: Error-handling.
+    }
 
     Vertex_array *verts = NewArray(verts, ctx);
 
@@ -88,6 +117,24 @@ Response serve_vertices(Request *request, Memory_context *context)
             float line_width = metres_per_pixel;
 
             draw_path(&paths->data[i], line_width, colour, verts);
+        }
+    }
+
+    // Clip the vertices to the box if one is given.
+    {
+        char *x0 = *Get(request->query, "x0");
+        char *y0 = *Get(request->query, "y0");
+        char *x1 = *Get(request->query, "x1");
+        char *y1 = *Get(request->query, "y1");
+
+        if (x0 && y0 && x1 && y1) {
+            //|Todo: Error-check this float parsing.
+            float min_x = strtof(x0, NULL);
+            float min_y = strtof(y0, NULL);
+            float max_x = strtof(x1, NULL);
+            float max_y = strtof(y1, NULL);
+
+            verts = clip_triangle_verts(verts, min_x, min_y, max_x, max_y, ctx);
         }
     }
 
