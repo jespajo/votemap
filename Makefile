@@ -7,7 +7,7 @@ cflags += -Wall -Werror
 cflags += -Wno-unused
 cflags += -std=c99
 cflags += -g3
-#cflags += -O2
+cflags += -O2
 cflags += -MMD -MP
 cflags += -MT bin/$*.o
 cflags += -o $@

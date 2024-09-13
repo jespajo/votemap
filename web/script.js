@@ -149,8 +149,14 @@ function combineBoxes(a, b) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-    /** @type WebGLRenderingContext    */ const gl = $("canvas#map").getContext("webgl");
-    /** @type CanvasRenderingContext2D */ const ui = $("canvas#gui").getContext("2d");
+    /**
+     * @type WebGLRenderingContext
+     */
+    const gl = $("canvas#map").getContext("webgl");
+    /**
+     * @type CanvasRenderingContext2D
+     */
+    const ui = $("canvas#gui").getContext("2d");
 
     const program = gl.createProgram();
     {
@@ -187,14 +193,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     const u_proj = gl.getUniformLocation(program, "u_proj"); // Transforms pixel space to UV space. Only changes when the screen dimensions change.
     const u_view = gl.getUniformLocation(program, "u_view"); // Applies current pan/zoom. User-controlled.
 
-    let vertices; {
-        const response = await fetch("../bin/vertices");
+    let vertices = new Float32Array(0);
+    ;(async function fetchVertices() {
+        const response = await fetch("../bin/vertices?voronoi");
         const data = await response.arrayBuffer();
 
         vertices = new Float32Array(data);
-    }
+    })();
 
-    /** @typedef {{text: string, pos: [number, number]}} Label */
+    /**
+     * @typedef {{text: string, pos: [number, number]}} Label
+     */
     /** @type {Label[]} */
     let labels; {
         const response = await fetch("../bin/labels.json");
@@ -830,8 +839,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                         }
                     }
 
-                    // Once we fail once, skip subsequent labels.
-                    if (used)  break;
+                    // We've failed to find room for this label, but keep trying subsequent labels.
+                    if (used)  continue;
 
                     // We are now going to use the space. Mark the squares as used.
                     for (let row = row0; row < row1; row++) {

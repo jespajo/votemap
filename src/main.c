@@ -26,20 +26,21 @@ Response serve_vertices(Request *request, Memory_context *context)
     if (show_voronoi) {
         // Draw the Voronoi map polygons.
         char *query =
-          " select st_asbinary(st_buildarea(topo)) as polygon  "
-          " from (                                             "
-          "     select st_simplify(topo, $1::float) as topo    "
-          "     from booths_22                                 "
-          "     where topo is not null                         "
-          "   ) t                                              ";
+        "   select st_asbinary(st_collectionextract(geom, 3)) as polygon     "
+        "   from (                                                           "
+        "       select st_makevalid(st_snaptogrid(topo, $1::float)) as geom  "
+        "       from booths_22                                               "
+        "       where topo is not null                                       "
+        "     ) t                                                            ";
 
-        string_array *params = NewArray(params, ctx);
-        *Add(params) = get_string(ctx, "%f", metres_per_pixel)->data;
+        string_array params = {.context = ctx};
 
-        Polygon_array *polygons = query_polygons(db, query, params, ctx);
+        *Add(&params) = get_string(ctx, "%f", metres_per_pixel)->data;
+
+        Polygon_array *polygons = query_polygons(db, query, &params, ctx);
 
         for (s64 i = 0; i < polygons->count; i++) {
-            Vector4 colour = {0.3*frand(), 0.8*frand(), 0.4*frand(), 1.0};
+            Vector4 colour = {0.5+0.3*frand(), 0.5+0.5*frand(), 0.5+0.4*frand(), 1.0};
 
             draw_polygon(&polygons->data[i], colour, verts);
         }
@@ -52,11 +53,11 @@ Response serve_vertices(Request *request, Memory_context *context)
           "     from electorates_22                            "
           "   ) t                                              ";
 
-        string_array *params = NewArray(params, ctx);
+        string_array params = {.context = ctx};
 
-        *Add(params) = get_string(ctx, "%f", metres_per_pixel)->data;
+        *Add(&params) = get_string(ctx, "%f", metres_per_pixel)->data;
 
-        Polygon_array *polygons = query_polygons(db, query, params, ctx);
+        Polygon_array *polygons = query_polygons(db, query, &params, ctx);
 
         for (s64 i = 0; i < polygons->count; i++) {
             float shade = frand();
@@ -75,11 +76,11 @@ Response serve_vertices(Request *request, Memory_context *context)
           "     from electorates_22_topo.edge_data             "
           "   ) t                                              ";
 
-        string_array *params = NewArray(params, ctx);
+        string_array params = {.context = ctx};
 
-        *Add(params) = get_string(ctx, "%f", metres_per_pixel)->data;
+        *Add(&params) = get_string(ctx, "%f", metres_per_pixel)->data;
 
-        Path_array *paths = query_paths(db, query, params, ctx);
+        Path_array *paths = query_paths(db, query, &params, ctx);
 
         for (s64 i = 0; i < paths->count; i++) {
             Vector4 colour = {0, 0, 0, 1.0};
@@ -139,7 +140,7 @@ int main()
 {
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
     u16  const PORT    = 6008;
-    bool const VERBOSE = false;
+    bool const VERBOSE = true;
 
     Memory_context *top_context = new_context(NULL);
 

@@ -603,7 +603,7 @@ cleanup:
         for (s64 request_index = 0; request_index < clients->count; request_index++) {
             Client *client = &clients->vals[request_index];
 
-            s64 CONNECTION_TIMEOUT = 5*1000; // The maximum age of any connection in milliseconds.
+            s64 CONNECTION_TIMEOUT = 500*1000; // The maximum age of any connection in milliseconds. |Cleanup: ATM this is so high it's pointless. Also we probably want to log about sockets we drop because they've timed out.
 
             // Skip sockets that we shouldn't close, unless the server should stop, in which case we will disconnect everyone.
             bool should_close = server_should_stop;
@@ -613,7 +613,7 @@ cleanup:
 
             s32 client_socket_no = client->socket_no;
 
-            //|Todo: Finish sending pending replies first.
+            //|Todo: Finish sending pending replies first (if we're disconnecting everyone because server_should_stop is true).
 
             bool closed = !close(client_socket_no);
             if (!closed)  Fatal("We couldn't close a client socket (%s).", get_error(errno));

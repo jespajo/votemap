@@ -68,7 +68,7 @@ The below command creates a new topology column in the electorates table.
 This topology column holds the topology's face IDs for each electorate.
 
 ```
-    -- @Todo: Use findlayer() to get the layer ID dynamically:
+    -- |Todo: Use findlayer() to get the layer ID dynamically:
     --set topo = createtopogeom('electorates_22_topo', 3, layer_id(findlayer('electorates_22', 'topo')), faces)
     -- Requires Postgis 3.2.0. (Not sure if this actually works.)
 
@@ -121,8 +121,8 @@ From the shell:
 ## 5. Create a table of booth locations.
 
 ```
-    create table booths_22(
-        booth_id        int,
+    create table booths_22 (
+        booth_id        int,          --|Todo: Make this the primary key.
         booth_name      text,
         electorate_name varchar(32)
       );
@@ -166,20 +166,20 @@ From the shell:
     set booths_voronoi = multipolygon
     from (
         select electorate_name,
-          -- We have to do this weird twice-grouping to turn it
-          -- from a GeometryCollection to a MultiPolygon
+          /* We have to do this weird twice-grouping to turn it from a GeometryCollection to a MultiPolygon */
           st_collect(polygon) as multipolygon
         from (
             select electorate_name,
-              (st_dump(st_voronoipolygons(st_collect(booth_point), 3.0))).geom as polygon
+              (st_dump(st_voronoipolygons(st_collect(booth_point), 3.0, envelope))).geom as polygon
             from (
                 select e.name as electorate_name,
-                  b.geom as booth_point
+                  b.geom as booth_point,
+                  st_envelope(e.new_geom) as envelope
                 from electorates_22 e
                 join booths_22 b on e.name = b.electorate_name
                 where st_contains(e.new_geom, b.geom)
               ) t
-            group by electorate_name
+            group by electorate_name, envelope
           ) t
         group by electorate_name
       ) t
@@ -246,14 +246,14 @@ Currently we ignore a few cases in our data:
     --> Make a note of the layer ID returned.
 
     update booths_22 b
-    set topo = createtopogeom('booths_22_topo', 3, /*LAYER ID:*/2, faces)
+    set topo = createtopogeom('booths_22_topo', 3, /*LAYER ID:*/1, faces)
     from (
         with b as (
           select b.booth_id,
             f.face_id,
             st_area(st_intersection(b.voronoi, st_getfacegeometry('booths_22_topo', f.face_id))) as area
           from booths_22 b
-            inner join booths_22_topo.face f on b.geom && f.mbr
+            inner join booths_22_topo.face f on b.voronoi && f.mbr
         )
         select topoelementarray_agg(ARRAY[b1.face_id, 3]) as faces,
           b1.booth_id
