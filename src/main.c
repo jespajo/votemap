@@ -19,7 +19,7 @@ Response serve_vertices(Request *request, Memory_context *context)
     PGconn *db = connect_to_database(DATABASE_URL);
 
     bool show_voronoi = request->query && *Get(request->query, "voronoi");
-    float metres_per_pixel = 4000.0; //|Todo: Get this from the query string.
+    float metres_per_pixel = 8000.0; //|Todo: Get this from the query string.
 
     Vertex_array *verts = NewArray(verts, ctx);
 
@@ -85,8 +85,7 @@ Response serve_vertices(Request *request, Memory_context *context)
         for (s64 i = 0; i < paths->count; i++) {
             Vector4 colour = {0, 0, 0, 1.0};
 
-            float line_width_px = 5;
-            float line_width    = line_width_px*metres_per_pixel;
+            float line_width = metres_per_pixel;
 
             draw_path(&paths->data[i], line_width, colour, verts);
         }

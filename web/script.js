@@ -102,9 +102,9 @@ function clone(object) {
 }
 
 /** @type {(inner: Rect, outer: Rect) => Transform} */      // |Cleanup: Change to Box (array of 2)
-function fitBox(inner, outer) {
-// Return the transform (applied to the inner box) required to fit the inner box in the centre
-// of the outer box. The boxes are of the form {x, y, width, height}.
+function fitRect(inner, outer) {
+// Return the transform (applied to the inner rect) required to fit the inner rect in the centre
+// of the outer rect.
     const transform = {scale: 1, rotate: 0, translateX: 0, translateY: 0};
 
     const innerRatio = inner.width/inner.height;
@@ -120,9 +120,8 @@ function fitBox(inner, outer) {
 }
 
 /** @type {(a: Rect, b: Rect) => Rect} */   // |Cleanup: Change to Box (array of 2)
-function combineBoxes(a, b) {
-// If one of the boxes contains the other, return the larger box (the actual object, not a copy of it).
-// |Cleanup: All this would be less tedious if we made common use of 'box' vs 'rect' and actually used boxes.
+function combineRects(a, b) {
+// If one of the rects contains the other, return the larger rect (the actual object, not a copy of it).
     const ax1 = a.x;
     const ay1 = a.y;
     const ax2 = a.x + a.width;
@@ -195,7 +194,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     let vertices = new Float32Array(0);
     ;(async function fetchVertices() {
-        const response = await fetch("../bin/vertices?voronoi");
+        const response = await fetch("../bin/vertices");
         const data = await response.arrayBuffer();
 
         vertices = new Float32Array(data);
@@ -516,31 +515,31 @@ document.addEventListener("DOMContentLoaded", async () => {
             const melb = {x:  1140377, y: 4187714, width:    8624, height:    8663};
             const syd  = {x:  1757198, y: 3827047, width:    5905, height:    7899};
 
-            const boxes = {'0': aust, '1': melb, '2': syd};
+            const rects = {'0': aust, '1': melb, '2': syd};
 
-            for (const key of Object.keys(boxes)) {
+            for (const key of Object.keys(rects)) {
                 if (input.pressed[key]) {
-                    const targetBox = boxes[key];
+                    const targetRect = rects[key];
 
                     /** @type Rect */ // |Cleanup: Change to Box.
-                    let screenBounds; { // Get the screen in map coordinates.
+                    let screenRect; { // Get the screen in map coordinates.
                         const {x: x1, y: y1} = inverseXform(map.currentTransform, {x: 0, y: 0});
                         const {x: x2, y: y2} = inverseXform(map.currentTransform, {x: windowWidth, y: windowHeight});
 
-                        screenBounds = {x: x1, y: y1, width: x2-x1, height: y2-y1};
+                        screenRect = {x: x1, y: y1, width: x2-x1, height: y2-y1};
                     }
 
-                    // |Todo: Expand the combined box by 10%.
-                    const combined = combineBoxes(targetBox, screenBounds);
+                    // |Todo: Expand the combined rect by 10%.
+                    const combined = combineRects(targetRect, screenRect);
 
-                    // It's a simple transition if one of the boxes contains the other.
-                    const simple = (combined === screenBounds) || (combined === screenBounds);
+                    // It's a simple transition if one of the rects contains the other.
+                    const simple = (combined === screenRect) || (combined === targetRect);
 
                     if (simple) {
                         const duration = 1000;
 
                         const screen = {x: 0, y: 0, width: windowWidth, height: windowHeight};
-                        const newTransform = fitBox(targetBox, screen);
+                        const newTransform = fitRect(targetRect, screen);
 
                         map.animations.length = 0;
                         map.animations.push({
@@ -553,8 +552,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                         const durations = [750, 750];
 
                         const screen = {x: 0, y: 0, width: windowWidth, height: windowHeight};
-                        const transform1 = fitBox(combined, screen);
-                        const transform2 = fitBox(targetBox, screen);
+                        const transform1 = fitRect(combined, screen);
+                        const transform2 = fitRect(targetRect, screen);
 
                         map.animations.length = 0;
                         map.animations.push({
@@ -988,7 +987,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const aust   = {x: -1863361, y: 1168642, width: 3951342,                   height: 3671953};
         const screen = {x: 0,        y: 0,       width: document.body.clientWidth, height: document.body.clientHeight};
 
-        map.currentTransform = fitBox(aust, screen);
+        map.currentTransform = fitRect(aust, screen);
     }
 
     // For debugging:
