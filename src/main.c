@@ -41,30 +41,60 @@ Response serve_vertices(Request *request, Memory_context *context)
 
     PGconn *db = connect_to_database(DATABASE_URL);
 
+    Vertex_array *verts = NewArray(verts, ctx);
+
     bool show_voronoi = request->query && *Get(request->query, "voronoi");
 
-    float metres_per_pixel = 8000.0;
+    //
+    // Parse the floats in the query string.
+    //
+    float upp, x0, y0, x1, y1;
     {
-        char *upp = *Get(request->query, "upp");
+        char  *keys[] = {"upp", "x0", "y0", "x1", "y1"};
+        float *nums[] = {&upp, &x0, &y0, &x1, &y1};
 
-        if (upp)  metres_per_pixel = strtof(upp, NULL); //|Todo: Error-handling.
+        for (s64 i = 0; i < countof(keys); i++) {
+            char *num_string = *Get(request->query, keys[i]);
+            if (!num_string) {
+                char_array *error = get_string(ctx, "Missing query parameter: '%s'\n", keys[i]);
+                return (Response){400, .body = error->data, .size = error->count};
+            }
+
+            char *end = NULL;
+            float num = strtof(num_string, &end);
+            if (*num_string == '\0' || *end != '\0') {
+                char_array *error = get_string(ctx, "Unexpected value for '%s' query parameter: '%s'\n", keys[i], num_string);
+                return (Response){400, .body = error->data, .size = error->count};
+            }
+            // We parsed the whole string. We're ignoring ERANGE errors. We should do something about NAN and (-)INFINITY. |Robustness
+
+            *(nums[i]) = num;
+        }
     }
 
-    Vertex_array *verts = NewArray(verts, ctx);
+    // Prepare the parameters to our SQL queries (they are the same for all queries below).
+    // Negate the Y values to convert the map units of the browser to the database's coordinate reference system.
+    string_array params = {.context = ctx};
+
+    *Add(&params) = get_string(ctx, "%f", upp)->data;
+    *Add(&params) = get_string(ctx, "%f", x0)->data;
+    *Add(&params) = get_string(ctx, "%f", -y0)->data;
+    *Add(&params) = get_string(ctx, "%f", x1)->data;
+    *Add(&params) = get_string(ctx, "%f", -y1)->data;
 
     if (show_voronoi) {
         // Draw the Voronoi map polygons.
         char *query =
-        "   select st_asbinary(st_collectionextract(geom, 3)) as polygon     "
-        "   from (                                                           "
-        "       select st_makevalid(st_snaptogrid(topo, $1::float)) as geom  "
-        "       from booths_22                                               "
-        "       where topo is not null                                       "
-        "     ) t                                                            ";
-
-        string_array params = {.context = ctx};
-
-        *Add(&params) = get_string(ctx, "%f", metres_per_pixel)->data;
+            " select st_asbinary(st_collectionextract(geom, 3)) as polygon                          "
+            " from (                                                                                "
+            "     select st_makevalid(st_snaptogrid(topo, $1::float)) as geom                       "
+            "     from booths_22                                                                    "
+            "     where topo is not null                                                            "
+            "       and topo && st_setsrid(                                                         "
+            "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
+            "         3577                                                                          "
+            "       )                                                                               "
+            "   ) t                                                                                 ";
 
         Polygon_array *polygons = query_polygons(db, query, &params, ctx);
 
@@ -76,15 +106,15 @@ Response serve_vertices(Request *request, Memory_context *context)
     } else {
         // Draw electorate boundaries as polygons.
         char *query =
-          " select st_asbinary(st_buildarea(topo)) as polygon  "
-          " from (                                             "
-          "     select st_simplify(topo, $1::float) as topo    "
-          "     from electorates_22                            "
-          "   ) t                                              ";
-
-        string_array params = {.context = ctx};
-
-        *Add(&params) = get_string(ctx, "%f", metres_per_pixel)->data;
+            " select st_asbinary(st_buildarea(topo)) as polygon                                     "
+            " from (                                                                                "
+            "     select st_simplify(topo, $1::float) as topo                                       "
+            "     from electorates_22                                                               "
+            "     where topo && st_setsrid(                                                         "
+            "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
+            "         3577                                                                          "
+            "       )                                                                               "
+            "   ) t                                                                                 ";
 
         Polygon_array *polygons = query_polygons(db, query, &params, ctx);
 
@@ -99,44 +129,29 @@ Response serve_vertices(Request *request, Memory_context *context)
     // Draw electorate boundaries as lines.
     {
         char *query =
-          " select st_asbinary(t.geom) as path                 "
-          " from (                                             "
-          "     select st_simplify(geom, $1::float) as geom    "
-          "     from electorates_22_topo.edge_data             "
-          "   ) t                                              ";
-
-        string_array params = {.context = ctx};
-
-        *Add(&params) = get_string(ctx, "%f", metres_per_pixel)->data;
+            " select st_asbinary(t.geom) as path                                                    "
+            " from (                                                                                "
+            "     select st_simplify(geom, $1::float) as geom                                       "
+            "     from electorates_22_topo.edge_data                                                "
+            "     where geom && st_setsrid(                                                         "
+            "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
+            "         3577                                                                          "
+            "       )                                                                               "
+            "   ) t                                                                                 ";
 
         Path_array *paths = query_paths(db, query, &params, ctx);
 
         for (s64 i = 0; i < paths->count; i++) {
             Vector4 colour = {0, 0, 0, 1.0};
 
-            float line_width = metres_per_pixel;
+            float line_width = 2*upp;
 
             draw_path(&paths->data[i], line_width, colour, verts);
         }
     }
 
-    // Clip the vertices to the box if one is given.
-    {
-        char *x0 = *Get(request->query, "x0");
-        char *y0 = *Get(request->query, "y0");
-        char *x1 = *Get(request->query, "x1");
-        char *y1 = *Get(request->query, "y1");
-
-        if (x0 && y0 && x1 && y1) {
-            //|Todo: Error-check this float parsing.
-            float min_x = strtof(x0, NULL);
-            float min_y = strtof(y0, NULL);
-            float max_x = strtof(x1, NULL);
-            float max_y = strtof(y1, NULL);
-
-            verts = clip_triangle_verts(verts, min_x, min_y, max_x, max_y, ctx);
-        }
-    }
+    // Clip the vertices to the box.
+    verts = clip_triangle_verts(verts, x0, y0, x1, y1, ctx);
 
     Response response = {200, .body = verts->data, .size = verts->count*sizeof(Vertex)};
 
