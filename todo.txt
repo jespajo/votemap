@@ -4,7 +4,8 @@ Clean up web/script.js:
 
 Backend: SQL queries to only include shapes within clip box
 
-Frontend: Request vertices in a predictable grid
+Frontend:
+- Request vertices in a predictable grid
 
 ---
 

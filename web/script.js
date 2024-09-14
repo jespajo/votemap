@@ -8,18 +8,13 @@
 
         @typedef {{x: number, y: number}} Vec2
 
-    Box is a variable-length array of 2D points. In practice, it's 2 or 4 points, depending on whether
-    the box's rotation is taken into account. We don't distinguish between 2 and 4 because the Typescript
-    compiler is dumb and we just end up with a lot of casts.
+    A Box is a rectangle aligned with the XY axes. Its two points are its lower-left and upper-right corners, in that order.
 
-        @typedef {Vec2[]} Box
+        @typedef {[Vec2, Vec2]} Box
 
-        @typedef {{
-                x:      number,
-                y:      number,
-                width:  number,
-                height: number
-            }} Rect
+    When a rectangle gets rotated, we need an extra two points to record all four corners in an unspecified order.
+
+        @typedef {[Vec2, Vec2, Vec2, Vec2]} Box4
  */
 
 const $ = document.querySelector.bind(document);
@@ -57,7 +52,9 @@ const FRAGMENT_SHADER_TEXT = `
     }
 `;
 
-/** @type {(transform: Transform, vec2: Vec2) => Vec2} */
+/**
+ * @type {(transform: Transform, vec2: Vec2) => Vec2}
+ */
 function xform(transform, vec2) {
     const {scale, rotate, translateX, translateY} = transform;
     const {x, y} = vec2;
@@ -71,7 +68,9 @@ function xform(transform, vec2) {
     return {x: x1, y: y1};
 }
 
-/** @type {(transform: Transform, vec2: Vec2) => Vec2} */
+/**
+ * @type {(transform: Transform, vec2: Vec2) => Vec2}
+ */
 function inverseXform(transform, vec2) {
     const {scale, rotate, translateX, translateY} = transform;
     const {x, y} = vec2;
@@ -93,7 +92,9 @@ function inverseXform(transform, vec2) {
     return {x: x2, y: y2};
 }
 
-/** @type {(a: number, b: number, t: number) => number} */
+/**
+ * @type {(a: number, b: number, t: number) => number}
+ */
 function lerp(a, b, t) {
     return (1-t)*a + t*b;
 }
@@ -102,75 +103,75 @@ function clone(object) {
     return JSON.parse(JSON.stringify(object));
 }
 
-/** @type {(inner: Rect, outer: Rect) => Transform} */      // |Cleanup: Change to Box (array of 2)
-function fitRect(inner, outer) {
-// Return the transform (applied to the inner rect) required to fit the inner rect in the centre
-// of the outer rect.
-    const transform = {scale: 1, rotate: 0, translateX: 0, translateY: 0};
+/**
+ * Return the transform (applied to the inner box) required to fit the inner box in the centre of the outer box.
+ *
+ * @type {(inner: Box, outer: Box) => Transform}
+ */
+function fitBox(inner, outer) {
+    const innerWidth  = inner[1].x - inner[0].x;
+    const innerHeight = inner[1].y - inner[0].y;
+    const outerWidth  = outer[1].x - outer[0].x;
+    const outerHeight = outer[1].y - outer[0].y;
 
-    const innerRatio = inner.width/inner.height;
-    const outerRatio = outer.width/outer.height;
+    const innerRatio = innerWidth/innerHeight;
+    const outerRatio = outerWidth/outerHeight;
 
-    if (innerRatio < outerRatio)  transform.scale = outer.height/inner.height;
-    else                          transform.scale = outer.width/inner.width;
+    const rotate = 0;
 
-    transform.translateX = -transform.scale*inner.x + (outer.width - transform.scale*inner.width)/2;
-    transform.translateY = -transform.scale*inner.y + (outer.height - transform.scale*inner.height)/2;
+    const scale = (innerRatio < outerRatio) ? outerHeight/innerHeight : outerWidth/innerWidth;
 
-    return transform;
-}
+    const translateX = -scale*inner[0].x + (outerWidth - scale*innerWidth)/2;
+    const translateY = -scale*inner[0].y + (outerHeight - scale*innerHeight)/2;
 
-/** @type {(a: Rect, b: Rect) => Rect} */   // |Cleanup: Change to Box (array of 2)
-function combineRects(a, b) {
-// If one of the rects contains the other, return the larger rect (the actual object, not a copy of it).
-    const ax1 = a.x;
-    const ay1 = a.y;
-    const ax2 = a.x + a.width;
-    const ay2 = a.y + a.height;
-
-    const bx1 = b.x;
-    const by1 = b.y;
-    const bx2 = b.x + b.width;
-    const by2 = b.y + b.height;
-
-    if (ax1 < bx1) {
-        if ((ay1 < by1) && (ax2 > bx2) && (ay2 > by2))  return a;
-    } else {
-        if ((by1 < ay1) && (bx2 > ax2) && (by2 > ay2))  return b;
-    }
-
-    const x = (ax1 < bx1) ? ax1 : bx1;
-    const y = (ay1 < by1) ? ay1 : by1;
-
-    const width  = ((ax2 > bx2) ? ax2 : bx2) - x;
-    const height = ((ay2 > by2) ? ay2 : by2) - y;
-
-    return {x, y, width, height};
+    return {scale, rotate, translateX, translateY};
 }
 
 /**
- * Get the coordinates, in the map's coordinate reference system, of the four corners of the displayed map.
+ * If one of the boxes contains the other, return the larger box (the actual object, not a copy of it).
  *
- * @type {(width: number, height: number, transform: Transform) => Box}
+ * @type {(a: Box, b: Box) => Box}
  */
-function getScreenBoxMapCoords(width, height, transform) {
-    const screenBoxScreenCoords = [
+function combineBoxes(a, b) {
+    if ((a[0].x <= b[0].x) && (a[0].y <= b[0].y) && (a[1].x >= b[1].x) && (a[1].y >= b[1].y)) {
+        return a;
+    }
+    if ((b[0].x <= a[0].x) && (b[0].y <= a[0].y) && (b[1].x >= a[1].x) && (b[1].y >= a[1].y)) {
+        return b;
+    }
+
+    const minX = (a[0].x < b[0].x) ? a[0].x : b[0].x;
+    const minY = (a[0].y < b[0].y) ? a[0].y : b[0].y;
+    const maxX = (a[1].x > b[1].x) ? a[1].x : b[1].x;
+    const maxY = (a[1].y > b[1].y) ? a[1].y : b[1].y;
+
+    return [{x: minX, y: minY}, {x: maxX, y: maxY}];
+}
+
+/**
+ * Get the coordinates, in the map's coordinate reference system, of the four corners of the map (the portion of it that is displayed).
+ *
+ * @type {(width: number, height: number, transform: Transform) => Box4}
+ */
+function getMapCorners(width, height, transform) {
+    /** @type Box4 */
+    const box = [
         {x: 0,     y: 0},
         {x: 0,     y: height},
         {x: width, y: height},
         {x: width, y: 0}
     ];
 
-    const screenBoxMapCoords = screenBoxScreenCoords.map(v => inverseXform(transform, v));
+    for (let i = 0; i < 4; i++)  box[i] = inverseXform(transform, box[i]);
 
-    return screenBoxMapCoords;
+    return box;
 }
 
 /**
  * Expand a 4-pointed box (i.e. one that has rotation) into its 2-point envelope.
  * In other words, find the rectangle that encloses the diamond.
  *
- * @type {(box: Box) => Box}
+ * @type {(box: Box4) => Box}
  */
 function getEnvelope(box) {
     let minX = box[0].x;
@@ -188,9 +189,7 @@ function getEnvelope(box) {
         else if (y > maxY)  maxY = y;
     }
 
-    const envelope = [{x: minX, y: minY}, {x: maxX, y: maxY}];
-
-    return envelope;
+    return [{x: minX, y: minY}, {x: maxX, y: maxY}];
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -240,8 +239,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     let vertices = new Float32Array(0);
     async function fetchVertices() {
-        const screenBox = getScreenBoxMapCoords(map.width, map.height, map.currentTransform);
-        const envelope  = getEnvelope(screenBox);
+        const corners  = getMapCorners(map.width, map.height, map.currentTransform);
+        const envelope = getEnvelope(corners);
 
         let url = '../bin/vertices';
         url += '?';
@@ -573,36 +572,32 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // Handle keyboard presses.
         {
-            // |Temporary: When the user presses certain numbers, animate the map to show different locations.
-            const aust = {x: -1863361, y: 1168642, width: 3951342, height: 3671953};
-            const melb = {x:  1140377, y: 4187714, width:    8624, height:    8663};
-            const syd  = {x:  1757198, y: 3827047, width:    5905, height:    7899};
+            // When the user presses certain numbers, animate the map to show different locations. |Temporary
+            const aust = [{x:-1863361, y: 1168642}, {x: 2087981, y: 4840595}];
+            const melb = [{x: 1140377, y: 4187714}, {x: 1149001, y: 4196377}];
+            const syd  = [{x: 1757198, y: 3827047}, {x: 1763103, y: 3834946}];
 
-            const rects = {'0': aust, '1': melb, '2': syd};
+            const boxes = {'0': aust, '1': melb, '2': syd};
 
-            for (const key of Object.keys(rects)) {
+            for (const key of Object.keys(boxes)) {
                 if (input.pressed[key]) {
-                    const targetRect = rects[key];
+                    const targetBox = boxes[key];
 
-                    /** @type Rect */ // |Cleanup: Change to Box.
-                    let screenRect; { // Get the screen in map coordinates.
-                        const {x: x1, y: y1} = inverseXform(map.currentTransform, {x: 0, y: 0});
-                        const {x: x2, y: y2} = inverseXform(map.currentTransform, {x: map.width, y: map.height});
+                    const corners  = getMapCorners(map.width, map.height, map.currentTransform);
+                    const envelope = getEnvelope(corners);
 
-                        screenRect = {x: x1, y: y1, width: x2-x1, height: y2-y1};
-                    }
+                    const combined = combineBoxes(targetBox, envelope);
 
-                    // |Todo: Expand the combined rect by 10%.
-                    const combined = combineRects(targetRect, screenRect);
-
-                    // It's a simple transition if one of the rects contains the other.
-                    const simple = (combined === screenRect) || (combined === targetRect);
+                    // It's a simple transition if one of the boxes contains the other.
+                    const simple = (combined === targetBox) || (combined === envelope);
 
                     if (simple) {
                         const duration = 1000;
 
-                        const screen = {x: 0, y: 0, width: map.width, height: map.height};
-                        const newTransform = fitRect(targetRect, screen);
+                        /** @type Box */
+                        const screen = [{x: 0, y: 0}, {x: map.width, y: map.height}];
+
+                        const newTransform = fitBox(targetBox, screen);
 
                         map.animations.length = 0;
                         map.animations.push({
@@ -614,9 +609,12 @@ document.addEventListener("DOMContentLoaded", async () => {
                     } else {
                         const durations = [750, 750];
 
-                        const screen = {x: 0, y: 0, width: map.width, height: map.height};
-                        const transform1 = fitRect(combined, screen);
-                        const transform2 = fitRect(targetRect, screen);
+                        /** @type Box */
+                        const screen = [{x: 0, y: 0}, {x: map.width, y: map.height}];
+
+                        // |Todo: Expand the combined box by 10%.
+                        const transform1 = fitBox(combined, screen);
+                        const transform2 = fitBox(targetBox, screen);
 
                         map.animations.length = 0;
                         map.animations.push({
@@ -654,7 +652,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             // Reload the vertices if the user presses R.
             if (input.pressed['r']) {
-                fetchVertices();
+                fetchVertices(); //|Todo: We shouldn't do this here. We should just set a flag here.
                 delete input.pressed['r'];
             }
         }
@@ -795,9 +793,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                 const usedSpace  = new Int8Array(resolution);
 
                 let gridSize, numGridCols, numGridRows, gridRect; {
-                    // Find the map-axis-aligned rectangle enclosing the screen's bounding box:
-                    const screenBox  = getScreenBoxMapCoords(map.width, map.height, map.currentTransform);
-                    const [min, max] = getEnvelope(screenBox);
+                    // Find the map-axis-aligned rectangle enclosing the screen's bounding box.
+                    const corners    = getMapCorners(map.width, map.height, map.currentTransform);
+                    const [min, max] = getEnvelope(corners);
 
                     const focusWidth  = max.x - min.x;
                     const focusHeight = max.y - min.y;
@@ -833,7 +831,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     const textY1 = textY + height;
 
                     // Find the map-axis-aligned rectangle enclosing the text box:
-                    /** @type Box */
+                    /** @type Box4 */
                     const box = [
                         {x: textX,  y: textY},
                         {x: textX,  y: textY1},
@@ -1025,10 +1023,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // When the page loads, fit Australia on the screen.
     {
-        const aust   = {x: -1863361, y: 1168642, width: 3951342,   height: 3671953};
-        const screen = {x: 0,        y: 0,       width: map.width, height: map.height};
+        /** @type Box */
+        const aust = [{x:-1863361, y: 1168642}, {x: 2087981, y: 4840595}];
+        /** @type Box */
+        const screen = [{x: 0, y: 0}, {x: map.width, y: map.height}];
 
-        map.currentTransform = fitRect(aust, screen);
+        map.currentTransform = fitBox(aust, screen);
 
         fetchVertices();
     }
