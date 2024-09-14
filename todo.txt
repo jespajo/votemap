@@ -1,7 +1,3 @@
-Clean up web/script.js:
-- Remove copypasta
-- Remove Rect type?
-
 Backend: SQL queries to only include shapes within clip box
 
 Frontend:
