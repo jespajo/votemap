@@ -8,17 +8,18 @@
 
         @typedef {{x: number, y: number}} Vec2
 
+    Box is a variable-length array of 2D points. In practice, it's 2 or 4 points, depending on whether
+    the box's rotation is taken into account. We don't distinguish between 2 and 4 because the Typescript
+    compiler is dumb and we just end up with a lot of casts.
+
+        @typedef {Vec2[]} Box
+
         @typedef {{
                 x:      number,
                 y:      number,
                 width:  number,
                 height: number
             }} Rect
-
-    Box is a variable-length array of 2D points. In practice, it's 2 or 4 points,
-    depending on whether we're taking the box's rotation into account.
-
-        @typedef {Vec2[]} Box
  */
 
 const $ = document.querySelector.bind(document);
@@ -147,6 +148,51 @@ function combineRects(a, b) {
     return {x, y, width, height};
 }
 
+/**
+ * Get the coordinates, in the map's coordinate reference system, of the four corners of the displayed map.
+ *
+ * @type {(width: number, height: number, transform: Transform) => Box}
+ */
+function getScreenBoxMapCoords(width, height, transform) {
+    const screenBoxScreenCoords = [
+        {x: 0,     y: 0},
+        {x: 0,     y: height},
+        {x: width, y: height},
+        {x: width, y: 0}
+    ];
+
+    const screenBoxMapCoords = screenBoxScreenCoords.map(v => inverseXform(transform, v));
+
+    return screenBoxMapCoords;
+}
+
+/**
+ * Expand a 4-pointed box (i.e. one that has rotation) into its 2-point envelope.
+ * In other words, find the rectangle that encloses the diamond.
+ *
+ * @type {(box: Box) => Box}
+ */
+function getEnvelope(box) {
+    let minX = box[0].x;
+    let minY = box[0].y;
+    let maxX = box[0].x;
+    let maxY = box[0].y;
+
+    for (let i = 1; i < 4; i++) {
+        const {x, y} = box[i];
+
+        if (x < minX)       minX = x;
+        else if (x > maxX)  maxX = x;
+
+        if (y < minY)       minY = y;
+        else if (y > maxY)  maxY = y;
+    }
+
+    const envelope = [{x: minX, y: minY}, {x: maxX, y: maxY}];
+
+    return envelope;
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
     /**
      * @type WebGLRenderingContext
@@ -194,42 +240,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     let vertices = new Float32Array(0);
     async function fetchVertices() {
-        /**
-         * @type Box
-         */
-        let box; { //|Copypasta! Factor this out.
-            /** @type Box */
-            const screenBoxScreenCoords = [
-                {x: 0,                         y: 0},
-                {x: 0,                         y: document.body.clientHeight},
-                {x: document.body.clientWidth, y: document.body.clientHeight},
-                {x: document.body.clientWidth, y: 0}
-            ];
-            /** @type Box */
-            const screenBoxMapCoords = screenBoxScreenCoords.map(v => inverseXform(map.currentTransform, v));
-
-            // Find the map-axis-aligned rectangle enclosing the screen's bounding box:
-            let minX, minY, maxX, maxY; {
-                minX = maxX = screenBoxMapCoords[0].x;
-                minY = maxY = screenBoxMapCoords[0].y;
-                for (let i = 1; i < 4; i++) {
-                    const {x, y} = screenBoxMapCoords[i];
-                    if (x < minX)       minX = x;
-                    else if (x > maxX)  maxX = x;
-                    if (y < minY)       minY = y;
-                    else if (y > maxY)  maxY = y;
-                }
-            }
-
-            box = [{x: minX, y: minY}, {x: maxX, y: maxY}];
-        }
+        const screenBox = getScreenBoxMapCoords(map.width, map.height, map.currentTransform);
+        const envelope  = getEnvelope(screenBox);
 
         let url = '../bin/vertices';
         url += '?';
-        url += '&x0=' + box[0].x;
-        url += '&y0=' + box[0].y;
-        url += '&x1=' + box[1].x;
-        url += '&y1=' + box[1].y;
+        url += '&x0=' + envelope[0].x;
+        url += '&y0=' + envelope[0].y;
+        url += '&x1=' + envelope[1].x;
+        url += '&y1=' + envelope[1].y;
         url += '&voronoi';
 
         const upp = 1/map.currentTransform.scale;
@@ -349,6 +368,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         //
         // Map state variables:
         //
+        width:  document.body.clientWidth,
+        height: document.body.clientHeight,
+
         /** @type {Transform} */
         currentTransform: {
             scale:      1,
@@ -414,8 +436,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         let frameStartTime; // |Debug
         if (debugFPS)  frameStartTime = performance.now();
 
-        const windowWidth  = document.body.clientWidth;
-        const windowHeight = document.body.clientHeight;
+        map.width  = document.body.clientWidth;
+        map.height = document.body.clientHeight;
 
         // Handle mouse/touch events on the map.
         {
@@ -565,7 +587,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     /** @type Rect */ // |Cleanup: Change to Box.
                     let screenRect; { // Get the screen in map coordinates.
                         const {x: x1, y: y1} = inverseXform(map.currentTransform, {x: 0, y: 0});
-                        const {x: x2, y: y2} = inverseXform(map.currentTransform, {x: windowWidth, y: windowHeight});
+                        const {x: x2, y: y2} = inverseXform(map.currentTransform, {x: map.width, y: map.height});
 
                         screenRect = {x: x1, y: y1, width: x2-x1, height: y2-y1};
                     }
@@ -579,7 +601,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     if (simple) {
                         const duration = 1000;
 
-                        const screen = {x: 0, y: 0, width: windowWidth, height: windowHeight};
+                        const screen = {x: 0, y: 0, width: map.width, height: map.height};
                         const newTransform = fitRect(targetRect, screen);
 
                         map.animations.length = 0;
@@ -592,7 +614,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     } else {
                         const durations = [750, 750];
 
-                        const screen = {x: 0, y: 0, width: windowWidth, height: windowHeight};
+                        const screen = {x: 0, y: 0, width: map.width, height: map.height};
                         const transform1 = fitRect(combined, screen);
                         const transform2 = fitRect(targetRect, screen);
 
@@ -680,8 +702,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         const proj = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
         {
             // Transform from pixel space to UV space. Flip the y-axis for top-left origin.
-            proj[0] =  2/windowWidth;     // X scale.
-            proj[4] = -2/windowHeight;    // Y scale.
+            proj[0] =  2/map.width;       // X scale.
+            proj[4] = -2/map.height;      // Y scale.
             proj[6] = -1;                 // X translate.
             proj[7] =  1;                 // Y translate.
         }
@@ -708,16 +730,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         const dpr = window.devicePixelRatio || 1;
 
         $$("canvas").forEach(canvas => {
-            canvas.width  = Math.floor(dpr*windowWidth);
-            canvas.height = Math.floor(dpr*windowHeight);
+            canvas.width  = Math.floor(dpr*map.width);
+            canvas.height = Math.floor(dpr*map.height);
 
-            canvas.style.width  = windowWidth + "px";
-            canvas.style.height = windowHeight + "px";
+            canvas.style.width  = map.width + "px";
+            canvas.style.height = map.height + "px";
         });
 
         // WebGL canvas:
         {
-            gl.viewport(0, 0, dpr*windowWidth, dpr*windowHeight);
+            gl.viewport(0, 0, dpr*map.width, dpr*map.height);
 
             gl.clearColor(0.1, 0.1, 0.1, 1.0); // Background colour (same as water): off-black.
             gl.clear(gl.COLOR_BUFFER_BIT);
@@ -740,7 +762,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         // 2D canvas:
         {
             ui.scale(dpr, dpr);
-            ui.clearRect(0, 0, windowWidth, windowHeight);
+            ui.clearRect(0, 0, map.width, map.height);
 
             //
             // Draw the labels from the JSON file, as stably as possible!
@@ -772,31 +794,13 @@ document.addEventListener("DOMContentLoaded", async () => {
                 const resolution = 256;
                 const usedSpace  = new Int8Array(resolution);
 
-                /** @type Box */
-                const screenBoxScreenCoords = [
-                    {x: 0,           y: 0},
-                    {x: 0,           y: windowHeight},
-                    {x: windowWidth, y: windowHeight},
-                    {x: windowWidth, y: 0}
-                ];
-                /** @type Box */
-                const screenBoxMapCoords = screenBoxScreenCoords.map(v => inverseXform(map.currentTransform, v));
-
                 let gridSize, numGridCols, numGridRows, gridRect; {
                     // Find the map-axis-aligned rectangle enclosing the screen's bounding box:
-                    let minX, minY, maxX, maxY; {
-                        minX = maxX = screenBoxMapCoords[0].x;
-                        minY = maxY = screenBoxMapCoords[0].y;
-                        for (let i = 1; i < 4; i++) {
-                            const {x, y} = screenBoxMapCoords[i];
-                            if (x < minX)       minX = x;
-                            else if (x > maxX)  maxX = x;
-                            if (y < minY)       minY = y;
-                            else if (y > maxY)  maxY = y;
-                        }
-                    }
-                    const focusWidth  = maxX-minX;
-                    const focusHeight = maxY-minY;
+                    const screenBox  = getScreenBoxMapCoords(map.width, map.height, map.currentTransform);
+                    const [min, max] = getEnvelope(screenBox);
+
+                    const focusWidth  = max.x - min.x;
+                    const focusHeight = max.y - min.y;
 
                     const ratio = focusWidth/focusHeight;
 
@@ -812,8 +816,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                     numGridCols = Math.floor(resolution/numRows); // The real number of columns in our grid.
 
                     gridRect = {
-                        x:      minX - (minX % gridSize),
-                        y:      minY - (minY % gridSize),
+                        x:      min.x - (min.x % gridSize),
+                        y:      min.y - (min.y % gridSize),
                         width:  numGridCols*gridSize,
                         height: numGridRows*gridSize,
                     };
@@ -838,32 +842,22 @@ document.addEventListener("DOMContentLoaded", async () => {
                     ];
                     for (let i = 0; i < 4; i++)  box[i] = inverseXform(map.currentTransform, box[i]);
 
-                    let minX, minY, maxX, maxY; {
-                        minX = maxX = box[0].x;
-                        minY = maxY = box[0].y;
-                        for (let i = 1; i < box.length; i++) {
-                            const {x, y} = box[i];
-                            if (x < minX)       minX = x;
-                            else if (x > maxX)  maxX = x;
-                            if (y < minY)       minY = y;
-                            else if (y > maxY)  maxY = y;
-                        }
-                    }
+                    const [min, max] = getEnvelope(box);
 
                     // Don't draw labels that are outside our grid:
-                    if (minY > gridRect.y + gridRect.height)  continue;
-                    if (maxY < gridRect.y)                    continue;
-                    if (minX > gridRect.x + gridRect.width)   continue;
-                    if (maxX < gridRect.x)                    continue;
+                    if (min.y > gridRect.y + gridRect.height)  continue;
+                    if (max.y < gridRect.y)                    continue;
+                    if (min.x > gridRect.x + gridRect.width)   continue;
+                    if (max.x < gridRect.x)                    continue;
 
                     // Check whether any of the grid squares we want have been taken.
 
                     let used = false;
 
-                    const col0 = Math.floor((minX - gridRect.x)/gridSize);
-                    const row0 = Math.floor((minY - gridRect.y)/gridSize);
-                    const col1 = Math.ceil((maxX - gridRect.x)/gridSize);
-                    const row1 = Math.ceil((maxY - gridRect.y)/gridSize);
+                    const col0 = Math.floor((min.x - gridRect.x)/gridSize);
+                    const row0 = Math.floor((min.y - gridRect.y)/gridSize);
+                    const col1 = Math.ceil((max.x - gridRect.x)/gridSize);
+                    const row1 = Math.ceil((max.y - gridRect.y)/gridSize);
 
                     {
                         let row = row0;
@@ -953,12 +947,12 @@ document.addEventListener("DOMContentLoaded", async () => {
                 ui.font = height + 'px sans serif';
                 ui.textBaseline = "top";
 
-                let y = windowHeight - height;
+                let y = map.height - height;
 
                 for (const target of ["translateY", "translateX", "rotate", "scale"]) {
                     const label = target + ': ' + map.currentTransform[target];
                     const width = 200;
-                    const x     = windowWidth - width;
+                    const x     = map.width - width;
 
                     ui.fillStyle = 'rgba(255,255,255,0.9)';
                     ui.fillRect(x, y, width, height);
@@ -1031,8 +1025,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // When the page loads, fit Australia on the screen.
     {
-        const aust   = {x: -1863361, y: 1168642, width: 3951342,                   height: 3671953};
-        const screen = {x: 0,        y: 0,       width: document.body.clientWidth, height: document.body.clientHeight};
+        const aust   = {x: -1863361, y: 1168642, width: 3951342,   height: 3671953};
+        const screen = {x: 0,        y: 0,       width: map.width, height: map.height};
 
         map.currentTransform = fitRect(aust, screen);
 

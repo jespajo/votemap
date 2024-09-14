@@ -1,3 +1,13 @@
+Clean up web/script.js:
+- Remove copypasta
+- Remove Rect type?
+
+Backend: SQL queries to only include shapes within clip box
+
+Frontend: Request vertices in a predictable grid
+
+---
+
 Fix the bug that often causes the web server to fail to close the socket for the request for labels.json.
 
 serve_file_NEW():
