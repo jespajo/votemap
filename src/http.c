@@ -636,7 +636,7 @@ void add_route(Server *server, enum HTTP_method method, char *path_pattern, Requ
     *Add(&server->routes) = (Route){method, regex, handler};
 }
 
-Response serve_file(Request *request, Memory_context *context)
+Response serve_file_insecurely(Request *request, Memory_context *context)
 //|Insecure!! This function will serve any file in your filesystem, even supporting '..' in paths to go up a directory.
 {
     char *path = request->path.data;
@@ -731,7 +731,7 @@ char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_context
     return paths;
 }
 
-Response serve_file_NEW(Request *request, Memory_context *context)
+Response serve_file_slowly(Request *request, Memory_context *context)
 // Serve the request path as a file. For directories, serve index.html if it exists, otherwise display the files in the directory.
 {
     Memory_context *ctx = context;
@@ -809,7 +809,7 @@ Response serve_file_NEW(Request *request, Memory_context *context)
     if (!is_directory) {
         // Rewrite the request path and run the insecure version of this function.
         *path = *file_path;
-        return serve_file(request, ctx);
+        return serve_file_insecurely(request, ctx);
     } else {
         return (Response){500, .body = "We can't serve directories yet!\n"};
     }

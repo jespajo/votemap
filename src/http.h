@@ -57,8 +57,8 @@ void start_server(Server *server);
 void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler);
 
 // Request_handler functions:
-Response serve_file(Request *request, Memory_context *context);
-Response serve_file_NEW(Request *request, Memory_context *context);//|Temporary
+Response serve_file_insecurely(Request *request, Memory_context *context);
+Response serve_file_slowly(Request *request, Memory_context *context);
 Response serve_404(Request *request, Memory_context *context);
 
 #endif // HTTP_H_INCLUDED

@@ -93,7 +93,7 @@ Triangle_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
     //
     // When we "chop off an ear", we'll update a single link to cut out the removed point.
     //
-    int *links = New(ring->count, int, ctx);
+    int *links = New(ring->count, int, ctx); //|Leak
     {
         for (int i = 0; i < ring->count-1; i++)  links[i] = i + 1;
         links[ring->count-1] = 0; // { 1, 2, 3, ..., 0 }

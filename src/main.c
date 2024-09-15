@@ -211,7 +211,7 @@ int main()
 
     add_route(server, GET, "/bin/vertices",    &serve_vertices);
     add_route(server, GET, "/bin/labels.json", &serve_labels);
-    add_route(server, GET, "/.*",              &serve_file_NEW);
+    add_route(server, GET, "/.*",              &serve_file_insecurely);
 
     start_server(server);
 
