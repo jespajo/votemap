@@ -104,6 +104,8 @@ Triangle_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
 
     int expect_num_triangles = ring->count-2;
 
+    array_reserve(triangles, expect_num_triangles);
+
     while (triangles->count < expect_num_triangles) {
         int i0 = current_point_index;
         int i1 = links[current_point_index];
