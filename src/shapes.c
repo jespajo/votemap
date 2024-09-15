@@ -70,12 +70,13 @@ static bool point_in_triangle(Vector2 point, Vector2 *triangle)
     return !(negative && positive);
 }
 
-Path_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
+Triangle_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
+//|Temporary. The goal is to change this to a line-sweep algorithm for real performance gains. For now we're just changing the output type from Path to Triangle.
 {
     assert(is_polygon(polygon));
     Memory_context *ctx = context;
 
-    Path_array *triangles = NewArray(triangles, ctx);
+    Triangle_array *triangles = NewArray(triangles, ctx);
 
     // |Todo: If the polygon has holes, turn it into one big ring.
     // But for now we'll just take the outer ring and ignore holes.
@@ -108,9 +109,9 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
         int i1 = links[current_point_index];
         int i2 = links[links[current_point_index]];
 
-        Vector2 tri[3] = {ring->data[i0], ring->data[i1], ring->data[i2]};
+        Triangle tri = {ring->data[i0], ring->data[i1], ring->data[i2]};
 
-        float det = clockwise_value(tri, 3);
+        float det = clockwise_value(tri.p, 3);
         if (det == 0) {
             // The points are colinear. The middle point can be removed without consequence.
             links[i0] = i2;
@@ -124,7 +125,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
             int i = links[i2];
 
             while (i != i0) {
-                if (point_in_triangle(ring->data[i], tri))  break;
+                if (point_in_triangle(ring->data[i], tri.p))  break;
                 i = links[i];
             }
 
@@ -132,9 +133,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
                 // None of the other points are inside. Off with the ear!
                 links[i0] = i2;
 
-                Path *ear = Add(triangles);
-                *ear = (Path){.context = ctx};
-                for (int j = 0; j < 3; j++)  *Add(ear) = tri[j];
+                *Add(triangles) = tri;
 
                 current_point_index = i2;
                 halt_point_index    = -1;
@@ -153,9 +152,7 @@ Path_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
         if (triangles->count == expect_num_triangles-1) {
             // Sometimes the last three points aren't in anticlockwise order for reasons unknown and we end up here.
             // We don't need to fix the triangles because they're on their way to becoming GPU fodder.
-            Path *final = Add(triangles);
-            *final = (Path){.context = ctx};
-            for (int i = 0; i < 3; i++)   *Add(final) = tri[i];
+            *Add(triangles) = tri;
             break;
         }
 

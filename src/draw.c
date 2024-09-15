@@ -11,14 +11,14 @@ void draw_polygon(Polygon *polygon, Vector4 colour, Vertex_array *out)
     float b = colour.v[2];
     float a = colour.v[3];
 
-    Path_array *triangles = triangulate_polygon(polygon, ctx);
+    Triangle_array *triangles = triangulate_polygon(polygon, ctx);
 
     for (s64 i = 0; i < triangles->count; i++) {
-        Path *triangle = &triangles->data[i];
+        Triangle *triangle = &triangles->data[i];
 
         for (int j = 0; j < 3; j++) {
-            float x = triangle->data[j].v[0];
-            float y = triangle->data[j].v[1];
+            float x = triangle->p[j].v[0];
+            float y = triangle->p[j].v[1];
 
             *Add(out) = (Vertex){x, y, r, g, b, a};
         }

@@ -1,9 +1,12 @@
+triangulate_polygon():
+    Replace with a line sweep algorithm.
+
 Frontend:
 - Request vertices in a predictable grid
 
 ---
 
-Fix the bug that often causes the web server to fail to close the socket for the request for labels.json.
+Fix the bug that sometimes causes the web server to fail to close the socket for the request for labels.json.
 
 serve_file_NEW():
     Better than what we're doing would be: When the server starts up, recursively visit all files under the working directory and put their full paths into a big array. Also keep track of whether each one is a regular file or a directory. Keep the array sorted for quick searching. Then if the request path matches a path in the array, we know it's a valid file, so we'll try to load it into memory. Then you can do the normalisation of the URL (i.e. making '..' mean to go up a directory) in a separate function, which would simply take the request path as an argument and return the normalised path. This would be much quicker as we wouldn't need to make a thousand syscalls to serve every single file!
@@ -34,11 +37,6 @@ Front end: improve two-part transitions.
     Use some kind of spline!?
 
 Front end: draw map legend scale (e.g. show a line equal to 5km for reference).
-
-triangulate_polygon():
-    Return Triangle_array instead of Path_array. It will be faster and also make more sense because the output of triangulate_polygon doesn't follow the rules for Path structs, namely, repeat the first point in closed rings and make sure the points are in anticlockwise order to define a positive space.
-    Identify holes: turn the polygon into one big ring?
-    Use spatial hashing to speed it up.
 
 Further label improvements:
     There is still a bug where labels on one edge of the grid wrap around and fill grid squares on the other side. |Bug

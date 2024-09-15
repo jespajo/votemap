@@ -17,10 +17,15 @@ typedef Array(Path)     Path_array;
 typedef Array(Path)     Polygon;
 typedef Array(Polygon)  Polygon_array;
 
+// Triangles are three points. The order of points is not significant.
+typedef struct Triangle Triangle;
+struct Triangle {Vector2 p[3];};
+typedef Array(Triangle)  Triangle_array;
+
 bool same_point(Vector2 p, Vector2 q);
 float clockwise_value(Vector2 *points, s64 num_points);
 bool points_are_clockwise(Vector2 *points, s64 num_points);
 bool points_are_anticlockwise(Vector2 *points, s64 num_points);
-Path_array *triangulate_polygon(Polygon *polygon, Memory_context *context);
+Triangle_array *triangulate_polygon(Polygon *polygon, Memory_context *context);
 
 #endif // SHAPES_H_INCLUDED
