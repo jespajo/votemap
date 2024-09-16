@@ -238,27 +238,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const u_view = gl.getUniformLocation(program, "u_view"); // Applies current pan/zoom. User-controlled.
 
     let vertices = new Float32Array(0);
-    async function fetchVertices() {
-        const corners  = getMapCorners(map.width, map.height, map.currentTransform);
-        const envelope = getEnvelope(corners);
-
-        let url = '../bin/vertices';
-        url += '?';
-        url += '&x0=' + envelope[0].x;
-        url += '&y0=' + envelope[0].y;
-        url += '&x1=' + envelope[1].x;
-        url += '&y1=' + envelope[1].y;
-
-        if (map.voronoi)  url += '&voronoi';
-
-        const upp = 1/map.currentTransform.scale;
-        url += '&upp=' + upp;
-
-        const response = await fetch(url);
-        const data = await response.arrayBuffer();
-
-        vertices = new Float32Array(data);
-    }
+    let fetchVertices = false;
 
     /**
      * @typedef {{text: string, pos: [number, number]}} Label
@@ -657,14 +637,42 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             // Reload the vertices if the user presses R.
             if (input.pressed['r']) {
-                fetchVertices(); //|Todo: We shouldn't do this here. We should just set a flag here.
+                fetchVertices = true;
                 delete input.pressed['r'];
             }
 
             if (input.pressed['v']) {
                 map.voronoi = !map.voronoi;
+                fetchVertices = true;
                 delete input.pressed['v'];
             }
+        }
+
+        // Fetch vertex data.
+        if (fetchVertices) {
+            ;(async function() {
+                fetchVertices = false;
+
+                const corners  = getMapCorners(map.width, map.height, map.currentTransform);
+                const envelope = getEnvelope(corners);
+
+                let url = '../bin/vertices';
+                url += '?';
+                url += '&x0=' + envelope[0].x;
+                url += '&y0=' + envelope[0].y;
+                url += '&x1=' + envelope[1].x;
+                url += '&y1=' + envelope[1].y;
+
+                if (map.voronoi)  url += '&voronoi';
+
+                const upp = 1/map.currentTransform.scale;
+                url += '&upp=' + upp;
+
+                const response = await fetch(url);
+                const data = await response.arrayBuffer();
+
+                vertices = new Float32Array(data);
+            })();
         }
 
         // Apply animations.
@@ -1040,7 +1048,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         map.currentTransform = fitBox(aust, screen);
 
-        fetchVertices();
+        fetchVertices = true;
     }
 
     // For debugging:
