@@ -71,7 +71,6 @@ static bool point_in_triangle(Vector2 point, Vector2 *triangle)
 }
 
 Triangle_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
-//|Temporary. The goal is to change this to a line-sweep algorithm for real performance gains. For now we're just changing the output type from Path to Triangle.
 {
     assert(is_polygon(polygon));
     Memory_context *ctx = context;
@@ -118,6 +117,8 @@ Triangle_array *triangulate_polygon(Polygon *polygon, Memory_context *context)
             // The points are colinear. The middle point can be removed without consequence.
             links[i0] = i2;
             expect_num_triangles -= 1;
+            // Make sure we don't remove the halt point or we'll end up in an infinite loop.
+            if (halt_point_index == i1)  halt_point_index = -1;
             continue;
         }
         bool clockwise = det < 0;

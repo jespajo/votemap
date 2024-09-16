@@ -1,10 +1,12 @@
-triangulate_polygon():
-    Replace with a line sweep algorithm.
+Create indexes for SQL geometry data
 
 Frontend:
 - Request vertices in a predictable grid
 
 ---
+
+triangulate_polygon():
+    Speed up with spatial hashing?
 
 Fix the bug that sometimes causes the web server to fail to close the socket for the request for labels.json.
 
