@@ -267,3 +267,20 @@ Currently we ignore a few cases in our data:
       ) t
     where b.booth_id = t.booth_id;
 ```
+
+## 9. Create a geometry from the topogeometry.
+
+This is just so we can make use of a spatial index.
+
+```
+    select addgeometrycolumn('public', 'booths_22', 'new_voronoi', 3577, 'MULTIPOLYGON', 2);
+
+    update booths_22
+    set new_voronoi = multipolygon
+    from (
+        select booth_id, topo as multipolygon from booths_22
+      ) t
+    where booths_22.booth_id = t.booth_id;
+
+    create index booths_22_new_voronoi_idx on booths_22 using gist(new_voronoi);
+```

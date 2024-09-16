@@ -89,10 +89,10 @@ Response serve_vertices(Request *request, Memory_context *context)
         char *query =
             " select st_asbinary(st_collectionextract(geom, 3)) as polygon                          "
             " from (                                                                                "
-            "     select st_makevalid(st_snaptogrid(topo, $1::float)) as geom                       "
+            "     select st_makevalid(st_snaptogrid(new_voronoi, $1::float)) as geom                "
             "     from booths_22                                                                    "
-            "     where topo is not null                                                            "
-            "       and topo && st_setsrid(                                                         "
+            "     where new_voronoi is not null                                                     "
+            "       and new_voronoi && st_setsrid(                                                  "
             "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
             "         3577                                                                          "
             "       )                                                                               "

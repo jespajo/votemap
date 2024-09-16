@@ -1,7 +1,10 @@
-Create indexes for SQL geometry data
+Reduce the map to one layer: the Voronoi diagram
 
-Frontend:
-- Request vertices in a predictable grid
+Make sure all our SQL queries are coming from indexed geometries
+
+Add the actual colours to the Voronoi map
+
+Get the front end to request the vertices in a predictable grid of tiles
 
 ---
 
