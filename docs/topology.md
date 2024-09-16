@@ -184,6 +184,8 @@ From the shell:
         group by electorate_name
       ) t
     where e.name = t.electorate_name;
+
+    create index electorates_22_booths_voronoi_idx on electorates_22 using gist(booths_voronoi);
 ```
 We restrict our set of booths to ones where the XML and spatial data agree---that is, the coordinates for the booth fall into the boundaries of the booth's district.
 
@@ -232,6 +234,8 @@ Currently we ignore a few cases in our data:
         group by multipolygon
       ) t
     where b.booth_id = t.booth_id;
+
+    create index booths_22_voronoi_idx on booths_22 using gist(voronoi);
 ```
 
 ## 8. Create a topogeometry from the Voronoi diagram.

@@ -17,6 +17,8 @@ Vertex_array *clip_triangle_verts(Vertex_array *verts, float min_x, float min_y,
 {
     Vertex_array *result = NewArray(result, context);
 
+    array_reserve(result, verts->count);
+
     assert(verts->count % 3 == 0);
 
     for (s64 i = 0; i < verts->count; i += 3) {
