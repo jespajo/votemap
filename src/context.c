@@ -161,10 +161,8 @@ static void delete_block(Memory_block *blocks, s64 *count, Memory_block *block)
     s64 index = block - blocks;
     assert(0 <= index && index < *count);
 
-    // Move subsequent blocks left one, then delete the final block.
-    for (s64 i = index+1; i < *count; i++)  blocks[i-1] = blocks[i];
-
-    blocks[*count-1] = (Memory_block){0};
+    // Move subsequent blocks left one.
+    memmove(block, block+1, (*count-1 - index)*sizeof(Memory_block));
 
     *count -= 1;
 }
