@@ -349,9 +349,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         // Map state variables:
         //
 
-        // For now, this is just a boolean because we only have two layers. Later, we'll make it into an enum or an object.
-        voronoi: true,
-
         width:  document.body.clientWidth,
         height: document.body.clientHeight,
 
@@ -640,12 +637,6 @@ document.addEventListener("DOMContentLoaded", async () => {
                 fetchVertices = true;
                 delete input.pressed['r'];
             }
-
-            if (input.pressed['v']) {
-                map.voronoi = !map.voronoi;
-                fetchVertices = true;
-                delete input.pressed['v'];
-            }
         }
 
         // Fetch vertex data.
@@ -662,8 +653,6 @@ document.addEventListener("DOMContentLoaded", async () => {
                 url += '&y0=' + envelope[0].y;
                 url += '&x1=' + envelope[1].x;
                 url += '&y1=' + envelope[1].y;
-
-                if (map.voronoi)  url += '&voronoi';
 
                 const upp = 1/map.currentTransform.scale;
                 url += '&upp=' + upp;

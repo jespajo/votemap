@@ -1,5 +1,3 @@
-Reduce the map to one layer: the Voronoi diagram
-
 Add the actual colours to the Voronoi map.
 1. Change the structure of current way we get polygons so that multipolygons remain associated with their row from the original query results. If we then base the colour on a hash of the booth_id we will know it's working as expected.
 2. Create another table candidates_22 associating candidate IDs with party IDs.

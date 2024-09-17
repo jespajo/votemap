@@ -20,8 +20,6 @@ Response serve_vertices(Request *request, Memory_context *context)
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    bool show_voronoi = request->query && *Get(request->query, "voronoi");
-
     //
     // Parse the floats in the query string.
     //
@@ -59,8 +57,8 @@ Response serve_vertices(Request *request, Memory_context *context)
     *Add(&params) = get_string(ctx, "%f", x1)->data;
     *Add(&params) = get_string(ctx, "%f", -y1)->data;
 
-    if (show_voronoi) {
-        // Draw the Voronoi map polygons.
+    // Draw the Voronoi map polygons.
+    {
         char *query =
             " select st_asbinary(st_collectionextract(geom, 3)) as polygon                          "
             " from (                                                                                "
@@ -80,30 +78,9 @@ Response serve_vertices(Request *request, Memory_context *context)
 
             draw_polygon(&polygons->data[i], colour, verts);
         }
-    } else {
-        // Draw electorate boundaries as polygons.
-        char *query =
-            " select st_asbinary(st_buildarea(topo)) as polygon                                     "
-            " from (                                                                                "
-            "     select st_simplify(topo, $1::float) as topo                                       "
-            "     from electorates_22                                                               "
-            "     where topo && st_setsrid(                                                         "
-            "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
-            "         3577                                                                          "
-            "       )                                                                               "
-            "   ) t                                                                                 ";
-
-        Polygon_array *polygons = query_polygons(db, query, &params, ctx);
-
-        for (s64 i = 0; i < polygons->count; i++) {
-            float shade = frand();
-            Vector4 colour = {0.9*shade, 0.4*shade, 0.8*shade, 1.0};
-
-            draw_polygon(&polygons->data[i], colour, verts);
-        }
     }
 
-    // Draw electorate boundaries as lines.
+    // Draw the electorate boundaries as lines.
     {
         char *query =
             " select st_asbinary(t.geom) as path                                                    "
