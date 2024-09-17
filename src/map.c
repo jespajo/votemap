@@ -4,7 +4,7 @@
 #define RotateLeft(UINT, BITS)   (((UINT) << (BITS)) | ((UINT) >> (8*sizeof(UINT) - (BITS))))
 #define RotateRight(UINT, BITS)  (((UINT) >> (BITS)) | ((UINT) << (8*sizeof(UINT) - (BITS))))
 
-u64 hash_seed = 0x70710678;
+u64 hash_seed = 0x7071067811865475;
 
 u64 hash_bytes(void *p, u64 size)
 // Sean Barrett's version of SipHash. Plus it won't return zero.
@@ -25,8 +25,8 @@ u64 hash_bytes(void *p, u64 size)
         hash = hash * 0x27d4eb2d;
         hash ^= seed;
         hash = hash ^ (hash >> 15);
-        hash = (((u64) hash << 16 << 16) | hash) ^ seed;
-        return (hash) ? hash : 1;
+        u64 hash64 = (((u64) hash << 16 << 16) | hash) ^ seed;
+        return (hash64) ? hash64 : 1;
 
     } else if (size == 8 && sizeof(u64) == 8) {
         u64 hash = d[0] | ((u64)d[1] << 8) | ((u64)d[2] << 16) | ((u64)d[3] << 24);
