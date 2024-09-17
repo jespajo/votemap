@@ -60,4 +60,10 @@ bool delete_key(void *map);
     ((MAP)->keys[-1] = (KEY), \
      delete_key(MAP))
 
+#define SetDefault(MAP, VALUE)  ((MAP)->vals[-1] = (VALUE))
+
+#define IsSet(MAP, KEY) \
+    ((MAP)->keys[-1] = (KEY), \
+     get_bucket_index(MAP) >= 0)
+
 #endif // MAP_H_INCLUDED

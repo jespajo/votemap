@@ -121,17 +121,15 @@ void *new_map(Memory_context *context, u64 key_size, u64 val_size, bool string_m
     map->string_mode  = string_mode;
 
     map->limit        = INITIAL_KV_LIMIT;
-    map->keys         = alloc(map->limit, key_size, context);
+    map->keys         = alloc(map->limit, key_size, context); //|Speed: We should allocate the keys and vals arrays together, always.
     map->vals         = alloc(map->limit, val_size, context);
 
-    // Reserve the first key/value pair. keys[-1] will be used as temporary storage for a key we're
-    // operating on with Get(), Set() or Delete(). vals[-1] will store the default value for *Get()
-    // to return if the requested key is not present.
+    // Reserve the first key/value pair. keys[-1] will be used as temporary storage for a key we're operating on with Get(), Set() or Delete().
+    // vals[-1] will store the default value for *Get() to return if the requested key is not present.
     //
-    // This means that when you use Get() with an incorrect key, the result returned is a zeroed-out
-    // value of the same type as map's values. We rely on this behaviour elsewhere! One day we might
-    // want a SetDefault() to allow changing the default value returned on a per-map basis, but the
-    // default default should always be the zeroed-out value.
+    // This means that when you use *Get() with an incorrect key, the result is a zeroed-out value of the same type as map's values.
+    // We rely on this behaviour in application code. Use SetDefault() to change the default value returned on a per-map basis.
+    // The default default will always be the zeroed-out value.
     memset(map->vals, 0, val_size);
     map->keys += key_size;
     map->vals += val_size;
