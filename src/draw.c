@@ -89,3 +89,28 @@ void draw_path(Path *path, float width, Vector4 colour, Vertex_array *out)
         *Add(out) = (Vertex){mitre[2].v[0], mitre[2].v[1], r, g, b, a};
     }
 }
+
+Vertex_array *copy_verts_in_the_box(Vertex_array *verts, float min_x, float min_y, float max_x, float max_y, Memory_context *context)
+// Create a copy of an array of triangle vertices, excluding any without a single point within the given box.
+// |Speed: It would be a bit quicker if it operated on triangles instead of verts.
+{
+    Vertex_array *result = NewArray(result, context);
+    array_reserve(result, verts->count);
+
+    assert(verts->count % 3 == 0);
+
+    for (s64 i = 0; i < verts->count; i += 3) {
+        Vertex *v = &verts->data[i];
+
+        if (v[0].x < min_x && v[1].x < min_x && v[2].x < min_x)  continue;
+        if (v[0].y < min_y && v[1].y < min_y && v[2].y < min_y)  continue;
+        if (v[0].x > max_x && v[1].x > max_x && v[2].x > max_x)  continue;
+        if (v[0].y > max_y && v[1].y > max_y && v[2].y > max_y)  continue;
+
+        *Add(result) = v[0];
+        *Add(result) = v[1];
+        *Add(result) = v[2];
+    }
+
+    return result;
+}

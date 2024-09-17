@@ -12,31 +12,6 @@ float frand()
     return rand()/(float)RAND_MAX;
 }
 
-Vertex_array *clip_triangle_verts(Vertex_array *verts, float min_x, float min_y, float max_x, float max_y, Memory_context *context)
-//|Temporary. Misnamed (doesn't clip to a clean rectangle), misplaced (should go in draw.h), probably stupid. Also should operate on triangles instead of verts.
-{
-    Vertex_array *result = NewArray(result, context);
-
-    array_reserve(result, verts->count);
-
-    assert(verts->count % 3 == 0);
-
-    for (s64 i = 0; i < verts->count; i += 3) {
-        Vertex *v = &verts->data[i];
-
-        if (v[0].x < min_x && v[1].x < min_x && v[2].x < min_x)  continue;
-        if (v[0].y < min_y && v[1].y < min_y && v[2].y < min_y)  continue;
-        if (v[0].x > max_x && v[1].x > max_x && v[2].x > max_x)  continue;
-        if (v[0].y > max_y && v[1].y > max_y && v[2].y > max_y)  continue;
-
-        *Add(result) = v[0];
-        *Add(result) = v[1];
-        *Add(result) = v[2];
-    }
-
-    return result;
-}
-
 Response serve_vertices(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
@@ -152,8 +127,7 @@ Response serve_vertices(Request *request, Memory_context *context)
         }
     }
 
-    // Clip the vertices to the box.
-    verts = clip_triangle_verts(verts, x0, y0, x1, y1, ctx);
+    verts = copy_verts_in_the_box(verts, x0, y0, x1, y1, ctx);
 
     Response response = {200, .body = verts->data, .size = verts->count*sizeof(Vertex)};
 
