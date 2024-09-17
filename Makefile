@@ -50,7 +50,7 @@ bin/%.o:  src/%.c;  $(cc) -c $(cflags) $<
 
 tags:  $(sources);  ctags --recurse src
 
-tidy:           ;  rm -f core.* vgcore.*
+tidy:           ;  rm -f core.* vgcore.* gmon.out
 pgcache-clean:  ;  rm -f /tmp/*.pgcache
 clean:      tidy;  rm -rf bin tags
 
