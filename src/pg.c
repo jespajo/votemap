@@ -22,9 +22,8 @@ static u64 hash_query(char *query, string_array *params)
 {
     u64 hash = hash_string(query);
 
-    if (params) {
-        for (int i = 0; i < params->count; i++)  hash ^= hash_string(params->data[i]);
-    }
+    s64 num_params = (params) ? params->count : 0;
+    for (s64 i = 0; i < num_params; i++)  hash ^= hash_string(params->data[i]);
 
     return hash;
 }
@@ -56,7 +55,7 @@ PGconn *connect_to_database(char *url)
 }
 
 void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
-// data is a pointer to EWKB geometries. Like strtod, if end_data is not NULL, it is the address
+// data is a pointer to EWKB geometries. end_data is like the strtod() argument: if it's not NULL, it is the address
 // where this function will save a pointer to the byte after the last byte of data parsed.
 {
     assert(data);
@@ -137,58 +136,32 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
 
 Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Memory_context *context)
 {
-    Postgres_result *rows = query_database(db, query, params, context);
+    Postgres_result *pg_result = query_database(db, query, params, context);
 
+    s64 column_index = *Get(pg_result->columns, "polygon");
+    if (column_index < 0)  return QueryError("Couldn't find a \"polygon\" column in the results.");
+
+    u8_array3 *rows = &pg_result->rows;
     if (!rows->count)  return QueryError("A query for polygons returned no results.");
 
-    Polygon_array *result = NewArray(result, context);
+    Polygon_array *polygons = NewArray(polygons, context);
 
     for (s64 i = 0; i < rows->count; i++) {
-        Result_row *row = rows->data[i];
-
-        u8_array *cell = *Get(row, "polygon");
-        if (!cell)  return QueryError("Couldn't find a \"polygon\" column in the results.");
+        u8_array2 *row = &rows->data[i];
+        u8_array *cell = &row->data[column_index];
         if (!cell->count)  continue;
 
         u8 *end_data = NULL;
-        parse_polygons(cell->data, result, &end_data);
+        parse_polygons(cell->data, polygons, &end_data);
 
-        assert(end_data - cell->data == cell->count);
+        assert(end_data == &cell->data[cell->count]);
     }
 
-    return result;
+    return polygons;
 }
 
-//
-// Some code for visualising Postgres_result structs:
-//
-//   #include <stdio.h>
-//   #include <ctype.h>
-//
-//     for (s64 i = 0; i < result->count; i++) {
-//         Result_row *row = result->data[i];
-//
-//         printf("{");
-//         for (s64 j = 0; j < row->count; j++) {
-//             char    *field = row->keys[j];
-//             u8_array *cell = row->vals[j];
-//
-//             if (j)  printf(", ");
-//
-//             printf("%s: \"", field);
-//             for (s64 k = 0; k < cell->count; k++) {
-//                 int c = cell->data[k];
-//                 if (isprint(c))  printf("%c",    c);
-//                 else             printf("\\%#x", c);
-//             }
-//             printf("\"");
-//         }
-//         printf("}\n");
-//     }
-//
-
 void parse_paths(u8 *data, Path_array *result, u8 **end_data)
-// data is a pointer to EWKB geometries. Like strtod, if end_data is not NULL, it is the address
+// data is a pointer to EWKB geometries. end_data is like the strtod() argument: if it's not NULL, it is the address
 // where this function will save a pointer to the byte after the last byte of data parsed.
 {
     Memory_context *ctx = result->context;
@@ -230,26 +203,28 @@ void parse_paths(u8 *data, Path_array *result, u8 **end_data)
 
 Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_context *context)
 {
-    Postgres_result *rows = query_database(db, query, params, context);
+    Postgres_result *pg_result = query_database(db, query, params, context);
 
+    s64 column_index = *Get(pg_result->columns, "path");
+    if (column_index < 0)  return QueryError("Couldn't find a \"path\" column in the results.");
+
+    u8_array3 *rows = &pg_result->rows;
     if (!rows->count)  return QueryError("A query for paths returned no results.");
 
-    Path_array *result = NewArray(result, context);
+    Path_array *paths = NewArray(paths, context);
 
     for (s64 i = 0; i < rows->count; i++) {
-        Result_row *row = rows->data[i];
-
-        u8_array *cell = *Get(row, "path");
-        if (!cell)  return QueryError("Couldn't find a \"path\" column in the results.");
+        u8_array2 *row = &rows->data[i];
+        u8_array *cell = &row->data[column_index];
         if (!cell->count)  continue;
 
         u8 *end_data = NULL;
-        parse_paths(cell->data, result, &end_data);
+        parse_paths(cell->data, paths, &end_data);
 
-        assert(end_data - cell->data == cell->count);
+        assert(end_data == &cell->data[cell->count]);
     }
 
-    return result;
+    return paths;
 }
 
 static Postgres_result *query_database_uncached(PGconn *db, char *query, string_array *params, Memory_context *context)
@@ -258,44 +233,48 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
 {
     Memory_context *ctx = context;
 
-    Postgres_result *result = NewArray(result, ctx);
+    Postgres_result *result = New(Postgres_result, ctx);
+    result->columns = NewDict(result->columns, ctx);
+    result->rows    = (u8_array3){.context = ctx};
 
     // Make the query.
     PGresult *query_result; {
-        int num_params = 0;
-        char const *const *param_data = NULL;
-        if (params) {
-            num_params = params->count;
-            param_data = (char const *const *)params->data;
-        }
+        int num_params = (params) ? params->count : 0;
+        char const *const *param_data = (params) ? (char const *const *)params->data : NULL;
+
         query_result = PQexecParams(db, query, num_params, NULL, param_data, NULL, NULL, 1);
 
-        if (PQresultStatus(query_result) != PGRES_TUPLES_OK)  return QueryError("Query failed: %s", PQerrorMessage(db));
+        if (PQresultStatus(query_result) != PGRES_TUPLES_OK) {
+            return QueryError("Query failed: %s", PQerrorMessage(db));
+        }
     }
 
     // Parse the result.
     int num_rows    = PQntuples(query_result);
     int num_columns = PQnfields(query_result);
 
-    string_array *fields = NewArray(fields, ctx);
-    for (int i = 0; i < num_columns; i++)  *Add(fields) = PQfname(query_result, i);
+    for (int i = 0; i < num_columns; i++) {
+        char *column_name = PQfname(query_result, i);
+        *Set(result->columns, column_name) = i;
+    }
 
     for (int i = 0; i < num_rows; i++) {
-        Result_row *row = NewDict(row, ctx);
+        u8_array2 *row = Add(&result->rows);
+        *row = (u8_array2){.context = ctx};
 
         for (int j = 0; j < num_columns; j++) {
-            char *field = fields->data[j];
-            char *data  = PQgetvalue(query_result, i, j);
-            int   size  = PQgetlength(query_result, i, j);
+            u8_array *cell = Add(row);
+            *cell = (u8_array){.context = ctx};
 
-            u8_array *cell = NewArray(cell, ctx);
+            char *data = PQgetvalue(query_result, i, j);
+            int   size = PQgetlength(query_result, i, j);
 
-            for (int k = 0; k < size; k++)  *Add(cell) = (u8)data[k];
+            if (size == 0)  continue;
 
-            *Set(row, field) = cell;
+            array_reserve(cell, size);
+            memcpy(cell->data, data, size);
+            cell->count = size;
         }
-
-        *Add(result) = row;
     }
 
     PQclear(query_result);
@@ -304,24 +283,30 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
 }
 
 Postgres_result *query_database(PGconn *db, char *query, string_array *params, Memory_context *context)
-// Parameters are string literals. Cast them in your queries: SELECT $1::int;
+// Parameters are string literals. Cast them in your queries: `SELECT $1::int;`
 // This function is mostly concerned with caching the results of query_database_uncached().
 {
-    char cache_dir[]    = "/tmp"; // |Todo: Create our own directory for cache files.
+    char cache_dir[]    = "/tmp"; //|Todo: Create our own directory for cache files.
     char magic_number[] = "PG$$";
 
     Memory_context *ctx = context;
 
-    Postgres_result *result = NewArray(result, ctx);
-
     u64 query_hash = hash_query(query, params);
 
-    char *cache_file_name = get_string(ctx, "%s/%x.pgcache", cache_dir, query_hash)->data;
+    char cache_file_name[64]; {
+        int r = snprintf(cache_file_name, sizeof(cache_file_name), "%s/%lx.pgcache", cache_dir, query_hash);
+        assert(0 < r && r < sizeof(cache_file_name));
+    }
 
     u8_array *cache_file = load_binary_file(cache_file_name, ctx);
 
     if (cache_file) {
         printf("Found cache file %s.\n", cache_file_name);
+
+        Postgres_result *result = New(Postgres_result, ctx);
+        result->columns = NewDict(result->columns, ctx);
+        result->rows    = (u8_array3){.context = ctx};
+
         //
         // Read the cache file.
         //
@@ -357,45 +342,41 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
             d += param_length + 1;
         }
 
+        s64_dict *columns = result->columns;
+
         s32 num_columns;  memcpy(&num_columns, d, sizeof(s32));
         d += sizeof(s32);
-
-        string_array *fields = NewArray(fields, ctx);
 
         for (int i = 0; i < num_columns; i++) {
             s32 num_chars;  memcpy(&num_chars, d, sizeof(s32));
             d += sizeof(s32);
 
-            // Just take a pointer to the file data for now. We don't need to copy the name because
-            // fields doesn't survive this function.
-            *Add(fields) = (char *)d;
+            *Set(columns, (char *)d) = i;
             d += num_chars;
 
             assert(*d == '\0'); // The field names are zero-terminated.
             d += 1;
         }
 
+        u8_array3 *rows = &result->rows;
+
         s32 num_rows;  memcpy(&num_rows, d, sizeof(s32));
         d += sizeof(s32);
 
         for (int i = 0; i < num_rows; i++) {
-            Result_row *row = NewDict(row, ctx);
+            u8_array2 *row = Add(rows);
+            *row = (u8_array2){.context = ctx};
 
             for (s32 j = 0; j < num_columns; j++) {
-                char *field = fields->data[j];
-
-                u8_array *cell = NewArray(cell, ctx);
-
                 s32 cell_size;  memcpy(&cell_size, d, sizeof(s32));
                 d += sizeof(s32);
 
-                for (int k = 0; k < cell_size; k++)  *Add(cell) = d[k];
+                // Rather than making a copy, we're going to take pointers into the file that we've loaded.
+                // So we won't initialise the cell with a context, since it doesn't own its data.
+                *Add(row) = (u8_array){.data = d, .count = cell_size};
+
                 d += cell_size;
-
-                *Set(row, field) = cell;
             }
-
-            *Add(result) = row;
         }
 
         s64 num_bytes_parsed = d - cache_file->data;
@@ -407,7 +388,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
     printf("No cache file found. Making query.\n");
 
     // Make the query and parse the result.
-    result = query_database_uncached(db, query, params, ctx);
+    Postgres_result *result = query_database_uncached(db, query, params, ctx);
 
     //
     // Write the result to a cache file.
@@ -435,29 +416,27 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
         *Add(cache_file) = '\0';
     }
 
-    s32 num_columns = result->data[0]->count;
+    s32 num_columns = result->columns->count;
     add_s32(cache_file, num_columns);
 
     for (int i = 0; i < num_columns; i++) {
-        char *field = result->data[0]->keys[i];
-        int  length = strlen(field);
+        char *column_name = result->columns->keys[i];
+        int   name_length = strlen(column_name);
 
-        add_s32(cache_file, length);
+        add_s32(cache_file, name_length);
 
-        for (int j = 0; j < length; j++)  *Add(cache_file) = field[j];
+        for (int j = 0; j < name_length; j++)  *Add(cache_file) = column_name[j];
         *Add(cache_file) = '\0';
     }
 
-    s32 num_rows = result->count;
+    s32 num_rows = result->rows.count;
     add_s32(cache_file, num_rows);
 
     for (int i = 0; i < num_rows; i++) {
-        Result_row *row = result->data[i];
+        u8_array2 *row = &result->rows.data[i];
 
         for (s32 j = 0; j < num_columns; j++) {
-            char *field = result->data[i]->keys[j];
-
-            u8_array *cell = *Get(row, field);
+            u8_array *cell = &row->data[j];
 
             add_s32(cache_file, (s32)cell->count);
 
@@ -467,6 +446,5 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
 
     write_array_to_file(cache_file, cache_file_name);
 
-    // Return the result.
     return result;
 }

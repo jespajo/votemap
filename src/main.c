@@ -188,7 +188,9 @@ Response serve_labels(Request *request, Memory_context *context)
 
     Postgres_result *result = query_database(db, query, NULL, ctx);
 
-    u8_array *json = *Get(result->data[0], "json");
+    assert(*Get(result->columns, "json") == 0);
+    assert(result->rows.count == 1);
+    u8_array *json = &result->rows.data[0].data[0];
 
     Response response = {200, .body = json->data, .size = json->count};
 
