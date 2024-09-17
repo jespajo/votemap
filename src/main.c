@@ -50,33 +50,90 @@ Response serve_vertices(Request *request, Memory_context *context)
     // Prepare the parameters to our SQL queries (they are the same for all queries below).
     // Negate the Y values to convert the map units of the browser to the database's coordinate reference system.
     string_array params = {.context = ctx};
-
-    *Add(&params) = get_string(ctx, "%f", upp)->data;
-    *Add(&params) = get_string(ctx, "%f", x0)->data;
-    *Add(&params) = get_string(ctx, "%f", -y0)->data;
-    *Add(&params) = get_string(ctx, "%f", x1)->data;
-    *Add(&params) = get_string(ctx, "%f", -y1)->data;
+    {
+        *Add(&params) = get_string(ctx, "%f", upp)->data;
+        *Add(&params) = get_string(ctx, "%f", x0)->data;
+        *Add(&params) = get_string(ctx, "%f", -y0)->data;
+        *Add(&params) = get_string(ctx, "%f", x1)->data;
+        *Add(&params) = get_string(ctx, "%f", -y1)->data;
+    }
 
     // Draw the Voronoi map polygons.
     {
         char *query =
-            " select st_asbinary(st_collectionextract(geom, 3)) as polygon                          "
-            " from (                                                                                "
-            "     select st_makevalid(st_snaptogrid(new_voronoi, $1::float)) as geom                "
-            "     from booths_22                                                                    "
-            "     where new_voronoi is not null                                                     "
-            "       and new_voronoi && st_setsrid(                                                  "
-            "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
-            "         3577                                                                          "
-            "       )                                                                               "
-            "   ) t                                                                                 ";
+            " select booth_id::int,                                             "
+            "   st_asbinary(st_collectionextract(geom, 3)) as polygon           "
+            " from (                                                            "
+            "     select booth_id,                                              "
+            "       st_makevalid(st_snaptogrid(new_voronoi, $1::float)) as geom "
+            "     from booths_22                                                "
+            "     where new_voronoi is not null                                 "
+            "       and new_voronoi && st_setsrid(                              "
+            "         st_makebox2d(                                             "
+            "           st_point($2::float, $3::float),                         "
+            "           st_point($4::float, $5::float)                          "
+            "         ),                                                        "
+            "         3577                                                      "
+            "       )                                                           "
+            "   ) t                                                             ";
 
-        Polygon_array *polygons = query_polygons(db, query, &params, ctx);
+        Postgres_result *result = query_database(db, query, &params, ctx);
 
-        for (s64 i = 0; i < polygons->count; i++) {
-            Vector4 colour = {0.5+0.3*frand(), 0.5+0.5*frand(), 0.5+0.4*frand(), 1.0};
+        s64 id_column      = *Get(result->columns, "booth_id");
+        s64 polygon_column = *Get(result->columns, "polygon");
+        if (id_column < 0)        Fatal("Couldn't find a \"id\" column in the results.");
+        if (polygon_column < 0)   Fatal("Couldn't find a \"polygon\" column in the results.");
+        if (!result->rows.count)  Fatal("A query for polygons returned no results.");
 
-            draw_polygon(&polygons->data[i], colour, verts);
+        typedef struct Booth Booth;
+        struct Booth {
+            int           id;
+            Polygon_array polygons;
+        };
+        Array(Booth) booths = {.context = ctx};
+
+        //
+        // Extract data from query results.
+        //
+        for (s64 i = 0; i < result->rows.count; i++) {
+            u8_array *id_cell       = &result->rows.data[i].data[id_column];
+            u8_array *polygons_cell = &result->rows.data[i].data[polygon_column];
+
+            Booth *booth = Add(&booths);
+            *booth = (Booth){.polygons = {.context = ctx}};
+
+            // Get booth ID:
+            booth->id = get_int_from_cell(id_cell);
+
+            // Get polygons:
+            {
+                assert(polygons_cell->count > 0);
+
+                u8 *end_data = NULL;
+                parse_polygons(polygons_cell->data, &booth->polygons, &end_data);
+
+                assert(end_data == &polygons_cell->data[polygons_cell->count]);
+            }
+        }
+
+        //
+        // Draw the polygons.
+        //
+        for (s64 i = 0; i < booths.count; i++) {
+            Booth *booth = &booths.data[i];
+
+            Vector4 colour; {
+                //|Temporary: This totally over-the-top way of coming up with a random colour based on the booth ID is so we can be really sure when two separated shapes on the map are part of the same multipolygon.
+                u64 hash = hash_bytes(&booth->id, sizeof(booth->id));
+                float r1 = (float)(hash & 0xffff)/(float)0xffff;
+                float r2 = (float)(hash>>16 & 0xffff)/(float)0xffff;
+                float r3 = (float)(hash>>32 & 0xffff)/(float)0xffff;
+
+                colour = (Vector4){0.5+0.3*r1, 0.5+0.5*r2, 0.5+0.4*r3, 1.0};
+            }
+
+            Polygon_array *poly = &booth->polygons;
+            for (s64 j = 0; j < poly->count; j++)  draw_polygon(&poly->data[j], colour, verts);
         }
     }
 

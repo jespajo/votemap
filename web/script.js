@@ -654,6 +654,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 url += '&x1=' + envelope[1].x;
                 url += '&y1=' + envelope[1].y;
 
+                // UPP: Map units per pixel. Increases as you zoom out.
                 const upp = 1/map.currentTransform.scale;
                 url += '&upp=' + upp;
 

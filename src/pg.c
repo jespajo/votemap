@@ -1,3 +1,5 @@
+#include <arpa/inet.h> // For ntohl(), which we expose as get_int_from_cell().
+
 #include "pg.h"
 #include "strings.h"
 
@@ -134,7 +136,7 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
     if (end_data)  *end_data = d;
 }
 
-Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Memory_context *context)
+Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Memory_context *context) //|Deprecated
 {
     Postgres_result *pg_result = query_database(db, query, params, context);
 
@@ -236,6 +238,7 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
     Postgres_result *result = New(Postgres_result, ctx);
     result->columns = NewDict(result->columns, ctx);
     result->rows    = (u8_array3){.context = ctx};
+    SetDefault(result->columns, -1);
 
     // Make the query.
     PGresult *query_result; {
@@ -306,6 +309,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
         Postgres_result *result = New(Postgres_result, ctx);
         result->columns = NewDict(result->columns, ctx);
         result->rows    = (u8_array3){.context = ctx};
+        SetDefault(result->columns, -1);
 
         //
         // Read the cache file.
@@ -447,4 +451,14 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
     write_array_to_file(cache_file, cache_file_name);
 
     return result;
+}
+
+int get_int_from_cell(u8_array *cell)
+{
+    assert(cell->count == sizeof(u32));
+
+    u32 aligned;
+    memcpy(&aligned, cell->data, sizeof(u32));
+
+    return ntohl(aligned);
 }

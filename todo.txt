@@ -1,5 +1,4 @@
 Add the actual colours to the Voronoi map.
-1. Change the structure of current way we get polygons so that multipolygons remain associated with their row from the original query results. If we then base the colour on a hash of the booth_id we will know it's working as expected.
 2. Create another table candidates_22 associating candidate IDs with party IDs.
 3. Associate party IDs with colours in the C application---this way we can think about doing things like using stripes of two colours to represent some parties.
 4. Update your booths query so that it returns the party ID of the candidate with the most first preferences for each booth.
