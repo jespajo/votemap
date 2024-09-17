@@ -1,17 +1,23 @@
 Reduce the map to one layer: the Voronoi diagram
 
-Make sure all our SQL queries are coming from indexed geometries
+Add the actual colours to the Voronoi map.
+1. Change the structure of current way we get polygons so that multipolygons remain associated with their row from the original query results. If we then base the colour on a hash of the booth_id we will know it's working as expected.
+2. Create another table candidates_22 associating candidate IDs with party IDs.
+3. Associate party IDs with colours in the C application---this way we can think about doing things like using stripes of two colours to represent some parties.
+4. Update your booths query so that it returns the party ID of the candidate with the most first preferences for each booth.
 
-Add the actual colours to the Voronoi map
-
-Get the front end to request the vertices in a predictable grid of tiles
+Add cities/suburbs to labels depending on zoom level
 
 ---
+
+Turn the electorate edge data (currently topo being queried) into geometry so we can index it and also so we can associate lines with names when they are things like rivers, etc.
+
+Get the front end to request the vertices in a predictable grid of tiles
 
 triangulate_polygon():
     Speed up with spatial hashing?
 
-Fix the bug that sometimes causes the web server to fail to close the socket for the request for labels.json.
+|Bug: Sometimes the web server to was failing to close the socket for the request for labels.json. It hasn't happened in a while though.
 
 serve_file_slowly():
     Better than what we're doing would be: When the server starts up, recursively visit all files under the working directory and put their full paths into a big array. Also keep track of whether each one is a regular file or a directory. Keep the array sorted for quick searching. Then if the request path matches a path in the array, we know it's a valid file, so we'll try to load it into memory. Then you can do the normalisation of the URL (i.e. making '..' mean to go up a directory) in a separate function, which would simply take the request path as an argument and return the normalised path. This would be much quicker as we wouldn't need to make a thousand syscalls to serve every single file!
@@ -24,17 +30,7 @@ Upload XML files to database:
     vote data
     election info
 
-Make Voronoi map visualise real vote data instead of random colours.
-
 |Bug: I left my computer with the current build open in the browser for a few hours and when I tried scrolling the mouse, it was super janky, like the transformations weren't being applied uniformly. I stupidly refreshed the page. The fact that it appeared after a while made me thing it was floating-point issues to do with currentTime being large, but I haven't been able to reproduce the issue by setting currentTime to large values.
-
-Write up docs on map params:
-    bounds
-    zoom levels
-    layers
-Get main() to call a function that returns different verts depending on bounds, zoom level and layer.
-Get JavaScript just to request based on the current zoom level when you press a key.
-Turn main() into a CGI script that parses this and returns the verts to the web browser.
 
 Front end: improve two-part transitions.
     Only do them if you're going from one zoomed-in look to another in a different place?
@@ -56,10 +52,6 @@ Front end: draw compass.
     On mobile, tap this to return to a view with north oriented upwards.
     On desktop, when you press the compass you go into rotation mode. A circle appears in the middle of the screen with the compass directions etched in. Your cursor is on the edge of the compass. A change in the cursor image would be nice. While the mouse is held down, the circle rotates such that the point the cursor was originally on is the closest point on the circle to the cursor position.
 
-C framework: copy_string() (and others?) should take optional length params so they don't have to calculate their length unless needed. Optional probably means calling them with -1 for the length argument to say, "These strings are NULL-terminated. Find the length yourself." Add this argument then audit uses of these functions to pass the length if we already know it.
-
-C framework: I can never decide whether to use char or u8 for data. u8 feels better but we can't call print_string() on it. Maybe we could achieve this if we turn print_string() into a macro that calls a function, print_string_((ARRAY)->data, (ARRAY)->count, ...). The first argument is a char *. I think the compiler might be fine with implicitly casting a u8 * to a char * in that case? Or if we have to make it void *, can we assert(sizeof((ARRAY)->data[0]) == sizeof(char))?
-
 Web server:
     Use getaddrinfo().
     Support IPv6.
@@ -67,18 +59,3 @@ Web server:
     Parse request bodies; support POST requests.
     Make it multithreaded.
     Support Connection: Keep-Alive.
-
-Before we can do a writeup showcasing context.h, map.h and array.h:
-    1. s/Memory_Context/Memory_context/g etc.
-    2. Remove the sentinel flag. We can still have sentinels in the used_blocks arrays---they will just be marked by having a size of 0.
-    3. Allow NewMap to take a hashing function.
-    4. Allow NewMap to take a "get id from key" function. As in, the key can be a big struct but if only one or two members actually matter for making the key distinct, the function extracts those two members. Some uses:
-        - Variable-length keys e.g. zero-terminated strings.
-        - Say we want to store values with our keys rather than in a separate array, to avoid cache misses. In theory we could obsolete the whole .vals array. Though I guess we would want to implement a GetKey() macro since Get() returns the val.
-        - Say we have some weird case where we have an array of structs where we can't modify the structs' type, but we want to use only one member as the key in a map. E.g. for our HTTP server, we could have pollfd structs in an array and only use the socket file descriptor as the ID. Although because we couldn't do that we ended up implementing the HTTP server in a way that was probably just better, so this isn't a big one, but maybe there are cases where we'd want this.
-    5. Add some memory-use reporting. This will mean Memory_context's need to track their children. Since it's a shame to have to do that, we probably want to put everything behind a DEBUG_MEMORY flag (but don't also include all the baggage currently hidden behind DEBUG_MEMORY_CONTEXT).
-    6. array_insert()
-    7. is_undefined() for map values: syntactic sugar for `Get() == &map.vals[-1]`.
-    8. We would probably need to address the worries about strict aliasing. Not because this is an inherently worthwhile improvement but because if we share this online then dickheads will declare it worthless if there's undefined behaviour. Two ways we could address our issues:
-        a. Instead of just passing a void * to the map functions, we could pass pointers to all the individual members of the map struct that we need to modify, casting the key/value pointers to char * or void *. This is the stbds approach.
-        b. We could keep using Alias_map and memcpy in and out... but that just seems worse.
