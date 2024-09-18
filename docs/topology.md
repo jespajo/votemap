@@ -187,6 +187,7 @@ From the shell:
 
     create index electorates_22_booths_voronoi_idx on electorates_22 using gist(booths_voronoi);
 ```
+
 We restrict our set of booths to ones where the XML and spatial data agree---that is, the coordinates for the booth fall into the boundaries of the booth's district.
 
 Note that the `booth_voronoi` multipolygons are huge overlapping rectangles---not yet clipped by each district's boundaries.
@@ -283,4 +284,65 @@ This is just so we can make use of a spatial index.
     where booths_22.booth_id = t.booth_id;
 
     create index booths_22_new_voronoi_idx on booths_22 using gist(new_voronoi);
+```
+
+## 10. Create a table of candidates.
+
+First the XML table:
+
+```
+    create table xml.eml_candidates (
+        election_id int primary key,
+        xmldata     xml
+      );
+```
+
+Then populate that from the shell:
+
+```
+    DATA_DIR=/home/jpj/src/webgl/reference/votemap-1-data/aec
+    ELECTION_ID=27966
+    printf "insert into xml.eml_candidates values ($ELECTION_ID, '$(
+        xmllint --noblanks $DATA_DIR/$ELECTION_ID/eml-230-candidates.xml | sed "1d;s/'/''/g"
+    )');" | pq
+```
+
+Now the actual SQL table:
+
+```
+    create table candidates_22 (
+        id          int     primary key,
+        name        text,
+        independent boolean,
+        party_id    int,
+        party_name  text,
+        colour      int     check (0 <= colour and colour <= x'ffffff'::int)
+      );
+
+    insert into candidates_22
+    select
+      (xpath('/*/@Id',                                       candidate_identifier))[1]::text::int   as id,
+      (xpath('/*/*[local-name()=''CandidateName'']/text()',  candidate_identifier))[1]::text        as name,
+      independent::text::boolean                                                                    as independent,
+      (xpath('/*/@Id',                                       affiliation_identifier))[1]::text::int as party_id,
+      (xpath('/*/*[local-name()=''RegisteredName'']/text()', affiliation_identifier))[1]::text      as party_name,
+      '0'::int                                                                                      as colour
+    from (
+        select
+          (xpath('/*/@Independent',                                candidate))[1] as independent,
+          (xpath('/*/*[local-name()=''CandidateIdentifier'']',     candidate))[1] as candidate_identifier,
+          (xpath('/*/*/*[local-name()=''AffiliationIdentifier'']', candidate))[1] as affiliation_identifier
+        from (
+            select (unnest(xpath('/*/*/*/*/*[local-name()=''Candidate'']', xmldata))) as candidate
+            from xml.eml_candidates
+          ) t
+      ) t;
+```
+
+Add a splash of wrong, temporary colours.
+
+```
+    update candidates_22 set colour = x'ff0000'::int where party_name like '%Labor%';
+    update candidates_22 set colour = x'00ff00'::int where party_name like '%Green%';
+    update candidates_22 set colour = x'0000ff'::int where party_name like '%Liberal%';
 ```
