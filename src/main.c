@@ -61,6 +61,7 @@ Response serve_vertices(Request *request, Memory_context *context)
     // Draw the Voronoi map polygons.
     {
         char *query =
+            " with voronoi as (                                                 "
             " select booth_id::int,                                             "
             "   st_asbinary(st_collectionextract(geom, 3)) as polygon           "
             " from (                                                            "
@@ -75,65 +76,78 @@ Response serve_vertices(Request *request, Memory_context *context)
             "         ),                                                        "
             "         3577                                                      "
             "       )                                                           "
-            "   ) t                                                             ";
+            "   ) t                                                             "
+            " ),                                                                "
+            " leaders as (                                                      "
+            "   select booth_id,                                                "
+            "     candidate_ids [1] as candidate_id,                            "
+            "     (num_votes [1]::real / total_votes::real) as fraction         "
+            "   from (                                                          "
+            "       select booth_id,                                            "
+            "         array_agg(candidate_id) as candidate_ids,                 "
+            "         array_agg(num_votes) as num_votes,                        "
+            "         sum(num_votes) as total_votes                             "
+            "       from (                                                      "
+            "           select *                                                "
+            "           from results_2cp_22                                     "
+            "           order by num_votes desc                                 "
+            "         ) t                                                       "
+            "       group by booth_id                                           "
+            "     ) t                                                           "
+            "   where total_votes > 0                                           "
+            " )                                                                 "
+            " select v.booth_id,                                                "
+            "   v.polygon,                                                      "
+            "   l.fraction as fraction_of_votes,                                "
+            "   c.colour                                                        "
+            " from voronoi v                                                    "
+            "   left join leaders l on v.booth_id = l.booth_id                  "
+            "   left join candidates_22 c on l.candidate_id = c.id              ";
 
         Postgres_result *result = query_database(db, query, &params, ctx);
-
-        s64 id_column      = *Get(result->columns, "booth_id");
-        s64 polygon_column = *Get(result->columns, "polygon");
-        if (id_column < 0)        Fatal("Couldn't find a \"id\" column in the results.");
-        if (polygon_column < 0)   Fatal("Couldn't find a \"polygon\" column in the results.");
         if (!result->rows.count)  Fatal("A query for polygons returned no results.");
 
-        typedef struct Booth Booth;
-        struct Booth {
-            int           id;
-            Polygon_array polygons;
-        };
-        Array(Booth) booths = {.context = ctx};
-
-        //
-        // Extract data from query results.
-        //
-        for (s64 i = 0; i < result->rows.count; i++) {
-            u8_array *id_cell       = &result->rows.data[i].data[id_column];
-            u8_array *polygons_cell = &result->rows.data[i].data[polygon_column];
-
-            Booth *booth = Add(&booths);
-            *booth = (Booth){.polygons = {.context = ctx}};
-
-            // Get booth ID:
-            booth->id = get_int_from_cell(id_cell);
-
-            // Get polygons:
-            {
-                assert(polygons_cell->count > 0);
-
-                u8 *end_data = NULL;
-                parse_polygons(polygons_cell->data, &booth->polygons, &end_data);
-
-                assert(end_data == &polygons_cell->data[polygons_cell->count]);
-            }
-        }
+        s64 polygons_column = *Get(result->columns, "polygon");
+        s64 fraction_column = *Get(result->columns, "fraction_of_votes");
+        s64 colour_column   = *Get(result->columns, "colour");
+        if (polygons_column < 0)  Fatal("Couldn't find a \"polygon\" column in the results.");
+        if (fraction_column < 0)  Fatal("Couldn't find a \"fraction_of_votes\" column in the results.");
+        if (colour_column < 0)    Fatal("Couldn't find a \"colour\" column in the results.");
 
         //
         // Draw the polygons.
         //
-        for (s64 i = 0; i < booths.count; i++) {
-            Booth *booth = &booths.data[i];
+        for (s64 i = 0; i < result->rows.count; i++) {
+            u8_array *polygons_cell = &result->rows.data[i].data[polygons_column];
+            u8_array *fraction_cell = &result->rows.data[i].data[fraction_column];
+            u8_array *colour_cell   = &result->rows.data[i].data[colour_column];
 
-            Vector4 colour; {
-                //|Temporary: This totally over-the-top way of coming up with a random colour based on the booth ID is so we can be really sure when two separated shapes on the map are part of the same multipolygon.
-                u64 hash = hash_bytes(&booth->id, sizeof(booth->id));
-                float r1 = (float)(hash & 0xffff)/(float)0xffff;
-                float r2 = (float)(hash>>16 & 0xffff)/(float)0xffff;
-                float r3 = (float)(hash>>32 & 0xffff)/(float)0xffff;
+            Polygon_array polygons = {.context = ctx};
+            {
+                assert(polygons_cell->count > 0);
 
-                colour = (Vector4){0.5+0.3*r1, 0.5+0.5*r2, 0.5+0.4*r3, 1.0};
+                u8 *end_data = NULL;
+                parse_polygons(polygons_cell->data, &polygons, &end_data);
+
+                assert(end_data == &polygons_cell->data[polygons_cell->count]);
             }
 
-            Polygon_array *poly = &booth->polygons;
-            for (s64 j = 0; j < poly->count; j++)  draw_polygon(&poly->data[j], colour, verts);
+            Vector4 colour;
+            if (colour_cell->count) {
+                u32   parsed_colour   = get_u32_from_cell(colour_cell);
+                float parsed_fraction = get_float_from_cell(fraction_cell);
+
+                //|Todo: Interpolate in HSL at least.
+                int r = (parsed_colour & 0xff0000) >> 16;
+                int g = (parsed_colour & 0x00ff00) >> 8;
+                int b = (parsed_colour & 0x0000ff);
+
+                colour = (Vector4){r/255.0, g/255.0, b/255.0, parsed_fraction};
+            } else {
+                colour = (Vector4){0.5, 0.5, 0.5, 1.0};
+            }
+
+            for (s64 j = 0; j < polygons.count; j++)  draw_polygon(&polygons.data[j], colour, verts);
         }
     }
 

@@ -1,4 +1,4 @@
-#include <arpa/inet.h> // For ntohl(), which we expose as get_int_from_cell().
+#include <arpa/inet.h> // For ntohl(), which we use in get_u32_from_cell().
 
 #include "pg.h"
 #include "strings.h"
@@ -453,12 +453,23 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
     return result;
 }
 
-int get_int_from_cell(u8_array *cell)
+u32 get_u32_from_cell(u8_array *cell)
+// The cell must be 4 bytes.
 {
     assert(cell->count == sizeof(u32));
 
-    u32 aligned;
-    memcpy(&aligned, cell->data, sizeof(u32));
+    // Make sure the u32 we pass to ntohl() is aligned.
+    u32 n;  memcpy(&n, cell->data, sizeof(u32));
 
-    return ntohl(aligned);
+    return ntohl(n);
+}
+
+float get_float_from_cell(u8_array *cell)
+// The cell must be 4 bytes.
+{
+    u32 parsed_u32 = get_u32_from_cell(cell);
+
+    float f;  memcpy(&f, &parsed_u32, sizeof(float));
+
+    return f;
 }

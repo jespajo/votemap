@@ -35,6 +35,7 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data);
 void parse_paths(u8 *data, Path_array *result, u8 **end_data);
 Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_context *context);
 Postgres_result *query_database(PGconn *db, char *query, string_array *params, Memory_context *context);
-int get_int_from_cell(u8_array *cell);
+u32 get_u32_from_cell(u8_array *cell);
+float get_float_from_cell(u8_array *cell);
 
 #endif // PG_H_INCLUDED
