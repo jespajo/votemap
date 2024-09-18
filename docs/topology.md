@@ -346,3 +346,25 @@ Add a splash of wrong, temporary colours.
     update candidates_22 set colour = x'00ff00'::int where party_name like '%Green%';
     update candidates_22 set colour = x'0000ff'::int where party_name like '%Liberal%';
 ```
+
+## 11. Add some vote results data.
+
+From SQL:
+
+```
+    /* Later we'll want to add the time the results came in to this table, I think. */
+    create table xml.aec_results (
+        election_id int primary key,
+        xmldata     xml
+      );
+```
+
+Then from the shell:
+
+```
+    DATA_DIR=/home/jpj/src/webgl/reference/votemap-1-data/aec
+    ELECTION_ID=27966
+    printf "insert into xml.aec_results values ($ELECTION_ID, '$(
+        xmllint --noblanks $DATA_DIR/$ELECTION_ID/aec-mediafeed-results-detailed-light.xml | sed "1d;s/'/''/g"
+    )');" | pq
+```
