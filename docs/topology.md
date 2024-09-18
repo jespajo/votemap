@@ -352,7 +352,6 @@ Add a splash of wrong, temporary colours.
 From SQL:
 
 ```
-    /* Later we'll want to add the time the results came in to this table, I think. */
     create table xml.aec_results (
         election_id int primary key,
         xmldata     xml
@@ -367,4 +366,27 @@ Then from the shell:
     printf "insert into xml.aec_results values ($ELECTION_ID, '$(
         xmllint --noblanks $DATA_DIR/$ELECTION_ID/aec-mediafeed-results-detailed-light.xml | sed "1d;s/'/''/g"
     )');" | pq
+```
+
+Extract it into a table.
+
+```
+    create table results_2cp_22 (
+        booth_id     int,
+        candidate_id int,
+        num_votes    int
+      );
+
+    insert into results_2cp_22
+    select booth_id,
+      (xpath('/*/*[local-name()=''CandidateIdentifier'']/@Id', candidate)) [1]::text::int as candidate_id,
+      (xpath('/*/*[local-name()=''Votes'']/text()', candidate)) [1]::text::int as num_votes
+    from (
+        select (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Id', house_booths)) [1]::text::int as booth_id,
+          unnest(xpath('/*/*[local-name()=''TwoCandidatePreferred'']/*[local-name()=''Candidate'']', house_booths)) as candidate
+        from (
+            select unnest(xpath('/*/*/*/*[local-name()=''House'']/*/*/*/*[local-name()=''PollingPlace'']', xmldata)) as house_booths
+            from xml.aec_results
+          ) t
+      ) t;
 ```

@@ -1,8 +1,8 @@
-Add some vote data.
-
 Update your booths query so that it returns the party ID of the candidate with the most first preferences for each booth.
 
 Add cities/suburbs to labels depending on zoom level
+
+Add rivers, train lines, roads to verts depending on zoom level
 
 ---
 
