@@ -41,7 +41,7 @@ Response serve_vertices(Request *request, Memory_context *context)
                 char_array *error = get_string(ctx, "Unexpected value for '%s' query parameter: '%s'\n", keys[i], num_string);
                 return (Response){400, .body = error->data, .size = error->count};
             }
-            // We parsed the whole string. We're ignoring ERANGE errors. We should do something about NAN and (-)INFINITY. |Robustness
+            // We parsed the whole string. We're ignoring ERANGE errors. We should do something about NAN and (-)INFINITY. In fact setting upp to INFINITY causes a segmentation fault. |Bug!
 
             *(nums[i]) = num;
         }
@@ -60,50 +60,7 @@ Response serve_vertices(Request *request, Memory_context *context)
 
     // Draw the Voronoi map polygons.
     {
-        char *query =
-            " with voronoi as (                                                 "
-            " select booth_id::int,                                             "
-            "   st_asbinary(st_collectionextract(geom, 3)) as polygon           "
-            " from (                                                            "
-            "     select booth_id,                                              "
-            "       st_makevalid(st_snaptogrid(new_voronoi, $1::float)) as geom "
-            "     from booths_22                                                "
-            "     where new_voronoi is not null                                 "
-            "       and new_voronoi && st_setsrid(                              "
-            "         st_makebox2d(                                             "
-            "           st_point($2::float, $3::float),                         "
-            "           st_point($4::float, $5::float)                          "
-            "         ),                                                        "
-            "         3577                                                      "
-            "       )                                                           "
-            "   ) t                                                             "
-            " ),                                                                "
-            " leaders as (                                                      "
-            "   select booth_id,                                                "
-            "     candidate_ids [1] as candidate_id,                            "
-            "     (num_votes [1]::real / total_votes::real) as fraction         "
-            "   from (                                                          "
-            "       select booth_id,                                            "
-            "         array_agg(candidate_id) as candidate_ids,                 "
-            "         array_agg(num_votes) as num_votes,                        "
-            "         sum(num_votes) as total_votes                             "
-            "       from (                                                      "
-            "           select *                                                "
-            "           from results_house_22                                   "
-            "           where vote_type = '2CP'                                 "
-            "           order by num_votes desc                                 "
-            "         ) t                                                       "
-            "       group by booth_id                                           "
-            "     ) t                                                           "
-            "   where total_votes > 0                                           "
-            " )                                                                 "
-            " select v.booth_id,                                                "
-            "   v.polygon,                                                      "
-            "   l.fraction as fraction_of_votes,                                "
-            "   c.colour                                                        "
-            " from voronoi v                                                    "
-            "   left join leaders l on v.booth_id = l.booth_id                  "
-            "   left join candidates_22 c on l.candidate_id = c.id              ";
+        char *query = load_text_file("queries/voronoi.sql", ctx)->data;
 
         Postgres_result *result = query_database(db, query, &params, ctx);
         if (!result->rows.count)  Fatal("A query for polygons returned no results.");
