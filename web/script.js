@@ -896,6 +896,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                         }
                     }
 
+                    ui.strokeStyle = 'white';
+                    ui.lineWidth = 2;
+                    ui.strokeText(label.text, textX, textY);
                     ui.fillStyle = 'black';
                     ui.fillText(label.text, textX, textY);
                 }

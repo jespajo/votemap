@@ -125,6 +125,7 @@ Response serve_vertices(Request *request, Memory_context *context)
             "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
             "         3577                                                                          "
             "       )                                                                               "
+            "       and (left_face != 0 and right_face != 0)                                        "
             "   ) t                                                                                 ";
 
         Path_array *paths = query_paths(db, query, &params, ctx);
@@ -132,13 +133,13 @@ Response serve_vertices(Request *request, Memory_context *context)
         for (s64 i = 0; i < paths->count; i++) {
             Vector4 colour = {0, 0, 0, 1.0};
 
-            float line_width = 2*upp;
+            float line_width = 1.5*upp;
 
             draw_path(&paths->data[i], line_width, colour, verts);
         }
     }
 
-    verts = copy_verts_in_the_box(verts, x0, y0, x1, y1, ctx);
+    if (verts->count)  verts = copy_verts_in_the_box(verts, x0, y0, x1, y1, ctx);
 
     Response response = {200, .body = verts->data, .size = verts->count*sizeof(Vertex)};
 

@@ -210,13 +210,12 @@ Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_co
     s64 column_index = *Get(pg_result->columns, "path");
     if (column_index < 0)  return QueryError("Couldn't find a \"path\" column in the results.");
 
-    u8_array3 *rows = &pg_result->rows;
-    if (!rows->count)  return QueryError("A query for paths returned no results.");
-
     Path_array *paths = NewArray(paths, context);
 
-    for (s64 i = 0; i < rows->count; i++) {
-        u8_array2 *row = &rows->data[i];
+    if (!pg_result->rows.count)  printf("A query for paths returned no results.");
+
+    for (s64 i = 0; i < pg_result->rows.count; i++) {
+        u8_array2 *row = &pg_result->rows.data[i];
         u8_array *cell = &row->data[column_index];
         if (!cell->count)  continue;
 

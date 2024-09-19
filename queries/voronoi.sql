@@ -34,7 +34,13 @@ from voronoi v
         group by booth_id
       ) r2 on (r1.booth_id = r2.booth_id)
     where vote_type = 'FP'
+
       and num_votes = max_votes
+      --|Todo:
+      --|and candidate_id in (
+      --|  select id from candidates_22 where party_name like $6::text
+      --|)
+
       and total_votes > 0
   ) l on v.booth_id = l.booth_id
   left join candidates_22 c on l.candidate_id = c.id
