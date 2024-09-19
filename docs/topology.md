@@ -369,24 +369,35 @@ Then from the shell:
 ```
 
 Extract it into a table.
+Only include the lower-house results for now.
 
 ```
-    create table results_2cp_22 (
+    create type house_vote_type as enum ('FP', '2CP');
+
+    create table results_house_22 (
         booth_id     int,
+        vote_type    house_vote_type,
         candidate_id int,
         num_votes    int
       );
 
-    insert into results_2cp_22
+    insert into results_house_22
     select booth_id,
-      (xpath('/*/*[local-name()=''CandidateIdentifier'']/@Id', candidate)) [1]::text::int as candidate_id,
-      (xpath('/*/*[local-name()=''Votes'']/text()', candidate)) [1]::text::int as num_votes
+      (case when vt = 'FirstPreferences' then 'FP' when vt = 'TwoCandidatePreferred' then '2CP' end)::house_vote_type as vote_type,
+      (xpath('/*/*[local-name()=''CandidateIdentifier'']/@Id', candidate))[1]::text::int                              as candidate_id,
+      (xpath('/*/*[local-name()=''Votes'']/text()', candidate))[1]::text::int                                         as num_votes
     from (
-        select (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Id', house_booths)) [1]::text::int as booth_id,
-          unnest(xpath('/*/*[local-name()=''TwoCandidatePreferred'']/*[local-name()=''Candidate'']', house_booths)) as candidate
+        select booth_id,
+          (xpath('name(/*)', fp_or_tcp))[1]::text                      as vt,
+          unnest(xpath('/*/*[local-name()=''Candidate'']', fp_or_tcp)) as candidate
         from (
-            select unnest(xpath('/*/*/*/*[local-name()=''House'']/*/*/*/*[local-name()=''PollingPlace'']', xmldata)) as house_booths
-            from xml.aec_results
+            select (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Id', house_booths))[1]::text::int                    as booth_id,
+              unnest(xpath('/*/*[local-name()=''FirstPreferences'' or local-name()=''TwoCandidatePreferred'']', house_booths)) as fp_or_tcp
+            from (
+                select unnest(xpath('/*/*/*/*[local-name()=''House'']/*/*/*/*[local-name()=''PollingPlace'']', xmldata)) as house_booths
+                from xml.aec_results
+              ) t
           ) t
       ) t;
+
 ```
