@@ -30,10 +30,10 @@ from voronoi v
           max(num_votes) as max_votes,
           sum(num_votes) as total_votes
         from results_house_22
-        where vote_type = '2CP'
+        where vote_type = 'FP'
         group by booth_id
       ) r2 on (r1.booth_id = r2.booth_id)
-    where vote_type = '2CP'
+    where vote_type = 'FP'
       and num_votes = max_votes
       and total_votes > 0
   ) l on v.booth_id = l.booth_id

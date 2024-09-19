@@ -65,9 +65,11 @@ Response serve_vertices(Request *request, Memory_context *context)
         Postgres_result *result = query_database(db, query, &params, ctx);
         if (!result->rows.count)  Fatal("A query for polygons returned no results.");
 
+        s64 booth_id_column = *Get(result->columns, "booth_id");
         s64 polygons_column = *Get(result->columns, "polygon");
         s64 fraction_column = *Get(result->columns, "fraction_of_votes");
         s64 colour_column   = *Get(result->columns, "colour");
+        if (booth_id_column < 0)  Fatal("Couldn't find a \"booth_id\" column in the results.");
         if (polygons_column < 0)  Fatal("Couldn't find a \"polygon\" column in the results.");
         if (fraction_column < 0)  Fatal("Couldn't find a \"fraction_of_votes\" column in the results.");
         if (colour_column < 0)    Fatal("Couldn't find a \"colour\" column in the results.");
@@ -76,9 +78,12 @@ Response serve_vertices(Request *request, Memory_context *context)
         // Draw the polygons.
         //
         for (s64 i = 0; i < result->rows.count; i++) {
+            u8_array *booth_id_cell = &result->rows.data[i].data[booth_id_column];
             u8_array *polygons_cell = &result->rows.data[i].data[polygons_column];
             u8_array *fraction_cell = &result->rows.data[i].data[fraction_column];
             u8_array *colour_cell   = &result->rows.data[i].data[colour_column];
+
+            u32 booth_id = get_u32_from_cell(booth_id_cell); //|Debug
 
             Polygon_array polygons = {.context = ctx};
             {

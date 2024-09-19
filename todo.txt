@@ -6,6 +6,8 @@ Add rivers, train lines, roads to verts depending on zoom level
 
 ---
 
+We drop a number of polling booths at different times when creating our Voronoi map. When we revise the process, we should analyse the polling booths that are being dropped at each step and see if we can make the dropping explicit (e.g. by removing prepolling booths specifically), or see if we can hold onto them.
+
 Turn the electorate edge data (currently topo being queried) into geometry so we can index it and also so we can associate lines with names when they are things like rivers, etc.
 
 Get the front end to request the vertices in a predictable grid of tiles
