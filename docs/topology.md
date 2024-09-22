@@ -27,6 +27,8 @@ Do the same for the coastline.
 Create a new geometry column in the district table, clipping each district by the coast:
 
 ```
+    --|Todo: Also clip out rivers (and other water?) using OSM data.
+
     select addgeometrycolumn('public', 'electorates_22', 'geom', 3577, 'MULTIPOLYGON', 2);
 
     update electorates_22 as e
@@ -372,6 +374,8 @@ Extract it into a table.
 Only include the lower-house results for now.
 
 ```
+    --|Todo: Include the electorate ID (so we can get the votes as a fraction of the total for each electorate) as well as the election ID.
+
     create type house_vote_type as enum ('FP', '2CP');
 
     create table results_house_22 (

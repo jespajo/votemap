@@ -343,7 +343,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         //
         minScale:  0.0001,
         maxScale:  0.5,
-        maxScroll: 8000, // How far you have to scroll (in "pixels") to go from the minimum to maximum scale.
+        maxScroll: 5000, // How far you have to scroll (in "pixels") to go from the minimum to maximum scale.
 
         //
         // Map state variables:

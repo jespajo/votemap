@@ -133,7 +133,114 @@ Response serve_vertices(Request *request, Memory_context *context)
         for (s64 i = 0; i < paths->count; i++) {
             Vector4 colour = {0, 0, 0, 1.0};
 
-            float line_width = 1.5*upp;
+            float line_width = 2*upp;
+
+            draw_path(&paths->data[i], line_width, colour, verts);
+        }
+    }
+
+    // Draw some rivers.
+    {
+        char *query =
+            " select st_asbinary(                         "
+            "     st_collectionextract(                   "
+            "       st_makevalid(                         "
+            "         st_force2d(                         "
+            "           st_simplify(way, $1::float)       "
+            "         )                                   "
+            "       ), 3                                  "
+            "     )                                       "
+            "   ) as polygon                              "
+            " from planet_osm_polygon                     "
+            " where (                                     "
+            "     waterway in ('dock', 'riverbank')       "
+            "     or landuse in ('reservoir', 'basin')    "
+            "     or \"natural\" in ('water', 'glacier')  "
+            "   )                                         "
+            "   and building is null                      "
+            "   and way_area > ($1::float * $1::float)    "
+            "   and way && st_setsrid(                    "
+            "     st_makebox2d(                           "
+            "       st_point($2::float, $3::float),       "
+            "       st_point($4::float, $5::float)        "
+            "     ),                                      "
+            "     3577                                    "
+            "   )                                         ";
+
+        Postgres_result *result = query_database(db, query, &params, ctx);
+
+        s64 polygons_column = *Get(result->columns, "polygon");
+        if (polygons_column < 0)  Fatal("Couldn't find a \"polygon\" column in the results.");
+
+        for (s64 i = 0; i < result->rows.count; i++) {
+            u8_array *polygons_cell = &result->rows.data[i].data[polygons_column];
+
+            if (!polygons_cell->count)  continue;
+
+            Polygon_array polygons = {.context = ctx};
+            {
+                u8 *end_data = NULL;
+                parse_polygons(polygons_cell->data, &polygons, &end_data);
+
+                assert(end_data == &polygons_cell->data[polygons_cell->count]);
+            }
+
+            Vector4 colour = {0.1, 0.1, 0.1, 1.0};
+
+            for (s64 j = 0; j < polygons.count; j++)  draw_polygon(&polygons.data[j], colour, verts);
+        }
+    }
+
+    // Draw some roads.
+    if (upp < 10) {
+        char *query =
+        "  select st_asbinary(                                  "
+        "      st_makevalid(                                    "
+        "        st_force2d(st_simplify(way, $1::float))        "
+        "      )                                                "
+        "    ) as path                                          "
+        "  from planet_osm_line                                 "
+        "    where (name is not null or ref is not null)        "
+        "    and (highway is not null or railway is not null)   "
+        "    and way && st_setsrid(                             "
+        "      st_makebox2d(                                    "
+        "        st_point($2::float, $3::float),                "
+        "        st_point($4::float, $5::float)                 "
+        "      ),                                               "
+        "      3577                                             "
+        "    )                                                  ";
+
+        Path_array *paths = query_paths(db, query, &params, ctx);
+
+        for (s64 i = 0; i < paths->count; i++) {
+            Vector4 colour = {0.3, 0.3, 0.3, 1.0};
+            float line_width = 1*upp;
+
+            draw_path(&paths->data[i], line_width, colour, verts);
+        }
+    } else if (upp < 200) {
+        char *query =
+        "  select st_asbinary(                                  "
+        "      st_makevalid(                                    "
+        "        st_force2d(st_simplify(way, $1::float))        "
+        "      )                                                "
+        "    ) as path                                          "
+        "  from planet_osm_roads                                "
+        "    where (name is not null or ref is not null)        "
+        "    and (highway is not null or railway is not null)   "
+        "    and way && st_setsrid(                             "
+        "      st_makebox2d(                                    "
+        "        st_point($2::float, $3::float),                "
+        "        st_point($4::float, $5::float)                 "
+        "      ),                                               "
+        "      3577                                             "
+        "    )                                                  ";
+
+        Path_array *paths = query_paths(db, query, &params, ctx);
+
+        for (s64 i = 0; i < paths->count; i++) {
+            Vector4 colour = {0.3, 0.3, 0.3, 1.0};
+            float line_width = 1*upp;
 
             draw_path(&paths->data[i], line_width, colour, verts);
         }
