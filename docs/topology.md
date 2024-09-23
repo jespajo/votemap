@@ -317,6 +317,7 @@ Now the actual SQL table:
         name        text,
         independent boolean,
         party_id    int,
+        party_code  varchar(5),
         party_name  text,
         colour      int     check (0 <= colour and colour <= x'ffffff'::int)
       );
@@ -327,6 +328,7 @@ Now the actual SQL table:
       (xpath('/*/*[local-name()=''CandidateName'']/text()',  candidate_identifier))[1]::text        as name,
       independent::text::boolean                                                                    as independent,
       (xpath('/*/@Id',                                       affiliation_identifier))[1]::text::int as party_id,
+      (xpath('/*/@ShortCode',                                affiliation_identifier))[1]::text      as party_code,
       (xpath('/*/*[local-name()=''RegisteredName'']/text()', affiliation_identifier))[1]::text      as party_name,
       '0'::int                                                                                      as colour
     from (
@@ -339,12 +341,13 @@ Now the actual SQL table:
             from xml.eml_candidates
           ) t
       ) t;
+
 ```
 
 Add a splash of wrong, temporary colours.
 
 ```
-    update candidates_22 set colour = x'ff0000'::int where party_name like '%Labor%';
+    update candidates_22 set colour = x'ff0000'::int where party_code = 'ALP';
     update candidates_22 set colour = x'00ff00'::int where party_name like '%Green%';
     update candidates_22 set colour = x'0000ff'::int where party_name like '%Liberal%';
 ```
