@@ -377,12 +377,14 @@ void start_server(Server *server)
 
             if (pollfd->revents & (POLLERR|POLLHUP|POLLNVAL)) {
                 if (server->verbose) {
-                    if (pollfd->revents & POLLERR)   printf("POLLERR on socket %d\n", pollfd->fd);
-                    if (pollfd->revents & POLLHUP)   printf("POLLHUP on socket %d\n", pollfd->fd);
-                    if (pollfd->revents & POLLNVAL)  printf("POLLNVAL on socket %d\n", pollfd->fd);
+                    if (pollfd->revents & POLLERR)   printf("POLLERR on socket %d.\n", pollfd->fd);
+                    if (pollfd->revents & POLLHUP)   printf("POLLHUP on socket %d.\n", pollfd->fd);
+                    if (pollfd->revents & POLLNVAL)  printf("POLLNVAL on socket %d.\n", pollfd->fd);
                 }
 
-                Breakpoint(); //|Temporary
+                Client *client = Get(clients, pollfd->fd);
+                client->phase = READY_TO_CLOSE;
+                continue;
             }
 
             if (pollfd->fd == STDIN_FILENO) {
