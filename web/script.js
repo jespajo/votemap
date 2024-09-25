@@ -194,50 +194,71 @@ function getEnvelope(box) {
     return [{x: minX, y: minY}, {x: maxX, y: maxY}];
 }
 
-document.addEventListener("DOMContentLoaded", async () => {
-    /**
-     * @type WebGLRenderingContext
-     */
-    const gl = $("canvas#map").getContext("webgl");
-    /**
-     * @type CanvasRenderingContext2D
-     */
-    const ui = $("canvas#gui").getContext("2d");
+async function loadFonts() {
+    const fonts = {
+        "SourceSerif": "url(../fonts/SourceSerif4-Medium.ttf)",
+        "Inconsolata": "url(../fonts/Inconsolata_Condensed-Medium.ttf)",
+    };
 
-    const program = gl.createProgram();
-    {
-        const vertexShader = gl.createShader(gl.VERTEX_SHADER)
-        gl.shaderSource(vertexShader, VERTEX_SHADER_TEXT);
-        gl.compileShader(vertexShader); // |Fixme: Check compilation errors.
-
-        const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-        gl.shaderSource(fragmentShader, FRAGMENT_SHADER_TEXT);
-        gl.compileShader(fragmentShader); // |Fixme: Check compilation errors.
-
-        gl.attachShader(program, vertexShader);
-        gl.attachShader(program, fragmentShader);
-        gl.linkProgram(program); // |Todo: Clean up shaders?
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-            console.error("Shader program did not link successfully.");
-            console.error("Error log: ", gl.getProgramInfoLog(program));
-            return; // |Todo: Clean up GL program?
-        }
-
-        const buffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-
-        const v_position = gl.getAttribLocation(program, "v_position");
-        const v_colour   = gl.getAttribLocation(program, "v_colour");
-
-        gl.enableVertexAttribArray(v_position);
-        gl.enableVertexAttribArray(v_colour);
-
-        gl.vertexAttribPointer(v_position, 2, gl.FLOAT, false, 6*4, 0);
-        gl.vertexAttribPointer(v_colour,   4, gl.FLOAT, false, 6*4, 8); // |Cleanup: Avoid hard-coding these numbers.
+    for (const name of Object.keys(fonts)) {
+        const fontFace = new FontFace(name, fonts[name]);
+        const f = await fontFace.load();
+        document.fonts.add(f);
     }
+}
+
+/**
+ * @type {(gl: WebGLRenderingContext) => {program: WebGLProgram, u_proj: WebGLUniformLocation, u_view: WebGLUniformLocation}}
+ */
+function initWebGLProgram(gl) {
+    const program = gl.createProgram();
+
+    const vertexShader = gl.createShader(gl.VERTEX_SHADER)
+    gl.shaderSource(vertexShader, VERTEX_SHADER_TEXT);
+    gl.compileShader(vertexShader); // |Fixme: Check compilation errors.
+
+    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fragmentShader, FRAGMENT_SHADER_TEXT);
+    gl.compileShader(fragmentShader); // |Fixme: Check compilation errors.
+
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program); // |Todo: Clean up shaders?
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error("Shader program did not link successfully.");
+        console.error("Error log: ", gl.getProgramInfoLog(program));
+        return; // |Todo: Clean up GL program?
+    }
+
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+    const v_position = gl.getAttribLocation(program, "v_position");
+    const v_colour   = gl.getAttribLocation(program, "v_colour");
+
+    gl.enableVertexAttribArray(v_position);
+    gl.enableVertexAttribArray(v_colour);
+
+    gl.vertexAttribPointer(v_position, 2, gl.FLOAT, false, 6*4, 0);
+    gl.vertexAttribPointer(v_colour,   4, gl.FLOAT, false, 6*4, 8); // |Cleanup: Avoid hard-coding these numbers.
 
     const u_proj = gl.getUniformLocation(program, "u_proj"); // Transforms pixel space to UV space. Only changes when the screen dimensions change.
     const u_view = gl.getUniformLocation(program, "u_view"); // Applies current pan/zoom. User-controlled.
+
+    return {program, u_proj, u_view};
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+    loadFonts();
+
+    /** @type WebGLRenderingContext */
+    const gl = $("canvas#map").getContext("webgl");
+
+    /** @type CanvasRenderingContext2D */
+    const ui = $("canvas#gui").getContext("2d");
+
+    const {program, u_proj, u_view} = initWebGLProgram(gl);
+
 
     let vertices = new Float32Array(0);
     let fetchVertices = false;
@@ -253,18 +274,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         labels = json.labels;
     }
 
-    // Load some fonts.
-    {
-        const fonts = {
-            "SourceSerif": "url(../fonts/SourceSerif4-Medium.ttf)",
-            "Inconsolata": "url(../fonts/Inconsolata_Condensed-Medium.ttf)",
-        };
-        for (const name in fonts) {
-            const fontFace = new FontFace(name, fonts[name]);
-            const f = await fontFace.load(); // |Speed.
-            document.fonts.add(f);
-        }
-    }
+
 
     //
     // Handle user input.

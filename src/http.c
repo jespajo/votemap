@@ -375,6 +375,16 @@ void start_server(Server *server)
 
             if (!pollfd->revents)  continue;
 
+            if (pollfd->revents & (POLLERR|POLLHUP|POLLNVAL)) {
+                if (server->verbose) {
+                    if (pollfd->revents & POLLERR)   printf("POLLERR on socket %d\n", pollfd->fd);
+                    if (pollfd->revents & POLLHUP)   printf("POLLHUP on socket %d\n", pollfd->fd);
+                    if (pollfd->revents & POLLNVAL)  printf("POLLNVAL on socket %d\n", pollfd->fd);
+                }
+
+                Breakpoint(); //|Temporary
+            }
+
             if (pollfd->fd == STDIN_FILENO) {
                 // There's something to read on standard input.
                 char_array input = {.context = frame_ctx};
@@ -406,11 +416,11 @@ void start_server(Server *server)
 
                 *Add(&pollfds) = (struct pollfd){
                     .fd      = client_socket_no,
-                    .events  = POLLIN|POLLOUT,
+                    .events  = POLLIN|POLLOUT, //|Cleanup: This line can be removed right?
                     .revents = POLLIN, // We also set .revents ourselves so that we'll try receiving from this socket on this frame. |Hack
                 };
 
-                assert(Get(clients, client_socket_no) == &clients->vals[-1]); // We shouldn't have a request associated with this client socket yet. |Cleanup: IsSet()
+                assert(!IsSet(clients, client_socket_no)); // We shouldn't have a request associated with this client socket yet.
 
                 *Set(clients, client_socket_no) = (Client){
                     .context      = new_context(server->context),
