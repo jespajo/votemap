@@ -8,11 +8,13 @@
 
         @typedef {{x: number, y: number}} Vec2
 
+        @typedef {{x: number, y: number, width: number, height: number}} Rect
+
     A Box is a rectangle aligned with the XY axes. Its two points are its lower-left and upper-right corners, in that order.
 
         @typedef {[Vec2, Vec2]} Box
 
-    When a rectangle gets rotated, we need an extra two points to record all four corners in an unspecified order.
+    When a box gets rotated, we need an extra two points to record all four corners in an unspecified order.
 
         @typedef {[Vec2, Vec2, Vec2, Vec2]} Box4
  */
@@ -385,6 +387,22 @@ document.addEventListener("DOMContentLoaded", async () => {
         // must be recalculated from map.currentTransform.scale.
         /** @type {number} */
         scrollOffset: 0,
+    };
+
+    // The UI panel can be in desktop mode or mobile mode. In desktop mode, we calculate its position as a
+    // function of the screen size each frame. In mobile mode (which for now we assume the phone is held in
+    // portrait), it sits at the bottom of the screen and the user can slide it up and down. That's the
+    // as-yet-unimplemented goal, anyway.
+    let mobileMode = false;
+
+    /**
+     * @type Rect
+     */
+    const panelRect = {
+        x:      map.width/2, //|Cleanup: These are just nonsense values. We set them in the main loop.
+        y:      map.height/2,
+        width:  0.4*map.width,
+        height: 400
     };
 
     // Toggle developer visualisations. |Debug
@@ -951,9 +969,156 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
             }
 
-            if (debugTransform) { // Draw the map's current transform in the bottom-right corner of the canvas. |Debug
+            //
+            // Draw the panel.
+            //
+            {
+                if (document.body.clientWidth < 450) {
+                    if (!mobileMode) {
+                        // The user has just switched to mobile mode.
+                        mobileMode = true;
+
+                        panelRect.x      = 0;
+                        panelRect.y      = 0.75*document.body.clientHeight;
+                        panelRect.height = document.body.clientHeight - panelRect.y;
+                    } else {
+                        // Otherwise, if the user was already in mobile mode, the user controls the panel's dimensions.
+                        // So we should only set the width and make sure we aren't leaving a gap at the bottom of the page.
+                        panelRect.width = document.body.clientWidth;
+
+                        const gap = document.body.clientHeight - (panelRect.y + panelRect.height);
+                        if (gap > 0)  panelRect.y += gap;
+                    }
+                } else {
+                    mobileMode = false;
+
+                    const margin    = 10;
+                    panelRect.x     = margin;
+                    panelRect.y     = margin;
+                    panelRect.width = 0.34*document.body.clientWidth;
+                    // The height gets set at the end of this scope, for the next frame.
+                }
+
+                ui.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                ui.fillRect(panelRect.x, panelRect.y, panelRect.width, panelRect.height);
+
+                const panelPadding = 5;
+
+                const panelX     = panelRect.x + panelPadding;
+                const panelWidth = panelRect.width - 2*panelPadding;
+
+                let panelY = panelRect.y + panelPadding;
+
+                // Draw the election title.
+                {
+                    let height = 40;
+                    let text = "2022 Federal Election";
+                    ui.fillStyle = 'black';
+
+                    ui.font = height + 'px sans-serif';
+                    let textWidth = ui.measureText(text).width;
+
+                    if (textWidth < panelWidth) {
+                        ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+                        panelY += height;
+                    } else {
+                        text = '2022';
+                        textWidth = ui.measureText(text).width;
+                        ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+                        panelY += height;
+
+                        text = 'Federal Election';
+                        height = 30;
+                        ui.font = height + 'px sans-serif';
+                        textWidth = ui.measureText(text).width;
+
+                        if (textWidth < panelWidth) {
+                            ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+                            panelY += height;
+                        } else {
+                            height = 25;
+                            ui.font = height + 'px sans-serif';
+
+                            text = 'Federal';
+                            textWidth = ui.measureText(text).width;
+                            ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+                            panelY += height;
+
+                            text = 'Election';
+                            textWidth = ui.measureText(text).width;
+                            ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+                            panelY += height;
+                        }
+                    }
+                }
+
+                panelY += panelPadding;
+
+                // Draw the two-candidate preferred/first preferences toggle.
+                {
+                    const textHeight   = 25;
+                    const textMargin   = 3;
+                    const buttonHeight = textHeight + 2*textMargin;
+
+                    // [background, foreground]
+                    const activeColour   = ['#eddeff', '#2030aa'];
+                    const inactiveColour = ['#dddddd', '#777777'];
+
+                    const rightActive = !(Math.floor(currentTime/2000) % 2);
+
+                    let leftText  = "Two-candidate preferred";
+                    let rightText = "First preferences";
+
+                    ui.fillStyle = (rightActive) ? inactiveColour[0] : activeColour[0];
+                    ui.fillRect(panelX, panelY, panelWidth/2, buttonHeight);
+
+                    ui.font = textHeight + 'px sans-serif';
+                    ui.fillStyle = (rightActive) ? inactiveColour[1] : activeColour[1];
+                    {
+                        let textWidth = ui.measureText(leftText).width;
+                        if (textWidth > panelWidth/2) { // We only test if "two-candidate preferred" is too big and then change both labels if so. This only works if "two-candidate preferred" is wider than the other label.
+                            leftText  = '2CP';
+                            rightText = 'FP';
+
+                            textWidth = ui.measureText(leftText).width;
+                        }
+                        ui.fillText(leftText, panelX + panelWidth/4 - textWidth/2, panelY + textMargin);
+                    }
+
+                    ui.fillStyle = (rightActive) ? activeColour[0] : inactiveColour[0];
+                    ui.fillRect(panelX + panelWidth/2, panelY, panelWidth/2, buttonHeight);
+
+                    ui.font = textHeight + 'px sans-serif';
+                    ui.fillStyle = (rightActive) ? activeColour[1] : inactiveColour[1];
+                    {
+                        const textWidth = ui.measureText(rightText).width;
+                        ui.fillText(rightText, panelX + 3*panelWidth/4 - textWidth/2, panelY + textMargin);
+                    }
+
+                    panelY += buttonHeight;
+
+                    if (rightActive) {
+                        const height = 10;
+                        ui.font = height + 'px sans-serif';
+
+                        for (const label of ["ALP", "LNP", "GRN"]) {
+                            ui.fillText(label, panelX, panelY);
+
+                            panelY += height;
+                        }
+                    }
+                }
+
+                panelY += panelPadding;
+
+                // For the next frame, set the panel's height to the used height.
+                panelRect.height = panelY - panelRect.y;
+            }
+
+            // Draw the map's current transform in the bottom-right corner of the canvas. |Debug
+            if (debugTransform) {
                 const height = 16; // Text height.
-                ui.font = height + 'px sans serif';
+                ui.font = height + 'px sans-serif';
                 ui.textBaseline = "top";
 
                 let y = map.height - height;
