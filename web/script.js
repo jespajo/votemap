@@ -196,8 +196,12 @@ function getEnvelope(box) {
 
 async function loadFonts() {
     const fonts = {
-        "SourceSerif": "url(../fonts/SourceSerif4-Medium.ttf)",
-        "Inconsolata": "url(../fonts/Inconsolata_Condensed-Medium.ttf)",
+        //|Temporary: This is a convenient way to play with the fonts. Unfortunately the browser loads every font in this list independently, even if it shares a URL with another font. So at some point we'll have to replace our keys with unique identifiers.
+        "map-electorate":       "url(../fonts/RadioCanada.500.80.woff2)",
+        "title":                "url(../fonts/RadioCanada.500.90.woff2)",
+        "button-active":        "url(../fonts/RadioCanada.700.90.woff2)",
+        "button-inactive":      "url(../fonts/RadioCanada.300.90.woff2)",
+        "party-label":          "url(../fonts/RadioCanada.700.90.woff2)",
     };
 
     for (const name of Object.keys(fonts)) {
@@ -803,7 +807,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             //
             {
                 const height = 16; // Text height.
-                ui.font = `${height}px SourceSerif`;
+                ui.font = `${height}px map-electorate`;
                 ui.textBaseline = "top";
 
                 //
@@ -925,7 +929,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     }
 
                     ui.strokeStyle = 'white';
-                    ui.lineWidth = 2;
+                    ui.lineWidth = 3;
                     ui.strokeText(label.text, textX, textY);
                     ui.fillStyle = 'black';
                     ui.fillText(label.text, textX, textY);
@@ -1025,7 +1029,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     let text = "2022 Federal Election";
                     ui.fillStyle = 'black';
 
-                    ui.font = height + 'px sans-serif';
+                    ui.font = height + 'px title';
                     let textWidth = ui.measureText(text).width;
 
                     if (textWidth < panelWidth) {
@@ -1039,7 +1043,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                         text = 'Federal Election';
                         height = 30;
-                        ui.font = height + 'px sans-serif';
+                        ui.font = height + 'px title';
                         textWidth = ui.measureText(text).width;
 
                         if (textWidth < panelWidth) {
@@ -1047,7 +1051,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                             panelY += height;
                         } else {
                             height = 25;
-                            ui.font = height + 'px sans-serif';
+                            ui.font = height + 'px title';
 
                             text = 'Federal';
                             textWidth = ui.measureText(text).width;
@@ -1082,7 +1086,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     ui.fillStyle = (rightActive) ? inactiveColour[0] : activeColour[0];
                     ui.fillRect(panelX, panelY, panelWidth/2, buttonHeight);
 
-                    ui.font = textHeight + 'px sans-serif';
+                    ui.font = `${textHeight}px button-${rightActive ? 'inactive' :'active'}`;
                     ui.fillStyle = (rightActive) ? inactiveColour[1] : activeColour[1];
                     {
                         let textWidth = ui.measureText(leftText).width;
@@ -1098,7 +1102,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     ui.fillStyle = (rightActive) ? activeColour[0] : inactiveColour[0];
                     ui.fillRect(panelX + panelWidth/2, panelY, panelWidth/2, buttonHeight);
 
-                    ui.font = textHeight + 'px sans-serif';
+                    ui.font = `${textHeight}px button-${rightActive ? 'active' :'inactive'}`;
                     ui.fillStyle = (rightActive) ? activeColour[1] : inactiveColour[1];
                     {
                         const textWidth = ui.measureText(rightText).width;
@@ -1109,7 +1113,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                     if (rightActive) {
                         const height = 10;
-                        ui.font = height + 'px sans-serif';
+                        ui.font = height + 'px party-label';
 
                         for (const label of ["ALP", "LNP", "GRN"]) {
                             ui.fillText(label, panelX, panelY);
@@ -1188,7 +1192,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     }
 
                     const textHeight = 14;
-                    ui.font          = `${textHeight}px Inconsolata`;
+                    ui.font          = `${textHeight}px monospace`;
                     ui.textBaseline  = "top";
 
                     let x = 5;
