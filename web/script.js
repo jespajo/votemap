@@ -194,9 +194,35 @@ function getEnvelope(box) {
     return [{x: minX, y: minY}, {x: maxX, y: maxY}];
 }
 
+/**
+ * @type {(point: Vec2, rect: Rect) => boolean}
+ */
+function pointInRect(point, rect) {
+    if (point.x < rect.x)                return false;
+    if (point.y < rect.y)                return false;
+    if (point.x > rect.x + rect.width)   return false;
+    if (point.y > rect.y + rect.height)  return false;
+
+    return true;
+}
+
+/**
+ * @type {(rect: Rect, width: number) => [Rect, Rect]}
+ */
+function cutLeft(rect, width) {
+    const leftRect  = clone(rect);
+    const remainder = clone(rect);
+
+    leftRect.width   = width;
+    remainder.x     += width;
+    remainder.width -= width;
+
+    return [leftRect, remainder];
+}
+
 async function loadFonts() {
     const fonts = {
-        //|Temporary: This is a convenient way to play with the fonts. Unfortunately the browser loads every font in this list independently, even if it shares a URL with another font. So at some point we'll have to replace our keys with unique identifiers.
+        //|Temporary: This is a convenient way to play with the fonts. Unfortunately the browser loads every font in this list independently, even if it shares a URL with another font. So at some point we'll either replace our keys with unique identifiers, or, since new FontFace() can take an ArrayBuffer, we could deduplicate the values and fetch them ourselves.
         "map-electorate":       "url(../fonts/RadioCanada.500.80.woff2)",
         "title":                "url(../fonts/RadioCanada.500.90.woff2)",
         "button-active":        "url(../fonts/RadioCanada.700.90.woff2)",
@@ -285,9 +311,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     //
 
     const input = {
-        // pointer[0] is the mouse, or the first finger to touch the screen. pointer[1] is the second finger.
-        /** @typedef {{id: number, down: boolean, x: number, y: number}} Pointer */
-        /** @type {[Pointer, Pointer]} */
+        /**
+         * pointers[0] is the mouse, or the first finger to touch the screen. pointers[1] is the second finger.
+         *
+         * @typedef {{id: number, down: boolean, x: number, y: number}} Pointer
+         * @type {[Pointer, Pointer]}
+         */
         pointers: [
             {id: 0, down: false, x: 0, y: 0}, // X and Y are in screen coordinates.
             {id: 0, down: false, x: 0, y: 0},
@@ -408,6 +437,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     // portrait), it sits at the bottom of the screen and the user can slide it up and down. That's the
     // as-yet-unimplemented goal, anyway.
     let mobileMode = false;
+
+    //|Temporary: this should go in the map state and also be an enum or something, not a boolean.
+    let isFirstPreferences = false;
 
     /**
      * @type Rect
@@ -1016,7 +1048,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 ui.fillStyle = 'rgba(255, 255, 255, 0.95)';
                 ui.fillRect(panelRect.x, panelRect.y, panelRect.width, panelRect.height);
 
-                const panelPadding = 5;
+                const panelPadding = 10;
 
                 const panelX     = panelRect.x + panelPadding;
                 const panelWidth = panelRect.width - 2*panelPadding;
@@ -1070,48 +1102,58 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 // Draw the two-candidate preferred/first preferences toggle.
                 {
-                    const textHeight   = 25;
-                    const textMargin   = 3;
-                    const buttonHeight = textHeight + 2*textMargin;
+                    // Styles:
+                    const toggleHeight      = 30;
+                    const backgroundColours = ['#dddddd', '#ffffff']; // [unselected, selected]
+                    const textColours       = ['#777777', '#000000'];
+                    const fonts             = ['button-inactive', 'button-active']; //|Cleanup: Selected or active?
+                    const borderColour      = '#000000';
+                    const borderWidth       = 1;
+                    const leftLabel         = "2CP"; //|Todo: Spell out the chosen option in full.
+                    const rightLabel        = "FP";  //|
 
-                    // [background, foreground]
-                    const activeColour   = ['#eddeff', '#2030aa'];
-                    const inactiveColour = ['#dddddd', '#777777'];
+                    // Computed styles:
+                    const textMargin = Math.floor(toggleHeight/10);
+                    const textHeight = toggleHeight - 2*textMargin;
+                    const toggleRect = {x: panelX, y: panelY, width: panelWidth, height: toggleHeight};
+                    const [leftRect, rightRect] = cutLeft(toggleRect, toggleRect.width/2);
 
-                    const rightActive = !(Math.floor(currentTime/2000) % 2);
+                    // Change isFirstPreferences if the mouse is down over the unselected button.
+                    // |Todo:
+                    // | - Mask the map from being affected by the click.
+                    // | - Only say the button is pressed if the mouse went down inside it, not if you clicked and dragged into it.
+                    // | - ...
+                    if (input.pointers[0].down) {
+                        const pointer = {x: input.pointers[0].x, y: input.pointers[0].y};
+                        const unselectedRect = (isFirstPreferences) ? leftRect : rightRect;
 
-                    let leftText  = "Two-candidate preferred";
-                    let rightText = "First preferences";
-
-                    ui.fillStyle = (rightActive) ? inactiveColour[0] : activeColour[0];
-                    ui.fillRect(panelX, panelY, panelWidth/2, buttonHeight);
-
-                    ui.font = `${textHeight}px button-${rightActive ? 'inactive' :'active'}`;
-                    ui.fillStyle = (rightActive) ? inactiveColour[1] : activeColour[1];
-                    {
-                        let textWidth = ui.measureText(leftText).width;
-                        if (textWidth > panelWidth/2) { // We only test if "two-candidate preferred" is too big and then change both labels if so. This only works if "two-candidate preferred" is wider than the other label.
-                            leftText  = '2CP';
-                            rightText = 'FP';
-
-                            textWidth = ui.measureText(leftText).width;
-                        }
-                        ui.fillText(leftText, panelX + panelWidth/4 - textWidth/2, panelY + textMargin);
+                        if (pointInRect(pointer, unselectedRect))  isFirstPreferences = !isFirstPreferences;
                     }
 
-                    ui.fillStyle = (rightActive) ? activeColour[0] : inactiveColour[0];
-                    ui.fillRect(panelX + panelWidth/2, panelY, panelWidth/2, buttonHeight);
+                    // Draw the buttons.
+                    for (let i = 0; i < 2; i++) {
+                        const rect  = (i == 0) ? leftRect  : rightRect;
+                        const label = (i == 0) ? leftLabel : rightLabel;
 
-                    ui.font = `${textHeight}px button-${rightActive ? 'active' :'inactive'}`;
-                    ui.fillStyle = (rightActive) ? activeColour[1] : inactiveColour[1];
-                    {
-                        const textWidth = ui.measureText(rightText).width;
-                        ui.fillText(rightText, panelX + 3*panelWidth/4 - textWidth/2, panelY + textMargin);
+                        const selected = +(!i == !isFirstPreferences);
+
+                        ui.fillStyle = backgroundColours[selected];
+                        ui.fillRect(rect.x, rect.y, rect.width, rect.height);
+
+                        ui.font      = textHeight + 'px ' + fonts[selected];
+                        ui.fillStyle = textColours[selected];
+                        const textWidth = ui.measureText(label).width;
+                        ui.fillText(label, rect.x + rect.width/2 - textWidth/2, rect.y + textMargin);
                     }
 
-                    panelY += buttonHeight;
+                    // Draw a border.
+                    ui.strokeStyle = borderColour;
+                    ui.lineWidth   = borderWidth;
+                    ui.strokeRect(toggleRect.x, toggleRect.y, toggleRect.width, toggleRect.height);
 
-                    if (rightActive) {
+                    panelY += toggleRect.height;
+
+                    if (isFirstPreferences) {
                         const height = 10;
                         ui.font = height + 'px party-label';
 
