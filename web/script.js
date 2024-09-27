@@ -284,9 +284,9 @@ function initWebGLProgram(gl) {
 
 const input = {
     /**
-     * pointers[0] is the mouse, or the first finger to touch the screen. pointers[1] is the second finger.
-     * down is true whenever the pointer is down. pressed is true only on the first frame it's down.
-     * x and y are in screen coordinates.
+     * pointers[0] will be the mouse, or the first finger to touch the screen. pointers[1] will be the second finger.
+     * .down is true whenever the pointer is down. .pressed is true only on the first frame it's down.
+     * .x and .y are in screen coordinates.
      *
      * @typedef {{id: number, x: number, y: number, down: boolean, pressed: boolean}} Pointer
      * @type {[Pointer, Pointer]}
@@ -295,7 +295,7 @@ const input = {
         {id: 0, x: 0, y: 0, down: false, pressed: false},
         {id: 0, x: 0, y: 0, down: false, pressed: false},
     ],
-    //|Todo: The pointers array currently always has two members. I think I would prefer it if it had a variable number: zero, one or two, depending on how many are currently relevant. Then we wouldn't need to do potentially pointless calculations in getPointerFlags() on pointers that aren't around any more.
+    //|Todo: The pointers array currently always has two members. Maybe we would prefer it if it had a variable number: zero, one or two, depending on how many are currently relevant. Then we wouldn't need to do potentially pointless calculations in getPointerFlags() on pointers that aren't around any more. This optimisation is slightly harder than it sounds because each member of this array is associated with a map.pointerLock in the same index. There is also the fact that there may well be a greater performance penalty to creating/deleting these objects on the fly rather than just updating the ones we have.
 
     /** @type {number} */
     scroll: 0, // The deltaY of wheel events.
@@ -305,7 +305,7 @@ const input = {
 };
 
 function initInput() {
-    window.addEventListener("pointerdown", event => { //|Cleanup: All these event handlers are ugly. Eschew the loops.
+    window.addEventListener("pointerdown", event => {
         for (let i = 0; i < 2; i++) {
             const ptr = input.pointers[i];
 
@@ -407,16 +407,14 @@ function getPointerFlags(rect, layer) {
 
     //|Todo: See the Todo in the declaration of the global `input` variable. Note as well that there's really no such thing as input.pointers[1].hover, which we try to create in this function---because the second pointer is always a finger, which can't hover. It's either down or nowhere to speak of. That's why it'd be better for both input.pointers and the array returned by this function to be variable-length.
     for (let i = 0; i < 2; i++) {
-        //|Cleanup: We should modify the type of pointInRect to allow passing a Pointer as well as a Vec2, so we don't need to create the Vec2 each time.
-        const vec = {x: input.pointers[i].x, y: input.pointers[i].y};
-        if (!pointInRect(vec, rect))  continue;
+        if (!pointInRect(input.pointers[i], rect))  continue;
 
         let occluded = false;
 
         for (let j = occlusions[0].length-1; j >= 0; j--) {
             if (occlusions[0][j].layer == layer)  break;
 
-            if (pointInRect(vec, occlusions[0][j].rect)) {
+            if (pointInRect(input.pointers[0], occlusions[0][j].rect)) {
                 occluded = true;
                 break;
             }
@@ -445,7 +443,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 
     let vertices = new Float32Array(0);
-    let fetchVertices = false;
+    let fetchVertices  = false;
+    let updateVertices = false;
 
     /**
      * @typedef {{text: string, pos: [number, number]}} Label
@@ -788,6 +787,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 const data = await response.arrayBuffer();
 
                 vertices = new Float32Array(data);
+
+                updateVertices = true;
             })();
         }
 
@@ -881,9 +882,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             gl.uniformMatrix3fv(u_proj, false, proj);
             gl.uniformMatrix3fv(u_view, false, view);
 
-            // |Speed: We only want to re-buffer the vertices if they've changed.
-            // This seems to be especially important for performance on Firefox.
-            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+            if (updateVertices) {
+                gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+                updateVertices = false;
+            }
 
             gl.drawArrays(gl.TRIANGLES, 0, vertices.length/6); // 6 is the number of floats per vertex attribute.
 
