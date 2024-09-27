@@ -1,10 +1,12 @@
-Update your booths query so that it returns the party ID of the candidate with the most first preferences for each booth.
+Cleanup pointers (touch events on front end).
+- Only add to various pointer arrays when relevant pointers exist.
+- Generally clean up window event listeners.
+
+---
 
 Add cities/suburbs to labels depending on zoom level
 
 Add rivers, train lines, roads to verts depending on zoom level
-
----
 
 We drop a number of polling booths at different times when creating our Voronoi map. When we revise the process, we should analyse the polling booths that are being dropped at each step and see if we can make the dropping explicit (e.g. by removing prepolling booths specifically), or see if we can hold onto them.
 

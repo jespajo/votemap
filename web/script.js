@@ -278,71 +278,49 @@ function initWebGLProgram(gl) {
     return {program, u_proj, u_view};
 }
 
-document.addEventListener("DOMContentLoaded", async () => {
-    loadFonts();
+//
+// User input stuff.
+//
 
-    /** @type WebGLRenderingContext */
-    const gl = $("canvas#map").getContext("webgl");
-
-    /** @type CanvasRenderingContext2D */
-    const ui = $("canvas#gui").getContext("2d");
-
-    const {program, u_proj, u_view} = initWebGLProgram(gl);
-
-
-    let vertices = new Float32Array(0);
-    let fetchVertices = false;
-
+const input = {
     /**
-     * @typedef {{text: string, pos: [number, number]}} Label
+     * pointers[0] is the mouse, or the first finger to touch the screen. pointers[1] is the second finger.
+     * down is true whenever the pointer is down. pressed is true only on the first frame it's down.
+     * x and y are in screen coordinates.
+     *
+     * @typedef {{id: number, x: number, y: number, down: boolean, pressed: boolean}} Pointer
+     * @type {[Pointer, Pointer]}
      */
-    /** @type {Label[]} */
-    let labels; {
-        const response = await fetch("../bin/labels.json");
-        const json = await response.json();
+    pointers: [
+        {id: 0, x: 0, y: 0, down: false, pressed: false},
+        {id: 0, x: 0, y: 0, down: false, pressed: false},
+    ],
+    //|Todo: The pointers array currently always has two members. I think I would prefer it if it had a variable number: zero, one or two, depending on how many are currently relevant. Then we wouldn't need to do potentially pointless calculations in getPointerFlags() on pointers that aren't around any more.
 
-        labels = json.labels;
-    }
+    /** @type {number} */
+    scroll: 0, // The deltaY of wheel events.
 
+    /** @type {{[key: string]: boolean}} */
+    pressed: {}, // E.g. {a: true, b: true}. |Cleanup: Rename keysPressed?
+};
 
-
-    //
-    // Handle user input.
-    //
-
-    const input = {
-        /**
-         * pointers[0] is the mouse, or the first finger to touch the screen. pointers[1] is the second finger.
-         *
-         * @typedef {{id: number, down: boolean, x: number, y: number}} Pointer
-         * @type {[Pointer, Pointer]}
-         */
-        pointers: [
-            {id: 0, down: false, x: 0, y: 0}, // X and Y are in screen coordinates.
-            {id: 0, down: false, x: 0, y: 0},
-        ],
-
-        /** @type {number} */
-        scroll: 0, // The deltaY of wheel events.
-
-        /** @type {{[key: string]: boolean}} */
-        pressed: {}, // E.g. {a: true, b: true}.
-    };
-
-    window.addEventListener("pointerdown", event => {
+function initInput() {
+    window.addEventListener("pointerdown", event => { //|Cleanup: All these event handlers are ugly. Eschew the loops.
         for (let i = 0; i < 2; i++) {
             const ptr = input.pointers[i];
 
             if (ptr.down)  continue;
 
-            ptr.id   = event.pointerId;
-            ptr.down = true;
-            ptr.x    = event.clientX;
-            ptr.y    = event.clientY;
+            ptr.id      = event.pointerId;
+            ptr.x       = event.clientX;
+            ptr.y       = event.clientY;
+            ptr.down    = true;
+            ptr.pressed = true;
 
             break;
         }
     });
+
     window.addEventListener("pointerup", event => {
         for (let i = 0; i < 2; i++) {
             const ptr = input.pointers[i];
@@ -356,6 +334,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             break;
         }
     });
+
     window.addEventListener("pointermove", event => {
         const [ptr0, ptr1] = input.pointers;
 
@@ -375,12 +354,110 @@ document.addEventListener("DOMContentLoaded", async () => {
             }
         }
     });
+
     window.addEventListener("wheel", event => {
         input.scroll = event.deltaY;
     }, {passive: true});
+
     window.addEventListener("keydown", event => {
-        input.pressed[event.key] = true; // |Temporary.
+        input.pressed[event.key] = true;
     });
+}
+
+/** @enum {number} */
+const Layer = {
+    MAP:   1,
+    PANEL: 2,
+};
+
+/**
+ * Any time we draw a rectangle that catches mouse events so that events on anything drawn below should be ignored, we add a rectangle of occlusion.
+ * The function getPointerFlags() looks at this occlusion array and returns pointer events that are not occluded.
+ * Actually there are two occlusion arrays. getPointerFlags looks at the one built during the previous frame, occlusions[0].
+ *
+ * @typedef {{layer: number, rect: Rect}} Occlusion
+ * @type [Occlusion[], Occlusion[]]
+ */
+const occlusions = [[], []];
+
+/** @type {(layer: number, rect: Rect) => void} */
+function addOcclusion(layer, rect) {
+    occlusions[1].push({layer, rect});
+}
+
+// To be called once per frame.
+function resetInput() {
+    occlusions[0] = occlusions[1];
+    occlusions[1] = [];
+
+    input.pointers[0].pressed = false;
+    input.pointers[1].pressed = false;
+    input.scroll = 0;
+    input.pressed = {};
+}
+
+/**
+ * @typedef {{pressed?: true, hover?: true}} PointerFlags
+ *
+ * @type {(rect: Rect, layer: number) => [PointerFlags, PointerFlags]}
+ */
+function getPointerFlags(rect, layer) {
+    /** @type [PointerFlags, PointerFlags] */
+    const result = [{}, {}];
+
+    //|Todo: See the Todo in the declaration of the global `input` variable. Note as well that there's really no such thing as input.pointers[1].hover, which we try to create in this function---because the second pointer is always a finger, which can't hover. It's either down or nowhere to speak of. That's why it'd be better for both input.pointers and the array returned by this function to be variable-length.
+    for (let i = 0; i < 2; i++) {
+        //|Cleanup: We should modify the type of pointInRect to allow passing a Pointer as well as a Vec2, so we don't need to create the Vec2 each time.
+        const vec = {x: input.pointers[i].x, y: input.pointers[i].y};
+        if (!pointInRect(vec, rect))  continue;
+
+        let occluded = false;
+
+        for (let j = occlusions[0].length-1; j >= 0; j--) {
+            if (occlusions[0][j].layer == layer)  break;
+
+            if (pointInRect(vec, occlusions[0][j].rect)) {
+                occluded = true;
+                break;
+            }
+        }
+
+        if (!occluded) {
+            if (input.pointers[i].pressed)     result[i].pressed = true;
+            else if (!input.pointers[i].down)  result[i].hover   = true;
+        }
+    }
+
+    return result;
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+    loadFonts();
+    initInput();
+
+    /** @type WebGLRenderingContext */
+    const gl = $("canvas#map").getContext("webgl");
+
+    /** @type CanvasRenderingContext2D */
+    const ui = $("canvas#gui").getContext("2d");
+
+    const {program, u_proj, u_view} = initWebGLProgram(gl);
+
+
+    let vertices = new Float32Array(0);
+    let fetchVertices = false;
+
+    /**
+     * @typedef {{text: string, pos: [number, number]}} Label
+     * @type Label[]
+     */
+    let labels; {
+        const response = await fetch("../bin/labels.json");
+        const json = await response.json();
+
+        labels = json.labels;
+    }
+
 
     const map = {
         //
@@ -486,12 +563,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // Handle mouse/touch events on the map.
         {
+            const mapRect  = {x: 0, y: 0, width: map.width, height: map.height};//|Todo: Store this on the map object. Use it to replace map.width and .height.
+            const ptrFlags = getPointerFlags(mapRect, Layer.MAP);
+
             const ptr  = input.pointers;
             const lock = map.pointerLocks;
             const ct   = map.currentTransform;
 
             for (let i = 0; i < 2; i++) {
-                if (ptr[i].down) {
+                if (ptrFlags[i].pressed) {
                     if (!lock[i].locked) {
                         // The user has just pressed the mouse or touched the screen.
                         lock[i].locked = true;
@@ -503,7 +583,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                         map.animations.length = 0; // Cancel any current animations.
                     }
-                } else {
+                } else if (!ptr[i].down) {
                     lock[i].locked = false;
                 }
             }
@@ -611,9 +691,6 @@ document.addEventListener("DOMContentLoaded", async () => {
                 end:       newTransform,
                 scroll:    true, // A special flag just for scroll-zoom animations, so we know we can trust map.scrollOffset.
             });
-
-            // We've consumed the scroll! |Todo: Reset per frame.
-            input.scroll = 0;
         }
 
         // Handle keyboard presses.
@@ -676,31 +753,16 @@ document.addEventListener("DOMContentLoaded", async () => {
                             end:       transform2,
                         });
                     }
-
-                    // We've consumed this key press. |Cleanup: Delete all these once per frame.
-                    delete input.pressed[key];
                 }
             }
 
-            // Check whether developer visualisations have been toggled:
-            if (input.pressed['t']) {
-                debugTransform = !debugTransform;
-                delete input.pressed['t'];
-            }
-            if (input.pressed['l']) {
-                debugLabels = !debugLabels;
-                delete input.pressed['l'];
-            }
-            if (input.pressed['f']) {
-                debugFPS = !debugFPS;
-                delete input.pressed['f'];
-            }
+            // Refetch vertices when the user presses 'r'. |Temporary
+            if (input.pressed['r'])  fetchVertices = true;
 
-            // Reload the vertices if the user presses R.
-            if (input.pressed['r']) {
-                fetchVertices = true;
-                delete input.pressed['r'];
-            }
+            // Check whether developer visualisations have been toggled:
+            if (input.pressed['t'])  debugTransform = !debugTransform;
+            if (input.pressed['l'])  debugLabels    = !debugLabels;
+            if (input.pressed['f'])  debugFPS       = !debugFPS;
         }
 
         // Fetch vertex data.
@@ -1045,6 +1107,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                     // The height gets set at the end of this scope, for the next frame.
                 }
 
+                addOcclusion(Layer.PANEL, panelRect);
+
                 ui.fillStyle = 'rgba(255, 255, 255, 0.95)';
                 ui.fillRect(panelRect.x, panelRect.y, panelRect.width, panelRect.height);
 
@@ -1109,7 +1173,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     const fonts             = ['button-inactive', 'button-active']; //|Cleanup: Selected or active?
                     const borderColour      = '#000000';
                     const borderWidth       = 1;
-                    const leftLabel         = "2CP"; //|Todo: Spell out the chosen option in full.
+                    const leftLabel         = "2CP"; //|Todo: Spell out the selected option in full.
                     const rightLabel        = "FP";  //|
 
                     // Computed styles:
@@ -1119,15 +1183,12 @@ document.addEventListener("DOMContentLoaded", async () => {
                     const [leftRect, rightRect] = cutLeft(toggleRect, toggleRect.width/2);
 
                     // Change isFirstPreferences if the mouse is down over the unselected button.
-                    // |Todo:
-                    // | - Mask the map from being affected by the click.
-                    // | - Only say the button is pressed if the mouse went down inside it, not if you clicked and dragged into it.
-                    // | - ...
-                    if (input.pointers[0].down) {
-                        const pointer = {x: input.pointers[0].x, y: input.pointers[0].y};
+                    {
                         const unselectedRect = (isFirstPreferences) ? leftRect : rightRect;
 
-                        if (pointInRect(pointer, unselectedRect))  isFirstPreferences = !isFirstPreferences;
+                        const pointerFlags = getPointerFlags(unselectedRect, Layer.PANEL);
+
+                        if (pointerFlags[0].pressed)  isFirstPreferences = !isFirstPreferences;
                     }
 
                     // Draw the buttons.
@@ -1249,6 +1310,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
             }
         }
+
+        resetInput();
 
         window.requestAnimationFrame(step);
     })();
