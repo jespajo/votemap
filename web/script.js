@@ -29,9 +29,9 @@ const VERTEX_SHADER_TEXT = `
     uniform mat3 u_view;
 
     attribute vec2 v_position;
-    attribute vec4 v_colour;
+    attribute vec3 v_colour;
 
-    varying vec4 f_colour;
+    varying vec3 f_colour;
 
     void main()
     {
@@ -46,11 +46,11 @@ const VERTEX_SHADER_TEXT = `
 const FRAGMENT_SHADER_TEXT = `
     precision mediump float;
 
-    varying vec4 f_colour;
+    varying vec3 f_colour;
 
     void main()
     {
-        gl_FragColor = f_colour;
+        gl_FragColor = vec4(f_colour, 1.0);
     }
 `;
 
@@ -269,8 +269,8 @@ function initWebGLProgram(gl) {
     gl.enableVertexAttribArray(v_position);
     gl.enableVertexAttribArray(v_colour);
 
-    gl.vertexAttribPointer(v_position, 2, gl.FLOAT, false, 6*4, 0);
-    gl.vertexAttribPointer(v_colour,   4, gl.FLOAT, false, 6*4, 8); // |Cleanup: Avoid hard-coding these numbers.
+    gl.vertexAttribPointer(v_position, 2, gl.FLOAT, false, 5*4,   0);
+    gl.vertexAttribPointer(v_colour,   3, gl.FLOAT, false, 5*4, 2*4); //|Cleanup: Avoid hard-coding these numbers.
 
     const u_proj = gl.getUniformLocation(program, "u_proj"); // Transforms pixel space to UV space. Only changes when the screen dimensions change.
     const u_view = gl.getUniformLocation(program, "u_view"); // Applies current pan/zoom. User-controlled.
@@ -530,7 +530,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Toggle developer visualisations. |Debug
     let debugTransform = false;
     let debugLabels    = false;
-    let debugFPS       = false;
+    let debugFPS       = true;
 
     // The number of milliseconds since page load. Calculated once per frame.
     // For animations, not performance testing.
@@ -887,7 +887,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 updateVertices = false;
             }
 
-            gl.drawArrays(gl.TRIANGLES, 0, vertices.length/6); // 6 is the number of floats per vertex attribute.
+            gl.drawArrays(gl.TRIANGLES, 0, vertices.length/5); // 5 is the number of floats per vertex attribute.
 
             const error = gl.getError();
             if (error)  console.error(`WebGL error. Code: ${error}`);

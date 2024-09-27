@@ -2,14 +2,13 @@
 
 #include "draw.h"
 
-void draw_polygon(Polygon *polygon, Vector4 colour, Vertex_array *out)
+void draw_polygon(Polygon *polygon, Vector3 colour, Vertex_array *out)
 {
     Memory_context *ctx = out->context;
 
     float r = colour.v[0];
     float g = colour.v[1];
     float b = colour.v[2];
-    float a = colour.v[3];
 
     Triangle_array *triangles = triangulate_polygon(polygon, ctx);
 
@@ -20,17 +19,16 @@ void draw_polygon(Polygon *polygon, Vector4 colour, Vertex_array *out)
             float x = triangle->p[j].v[0];
             float y = triangle->p[j].v[1];
 
-            *Add(out) = (Vertex){x, y, r, g, b, a};
+            *Add(out) = (Vertex){x, y, r, g, b};
         }
     }
 }
 
-void draw_path(Path *path, float width, Vector4 colour, Vertex_array *out)
+void draw_path(Path *path, float width, Vector3 colour, Vertex_array *out)
 {
     float r = colour.v[0];
     float g = colour.v[1];
     float b = colour.v[2];
-    float a = colour.v[3];
 
     for (s64 i = 0; i < path->count-1; i++) {
         //
@@ -58,13 +56,13 @@ void draw_path(Path *path, float width, Vector4 colour, Vertex_array *out)
             rect[3] = sub_vec2(B, AB_offset);
         }
 
-        *Add(out) = (Vertex){rect[0].v[0], rect[0].v[1], r, g, b, a};
-        *Add(out) = (Vertex){rect[1].v[0], rect[1].v[1], r, g, b, a};
-        *Add(out) = (Vertex){rect[2].v[0], rect[2].v[1], r, g, b, a};
+        *Add(out) = (Vertex){rect[0].v[0], rect[0].v[1], r, g, b};
+        *Add(out) = (Vertex){rect[1].v[0], rect[1].v[1], r, g, b};
+        *Add(out) = (Vertex){rect[2].v[0], rect[2].v[1], r, g, b};
 
-        *Add(out) = (Vertex){rect[1].v[0], rect[1].v[1], r, g, b, a};
-        *Add(out) = (Vertex){rect[2].v[0], rect[2].v[1], r, g, b, a};
-        *Add(out) = (Vertex){rect[3].v[0], rect[3].v[1], r, g, b, a};
+        *Add(out) = (Vertex){rect[1].v[0], rect[1].v[1], r, g, b};
+        *Add(out) = (Vertex){rect[2].v[0], rect[2].v[1], r, g, b};
+        *Add(out) = (Vertex){rect[3].v[0], rect[3].v[1], r, g, b};
 
         // Don't draw a mitre if the points ABC are colinear.
         if (ABC_clockwise == 0)  continue;
@@ -84,9 +82,9 @@ void draw_path(Path *path, float width, Vector4 colour, Vertex_array *out)
             mitre[2] = sub_vec2(B, BC_offset);
         }
 
-        *Add(out) = (Vertex){mitre[0].v[0], mitre[0].v[1], r, g, b, a};
-        *Add(out) = (Vertex){mitre[1].v[0], mitre[1].v[1], r, g, b, a};
-        *Add(out) = (Vertex){mitre[2].v[0], mitre[2].v[1], r, g, b, a};
+        *Add(out) = (Vertex){mitre[0].v[0], mitre[0].v[1], r, g, b};
+        *Add(out) = (Vertex){mitre[1].v[0], mitre[1].v[1], r, g, b};
+        *Add(out) = (Vertex){mitre[2].v[0], mitre[2].v[1], r, g, b};
     }
 }
 

@@ -1,4 +1,4 @@
-Remove alpha from colours (for real this time).
+Interpolate the colours in HSL.
 
 Make it possible to drag up the panel on mobile.
 

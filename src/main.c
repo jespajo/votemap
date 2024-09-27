@@ -12,6 +12,21 @@ float frand()
     return rand()/(float)RAND_MAX;
 }
 
+float lerp(float a, float b, float t)
+{
+    return (1-t)*a + t*b;
+}
+
+//|Temporary
+Vector3 lerp_rgb(Vector3 a, Vector3 b, float t)
+{
+    float red   = lerp(a.v[0], b.v[0], t);
+    float green = lerp(a.v[1], b.v[1], t);
+    float blue  = lerp(a.v[2], b.v[2], t);
+
+    return (Vector3){red, green, blue};
+}
+
 Response serve_vertices(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
@@ -95,19 +110,19 @@ Response serve_vertices(Request *request, Memory_context *context)
                 assert(end_data == &polygons_cell->data[polygons_cell->count]);
             }
 
-            Vector4 colour;
+            Vector3 colour;
             if (colour_cell->count) {
                 u32   parsed_colour   = get_u32_from_cell(colour_cell);
-                float parsed_fraction = get_float_from_cell(fraction_cell);
+                float parsed_fraction = get_float_from_cell(fraction_cell);//|Incomplete: Use this!
 
                 //|Todo: Interpolate in HSL at least.
                 int r = (parsed_colour & 0xff0000) >> 16;
                 int g = (parsed_colour & 0x00ff00) >> 8;
                 int b = (parsed_colour & 0x0000ff);
 
-                colour = (Vector4){r/255.0, g/255.0, b/255.0, parsed_fraction};
+                colour = lerp_rgb((Vector3){1,1,1}, (Vector3){r,g,b}, parsed_fraction);
             } else {
-                colour = (Vector4){0.5, 0.5, 0.5, 1.0};
+                colour = (Vector3){0.5, 0.5, 0.5};
             }
 
             for (s64 j = 0; j < polygons.count; j++)  draw_polygon(&polygons.data[j], colour, verts);
@@ -131,7 +146,7 @@ Response serve_vertices(Request *request, Memory_context *context)
         Path_array *paths = query_paths(db, query, &params, ctx);
 
         for (s64 i = 0; i < paths->count; i++) {
-            Vector4 colour = {0, 0, 0, 1.0};
+            Vector3 colour = {0, 0, 0};
 
             float line_width = 2*upp;
 
@@ -185,7 +200,7 @@ Response serve_vertices(Request *request, Memory_context *context)
                 assert(end_data == &polygons_cell->data[polygons_cell->count]);
             }
 
-            Vector4 colour = {0.1, 0.1, 0.1, 1.0};
+            Vector3 colour = {0.1, 0.1, 0.1};
 
             for (s64 j = 0; j < polygons.count; j++)  draw_polygon(&polygons.data[j], colour, verts);
         }
@@ -213,7 +228,7 @@ Response serve_vertices(Request *request, Memory_context *context)
         Path_array *paths = query_paths(db, query, &params, ctx);
 
         for (s64 i = 0; i < paths->count; i++) {
-            Vector4 colour = {0.3, 0.3, 0.3, 1.0};
+            Vector3 colour = {0.3, 0.3, 0.3};
             float line_width = 1*upp;
 
             draw_path(&paths->data[i], line_width, colour, verts);
@@ -239,7 +254,7 @@ Response serve_vertices(Request *request, Memory_context *context)
         Path_array *paths = query_paths(db, query, &params, ctx);
 
         for (s64 i = 0; i < paths->count; i++) {
-            Vector4 colour = {0.3, 0.3, 0.3, 1.0};
+            Vector3 colour = {0.3, 0.3, 0.3};
             float line_width = 1*upp;
 
             draw_path(&paths->data[i], line_width, colour, verts);
