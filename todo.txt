@@ -1,13 +1,11 @@
-Interpolate the colours in HSL.
-
-Make it possible to drag up the panel on mobile.
-
 Get the FP party codes from the database.
 Make the party codes look nicer and selectable.
 
 Actually choose 2CP/FP depending on the map state.
 
 ---
+
+Interpolate the colours in HSL.
 
 Add cities/suburbs to labels depending on zoom level
 

@@ -526,11 +526,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         width:  0.4*map.width,
         height: 400
     };
+    let panelIsBeingDragged = false;
+    let panelDragStartY     = 0; // If the panel is being dragged, this is the Y value of the pointer when the drag was last done.
 
     // Toggle developer visualisations. |Debug
     let debugTransform = false;
     let debugLabels    = false;
-    let debugFPS       = true;
+    let debugFPS       = false;
 
     // The number of milliseconds since page load. Calculated once per frame.
     // For animations, not performance testing.
@@ -1093,9 +1095,36 @@ document.addEventListener("DOMContentLoaded", async () => {
                         panelRect.height = document.body.clientHeight - panelRect.y;
                     } else {
                         // Otherwise, if the user was already in mobile mode, the user controls the panel's dimensions.
-                        // So we should only set the width and make sure we aren't leaving a gap at the bottom of the page.
                         panelRect.width = document.body.clientWidth;
 
+                        if (panelIsBeingDragged) {
+                            if (!input.pointers[0].down) {
+                                panelIsBeingDragged = false;
+                            } else {
+                                const diff = input.pointers[0].y - panelDragStartY;
+                                let dragAllowed = true; {
+                                    const alwaysShow = 20; // Never allow the panel to be pushed further than would show its top 20 pixels.
+                                    if (panelRect.y + diff > document.body.clientHeight - alwaysShow)             dragAllowed = false;
+                                    else if (panelRect.y + panelRect.height + diff < document.body.clientHeight)  dragAllowed = false;
+                                }
+                                if (dragAllowed) {
+                                    panelRect.y    += diff;
+                                    panelDragStartY = input.pointers[0].y;
+                                }
+                            }
+                        } else if (mobileMode) {
+                            //|Todo: cutTop
+                            const dragRect  = clone(panelRect);
+                            dragRect.height = 50;
+
+                            const flags = getPointerFlags(dragRect, Layer.PANEL);
+                            if (flags[0].pressed) {
+                                panelIsBeingDragged = true;
+                                panelDragStartY     = input.pointers[0].y;
+                            }
+                        }
+
+                        // Make sure we aren't leaving a gap at the bottom of the page.
                         const gap = document.body.clientHeight - (panelRect.y + panelRect.height);
                         if (gap > 0)  panelRect.y += gap;
                     }
@@ -1220,7 +1249,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         const height = 10;
                         ui.font = height + 'px party-label';
 
-                        for (const label of ["ALP", "LNP", "GRN"]) {
+                        for (const label of ["ALP", "LNP", "GRN", "1", "2", "3", "4", "5"]) {
                             ui.fillText(label, panelX, panelY);
 
                             panelY += height;

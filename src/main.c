@@ -17,8 +17,8 @@ float lerp(float a, float b, float t)
     return (1-t)*a + t*b;
 }
 
-//|Temporary
 Vector3 lerp_rgb(Vector3 a, Vector3 b, float t)
+//|Temporary: Interpolating in RGB is bad unless you're just going to black or white.
 {
     float red   = lerp(a.v[0], b.v[0], t);
     float green = lerp(a.v[1], b.v[1], t);
