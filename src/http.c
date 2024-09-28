@@ -804,7 +804,6 @@ Response serve_file_slowly(Request *request, Memory_context *context)
     }
 
     if (is_directory) {
-        bool has_index = false;
         Directory *dir = &dir_stack.data[dir_stack.count-1];
         for (s64 i = 0; i < dir->files->count; i++) {
             char_array *file_name = &dir->files->data[i];
