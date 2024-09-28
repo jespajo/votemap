@@ -140,7 +140,7 @@ Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Mem
 {
     Postgres_result *pg_result = query_database(db, query, params, context);
 
-    s64 column_index = *Get(pg_result->columns, "polygon");
+    int column_index = *Get(pg_result->columns, "polygon");
     if (column_index < 0)  return QueryError("Couldn't find a \"polygon\" column in the results.");
 
     u8_array3 *rows = &pg_result->rows;
@@ -207,7 +207,7 @@ Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_co
 {
     Postgres_result *pg_result = query_database(db, query, params, context);
 
-    s64 column_index = *Get(pg_result->columns, "path");
+    int column_index = *Get(pg_result->columns, "path");
     if (column_index < 0)  return QueryError("Couldn't find a \"path\" column in the results.");
 
     Path_array *paths = NewArray(paths, context);
@@ -345,7 +345,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
             d += param_length + 1;
         }
 
-        s64_dict *columns = result->columns;
+        int_dict *columns = result->columns;
 
         s32 num_columns;  memcpy(&num_columns, d, sizeof(s32));
         d += sizeof(s32);

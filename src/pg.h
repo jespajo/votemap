@@ -13,7 +13,7 @@
 //
 //      Postgres_result *result;
 //
-//      s64 column_index = *Get(result->columns, "my_column_name");
+//      int column_index = *Get(result->columns, "my_column_name");
 //
 //      if (column_index < 0) // There is no column called "my_column_name" in the results.
 //
@@ -26,7 +26,7 @@
 typedef struct Postgres_result Postgres_result;
 
 struct Postgres_result {
-    s64_dict  *columns;
+    int_dict  *columns;
     u8_array3  rows;
 };
 
