@@ -37,5 +37,6 @@ Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_co
 Postgres_result *query_database(PGconn *db, char *query, string_array *params, Memory_context *context);
 u32 get_u32_from_cell(u8_array *cell);
 float get_float_from_cell(u8_array *cell);
+char_array *copy_char_array_from_cell(u8_array *cell, Memory_context *context);
 
 #endif // PG_H_INCLUDED

@@ -309,6 +309,83 @@ Response serve_labels(Request *request, Memory_context *context)
     return response;
 }
 
+Response serve_parties(Request *request, Memory_context *context)
+{
+    Memory_context *ctx = context;
+
+    PGconn *db = connect_to_database(DATABASE_URL);
+
+    //|Temporary. Some things to remember about this query.
+    //| - It groups by multiple columns, which we assume are all dependent on party_id.
+    //|   So if we gave any independent a colour, it would return an extra row for that independent.
+    //|   Currently the independents are grouped because they all have the same colour.
+    //| - For independents, it returns empty cells for party_id, party_name and party_code.
+    //| - It only returns parties that have a 2CP candidate in some electorate.
+    char *query =
+        " select party_id, party_name, party_code, colour, count(*) "
+        " from candidates_22 c                                      "
+        "   join results_house_22 r on r.candidate_id = c.id        "
+        " where r.vote_type = '2CP'                                 "
+        " group by party_id, party_name, party_code, colour         "
+        " order by count desc                                       ";
+
+    Postgres_result *result = query_database(db, query, NULL, ctx);
+
+    s64 party_id_column   = *Get(result->columns, "party_id");
+    s64 party_name_column = *Get(result->columns, "party_name");
+    s64 party_code_column = *Get(result->columns, "party_code");
+    s64 colour_column     = *Get(result->columns, "colour");
+    assert(party_id_column >= 0);
+    assert(party_name_column >= 0);
+    assert(party_code_column >= 0);
+    assert(colour_column >= 0);
+
+    JSON_value json = {.type = JSON_OBJECT};
+    json.object = NewDict(json.object, ctx);
+
+    JSON_value *parties = Set(json.object, "parties");
+    parties->type   = JSON_OBJECT;
+    parties->object = NewDict(parties->object, ctx);
+
+    for (s64 row_index = 0; row_index < result->rows.count; row_index++) {
+        u8_array2 *row = &result->rows.data[row_index];
+
+        char party_id[32]; {
+            u8_array *cell = &row->data[party_id_column];
+
+            int value = (cell->count) ? (int)get_u32_from_cell(cell) : -1;
+
+            int r = snprintf(party_id, sizeof(party_id), "%d", value);
+            assert(0 < r && r < sizeof(party_id));
+        }
+
+        JSON_value *party = Set(parties->object, party_id);
+        party->type   = JSON_OBJECT;
+        party->object = NewDict(parties->object, ctx);
+
+        JSON_value *code = Set(party->object, "code");
+        code->type   = JSON_STRING;
+        code->string = copy_char_array_from_cell(&row->data[party_code_column], ctx);
+
+        JSON_value *name = Set(party->object, "name");
+        name->type   = JSON_STRING;
+        name->string = copy_char_array_from_cell(&row->data[party_name_column], ctx);
+
+        JSON_value *colour = Set(party->object, "colour");
+        colour->type   = JSON_STRING;
+        colour->string = get_string(ctx, "#%06x", get_u32_from_cell(&row->data[colour_column]));
+    }
+
+    char_array *body = get_json_printed(&json, ctx);
+
+    Response response = {200, .body = body->data, .size = body->count};
+
+    response.headers = NewDict(response.headers, ctx);
+    *Set(response.headers, "content-type") = "application/json";
+
+    return response;
+}
+
 int main()
 {
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
@@ -323,6 +400,7 @@ int main()
 
     add_route(server, GET, "/bin/vertices",    &serve_vertices);
     add_route(server, GET, "/bin/labels.json", &serve_labels);
+    add_route(server, GET, "/parties",         &serve_parties);
     add_route(server, GET, "/.*",              &serve_file_insecurely);
 
     start_server(server);

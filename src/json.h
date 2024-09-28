@@ -43,7 +43,7 @@ struct Parsed_JSON {
     JSON_value json;
 };
 
-Parsed_JSON parse_json(char *source, s64 length, Memory_context *context); // |Speed.
+Parsed_JSON parse_json(char *source, s64 length, Memory_context *context);
 s64 json_value_to_uint(JSON_value *json);
 s64 assert_json_uint(JSON_value *json);
 float assert_json_float(JSON_value *json);

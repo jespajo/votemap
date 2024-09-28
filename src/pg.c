@@ -472,3 +472,18 @@ float get_float_from_cell(u8_array *cell)
 
     return f;
 }
+
+char_array *copy_char_array_from_cell(u8_array *cell, Memory_context *context)
+//|Speed: This makes a copy of the string.
+{
+    char_array *result = NewArray(result, context);
+
+    array_reserve(result, cell->count+1);
+
+    memcpy(result->data, cell->data, cell->count);
+    result->data[cell->count] = '\0';
+
+    result->count = cell->count;
+
+    return result;
+}
