@@ -309,6 +309,26 @@ Response serve_labels(Request *request, Memory_context *context)
     return response;
 }
 
+//|Todo: move to json.h
+JSON_object **set_json_object(JSON_object **parent, char *key)
+{
+    JSON_value *parent_value = (JSON_value *)((u8 *)parent - offsetof(JSON_value, object));
+    assert(parent_value->type == JSON_OBJECT);
+
+    JSON_value *value = Set(*parent, key);
+    value->type = JSON_OBJECT;
+    return &value->object;
+}
+char_array **set_json_string(JSON_object **parent, char *key)
+{
+    JSON_value *parent_value = (JSON_value *)((u8 *)parent - offsetof(JSON_value, object));
+    assert(parent_value->type == JSON_OBJECT);
+
+    JSON_value *value = Set(*parent, key);
+    value->type = JSON_STRING;
+    return &value->string;
+}
+
 Response serve_parties(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
@@ -343,37 +363,28 @@ Response serve_parties(Request *request, Memory_context *context)
     JSON_value json = {.type = JSON_OBJECT};
     json.object = NewDict(json.object, ctx);
 
-    JSON_value *parties = Set(json.object, "parties");
-    parties->type   = JSON_OBJECT;
-    parties->object = NewDict(parties->object, ctx);
+    JSON_object **parties = set_json_object(&json.object, "parties");
+    *parties = NewDict(*parties, ctx);
 
     for (s64 row_index = 0; row_index < result->rows.count; row_index++) {
         u8_array2 *row = &result->rows.data[row_index];
 
         char party_id[32]; {
             u8_array *cell = &row->data[party_id_column];
-
             int value = (cell->count) ? (int)get_u32_from_cell(cell) : -1;
 
             int r = snprintf(party_id, sizeof(party_id), "%d", value);
             assert(0 < r && r < sizeof(party_id));
         }
 
-        JSON_value *party = Set(parties->object, party_id);
-        party->type   = JSON_OBJECT;
-        party->object = NewDict(parties->object, ctx);
+        JSON_object **party = set_json_object(parties, party_id);
+        *party = NewDict(*party, ctx);
 
-        JSON_value *code = Set(party->object, "code");
-        code->type   = JSON_STRING;
-        code->string = copy_char_array_from_cell(&row->data[party_code_column], ctx);
+        *set_json_string(party, "code") = copy_char_array_from_cell(&row->data[party_code_column], ctx);
+        *set_json_string(party, "name") = copy_char_array_from_cell(&row->data[party_name_column], ctx);
 
-        JSON_value *name = Set(party->object, "name");
-        name->type   = JSON_STRING;
-        name->string = copy_char_array_from_cell(&row->data[party_name_column], ctx);
-
-        JSON_value *colour = Set(party->object, "colour");
-        colour->type   = JSON_STRING;
-        colour->string = get_string(ctx, "#%06x", get_u32_from_cell(&row->data[colour_column]));
+        u32 colour = get_u32_from_cell(&row->data[colour_column]);
+        *set_json_string(party, "colour") = get_string(ctx, "#%06x", colour);
     }
 
     char_array *body = get_json_printed(&json, ctx);
