@@ -129,31 +129,6 @@ Response serve_vertices(Request *request, Memory_context *context)
         }
     }
 
-    // Draw the electorate boundaries as lines.
-    {
-        char *query =
-            " select st_asbinary(t.geom) as path                                                    "
-            " from (                                                                                "
-            "     select st_simplify(geom, $1::float) as geom                                       "
-            "     from electorates_22_topo.edge_data                                                "
-            "     where geom && st_setsrid(                                                         "
-            "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
-            "         3577                                                                          "
-            "       )                                                                               "
-            "       and (left_face != 0 and right_face != 0)                                        "
-            "   ) t                                                                                 ";
-
-        Path_array *paths = query_paths(db, query, &params, ctx);
-
-        for (s64 i = 0; i < paths->count; i++) {
-            Vector3 colour = {0, 0, 0};
-
-            float line_width = 2*upp;
-
-            draw_path(&paths->data[i], line_width, colour, verts);
-        }
-    }
-
     // Draw some rivers.
     {
         char *query =
@@ -256,6 +231,31 @@ Response serve_vertices(Request *request, Memory_context *context)
         for (s64 i = 0; i < paths->count; i++) {
             Vector3 colour = {0.3, 0.3, 0.3};
             float line_width = 1*upp;
+
+            draw_path(&paths->data[i], line_width, colour, verts);
+        }
+    }
+
+    // Draw the electorate boundaries as lines.
+    {
+        char *query =
+            " select st_asbinary(t.geom) as path                                                    "
+            " from (                                                                                "
+            "     select st_simplify(geom, $1::float) as geom                                       "
+            "     from electorates_22_topo.edge_data                                                "
+            "     where geom && st_setsrid(                                                         "
+            "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
+            "         3577                                                                          "
+            "       )                                                                               "
+            "       and (left_face != 0 and right_face != 0)                                        "
+            "   ) t                                                                                 ";
+
+        Path_array *paths = query_paths(db, query, &params, ctx);
+
+        for (s64 i = 0; i < paths->count; i++) {
+            Vector3 colour = {0, 0, 0};
+
+            float line_width = 2*upp;
 
             draw_path(&paths->data[i], line_width, colour, verts);
         }
