@@ -6,6 +6,8 @@ Actually choose 2CP/FP depending on the map state.
 
 ---
 
+On mobile, shrink the map when the panel is dragged up.
+
 Interpolate the colours in HSL.
 
 Add cities/suburbs to labels depending on zoom level

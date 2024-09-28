@@ -534,7 +534,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     let mobileMode = false;
 
     //|Temporary: this should go in the map state and also be an enum or something, not a boolean.
-    let isFirstPreferences = false;
+    let isFirstPreferences = true;
 
     /**
      * @type Rect
@@ -1120,16 +1120,18 @@ document.addEventListener("DOMContentLoaded", async () => {
                             if (!input.pointers[0].down) {
                                 panelIsBeingDragged = false;
                             } else {
-                                const diff = input.pointers[0].y - panelDragStartY;
-                                let dragAllowed = true; {
-                                    const alwaysShow = 20; // Never allow the panel to be pushed further than would show its top 20 pixels.
-                                    if (panelRect.y + diff > document.body.clientHeight - alwaysShow)             dragAllowed = false;
-                                    else if (panelRect.y + panelRect.height + diff < document.body.clientHeight)  dragAllowed = false;
-                                }
-                                if (dragAllowed) {
-                                    panelRect.y    += diff;
-                                    panelDragStartY = input.pointers[0].y;
-                                }
+                                const alwaysShow = 20; // Don't let the user drag the panel out of sight---always show at least this many pixels.
+
+                                const minY = document.body.clientHeight - panelRect.height;
+                                const maxY = document.body.clientHeight - alwaysShow;
+
+                                let dy = input.pointers[0].y - panelDragStartY;
+
+                                if (panelRect.y + dy < minY)       dy = minY - panelRect.y;
+                                else if (panelRect.y + dy > maxY)  dy = maxY - panelRect.y;
+
+                                panelRect.y     += dy;
+                                panelDragStartY += dy;
                             }
                         } else if (mobileMode) {
                             //|Todo: cutTop
