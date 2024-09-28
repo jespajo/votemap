@@ -450,12 +450,31 @@ document.addEventListener("DOMContentLoaded", async () => {
      * @typedef {{text: string, pos: [number, number]}} Label
      * @type Label[]
      */
-    let labels; {
+    let labels; { //|Speed: Make this fetch async.
         const response = await fetch("../bin/labels.json");
         const json = await response.json();
 
         labels = json.labels;
     }
+
+    /**
+     * @typedef {{code: string, name: string, colour: string}} Party
+     * @type {{[key: string]: Party}}
+     */
+     let parties;
+     /** @type string[] */
+     let partyCodes;
+     { //|Speed: Make this fetch async.
+        const response = await fetch("/parties");
+        const json     = await response.json();
+        parties = json.parties;
+
+        partyCodes = [];
+        for (const id of Object.keys(parties)) {
+            const code = parties[id].code;
+            if (code && partyCodes.indexOf(code) < 0)  partyCodes.push(code);
+        }
+     }
 
 
     const map = {
@@ -1245,13 +1264,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                     panelY += toggleRect.height;
 
-                    if (isFirstPreferences) {
+                    if (isFirstPreferences && partyCodes) {
                         const height = 10;
                         ui.font = height + 'px party-label';
 
-                        for (const label of ["ALP", "LNP", "GRN", "1", "2", "3", "4", "5"]) {
+                        for (const label of partyCodes) {
                             ui.fillText(label, panelX, panelY);
-
                             panelY += height;
                         }
                     }

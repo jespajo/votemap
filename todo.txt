@@ -1,4 +1,3 @@
-Get the FP party codes from the database.
 Make the party codes look nicer and selectable.
 
 Change Postgres columns dict from s64 to int.
