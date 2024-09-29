@@ -140,7 +140,7 @@ Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Mem
 {
     Postgres_result *pg_result = query_database(db, query, params, context);
 
-    int column_index = *Get(pg_result->columns, "polygon");
+    int column_index = *Get(&pg_result->columns, "polygon");
     if (column_index < 0)  return QueryError("Couldn't find a \"polygon\" column in the results.");
 
     u8_array3 *rows = &pg_result->rows;
@@ -207,7 +207,7 @@ Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_co
 {
     Postgres_result *pg_result = query_database(db, query, params, context);
 
-    int column_index = *Get(pg_result->columns, "path");
+    int column_index = *Get(&pg_result->columns, "path");
     if (column_index < 0)  return QueryError("Couldn't find a \"path\" column in the results.");
 
     Path_array *paths = NewArray(paths, context);
@@ -235,9 +235,9 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
     Memory_context *ctx = context;
 
     Postgres_result *result = New(Postgres_result, ctx);
-    result->columns = NewDict(result->columns, ctx);
+    result->columns = (int_dict){.context = ctx, .string_mode = true};
     result->rows    = (u8_array3){.context = ctx};
-    SetDefault(result->columns, -1);
+    SetDefault(&result->columns, -1);
 
     // Make the query.
     PGresult *query_result; {
@@ -257,7 +257,7 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
 
     for (int i = 0; i < num_columns; i++) {
         char *column_name = PQfname(query_result, i);
-        *Set(result->columns, column_name) = i;
+        *Set(&result->columns, column_name) = i;
     }
 
     for (int i = 0; i < num_rows; i++) {
@@ -306,9 +306,9 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
         printf("Found cache file %s.\n", cache_file_name);
 
         Postgres_result *result = New(Postgres_result, ctx);
-        result->columns = NewDict(result->columns, ctx);
+        result->columns = (int_dict){.context = ctx, .string_mode = true};
         result->rows    = (u8_array3){.context = ctx};
-        SetDefault(result->columns, -1);
+        SetDefault(&result->columns, -1);
 
         //
         // Read the cache file.
@@ -345,7 +345,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
             d += param_length + 1;
         }
 
-        int_dict *columns = result->columns;
+        int_dict *columns = &result->columns;
 
         s32 num_columns;  memcpy(&num_columns, d, sizeof(s32));
         d += sizeof(s32);
@@ -419,11 +419,11 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
         *Add(cache_file) = '\0';
     }
 
-    s32 num_columns = result->columns->count;
+    s32 num_columns = result->columns.count;
     add_s32(cache_file, num_columns);
 
     for (int i = 0; i < num_columns; i++) {
-        char *column_name = result->columns->keys[i];
+        char *column_name = result->columns.keys[i];
         int   name_length = strlen(column_name);
 
         add_s32(cache_file, name_length);

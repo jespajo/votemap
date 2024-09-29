@@ -80,10 +80,10 @@ Response serve_vertices(Request *request, Memory_context *context)
         Postgres_result *result = query_database(db, query, &params, ctx);
         if (!result->rows.count)  Fatal("A query for polygons returned no results.");
 
-        int booth_id_column = *Get(result->columns, "booth_id");
-        int polygons_column = *Get(result->columns, "polygon");
-        int fraction_column = *Get(result->columns, "fraction_of_votes");
-        int colour_column   = *Get(result->columns, "colour");
+        int booth_id_column = *Get(&result->columns, "booth_id");
+        int polygons_column = *Get(&result->columns, "polygon");
+        int fraction_column = *Get(&result->columns, "fraction_of_votes");
+        int colour_column   = *Get(&result->columns, "colour");
         if (booth_id_column < 0)  Fatal("Couldn't find a \"booth_id\" column in the results.");
         if (polygons_column < 0)  Fatal("Couldn't find a \"polygon\" column in the results.");
         if (fraction_column < 0)  Fatal("Couldn't find a \"fraction_of_votes\" column in the results.");
@@ -159,7 +159,7 @@ Response serve_vertices(Request *request, Memory_context *context)
 
         Postgres_result *result = query_database(db, query, &params, ctx);
 
-        int polygons_column = *Get(result->columns, "polygon");
+        int polygons_column = *Get(&result->columns, "polygon");
         if (polygons_column < 0)  Fatal("Couldn't find a \"polygon\" column in the results.");
 
         for (s64 i = 0; i < result->rows.count; i++) {
@@ -296,7 +296,7 @@ Response serve_labels(Request *request, Memory_context *context)
 
     Postgres_result *result = query_database(db, query, NULL, ctx);
 
-    assert(*Get(result->columns, "json") == 0);
+    assert(*Get(&result->columns, "json") == 0);
     assert(result->rows.count == 1);
     u8_array *json = &result->rows.data[0].data[0];
 
@@ -351,10 +351,10 @@ Response serve_parties(Request *request, Memory_context *context)
 
     Postgres_result *result = query_database(db, query, NULL, ctx);
 
-    int party_id_column   = *Get(result->columns, "party_id");
-    int party_name_column = *Get(result->columns, "party_name");
-    int party_code_column = *Get(result->columns, "party_code");
-    int colour_column     = *Get(result->columns, "colour");
+    int party_id_column   = *Get(&result->columns, "party_id");
+    int party_name_column = *Get(&result->columns, "party_name");
+    int party_code_column = *Get(&result->columns, "party_code");
+    int colour_column     = *Get(&result->columns, "colour");
     assert(party_id_column >= 0);
     assert(party_name_column >= 0);
     assert(party_code_column >= 0);

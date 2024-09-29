@@ -26,8 +26,8 @@
 typedef struct Postgres_result Postgres_result;
 
 struct Postgres_result {
-    int_dict  *columns;
-    u8_array3  rows;
+    int_dict  columns;
+    u8_array3 rows;
 };
 
 PGconn *connect_to_database(char *url);
