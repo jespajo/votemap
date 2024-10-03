@@ -78,9 +78,10 @@ const FRAGMENT_SHADER_TEXT = `
 // Application state globals.
 //
 
-// The number of milliseconds since page load. Calculated once per frame.
-// For animations, not performance testing.
-/** @type number */
+/**
+ * The number of milliseconds since page load. It stays the same for a whole frame, so we can't use it for intra-frame performance testing.
+ * @type number
+ */
 let currentTime = document.timeline.currentTime;
 /** @type number */
 let timeDelta;
@@ -235,6 +236,8 @@ let debugTransform = false;
 let debugLabels = false;
 /** @type boolean */
 let debugFPS = false;
+/** @type boolean */
+let debugSlerp = true;
 
 //
 // Stuff for FPS calculations.
@@ -254,6 +257,10 @@ let fpsText = '';
 let fpsTextUpdated = document.timeline.currentTime;
 /** @type DOMHighResTimeStamp */
 let frameStartTime;
+
+//|Inconsistent: All the variables to do with FPS data are separate globals. We should probably put them into an object, like we do for the slerp points.
+/** @type {{A?: Vec2, B?: Vec2, C?: Vec2}} */
+const debugSlerpInfo = {};
 
 //
 // Functions!
@@ -310,29 +317,97 @@ function lerp(a, b, t) {
 }
 
 /**
+ * @type {(a: Transform, b: Transform) => boolean}
+ */
+function sameTransform(a, b) {
+    let same = true;
+
+    same &&= (a.scale === b.scale);
+    same &&= (a.rotate === b.rotate);
+    same &&= (a.translateX === b.translateX);
+    same &&= (a.translateY === b.translateY);
+
+    return same;
+}
+
+/**
  * @type {(start: Transform, end: Transform, t: number) => Transform}
  */
 function interpolateTransform(start, end, t) {
-    let scale = start.scale;
+    if (sameTransform(start, end))  return end; //|Robustness: We're doing this because otherwise the whole program crashes in the common case that the transforms are the same. We should figure out why and see if the crash could occur in any other situation.
 
-    if (scale !== end.scale) {
-        // For a zoom animation to look linear, it has to happen at an exponential rate with respect to the scale---
-        // that is, treat the start and end scales as powers of two, and linearly interpolate the powers.
-        const exp0 = Math.log2(start.scale);
-        const exp1 = Math.log2(end.scale);
-        const exp  = lerp(exp0, exp1, t);
+    //
+    // Our goal is to transition the map from one state to another in a way that looks smooth.
+    // For a zoom to look linear, it has to happen at an exponential rate with respect to the scale.
+    // That is, consider the scales at the start and end of the animation as powers of two, and linearly interpolate the powers.
+    // If the animation affects both scale and rotation, getting them to change smoothly in concert is a bit trickier.
+    // To see how we achieve this, imagine drawing a triangle ABC on the screen.
+    // Point A is at the origin in the top-left corner.
+    // Now say the animation is about to start.
+    // Find the map coordinate currently at point A.
+    // Then put the map into its final state, as though the animation has completed, and see where that map coordinate ends up---that's point B.
+    // Find point C such that:
+    // - the angle inside the triangle at point C is equal to the rotation being applied in the animation, and
+    // - the ratio of the lengths of the sides AC and BC is equal to the scale being applied in the animation.
+    // You make it look smooth by ensuring that point C doesn't move for the duration of the animation.
+    // (Also, set debugSlerp to true to see the triangle.)
+    //
 
-        scale = Math.pow(2, exp);
+    const exp0  = Math.log2(start.scale);
+    const exp1  = Math.log2(end.scale);
+    const exp   = lerp(exp0, exp1, t);
+    const scale = Math.pow(2, exp);
 
-        // Update t so that translateX and translateY interpolate at the same rate as the scale, so zooms keep the same focal point.
-        t = (scale - start.scale)/(end.scale - start.scale);
-    }
+    const rotate = lerp(start.rotate, end.rotate, t);
 
-    const rotate     = lerp(start.rotate,     end.rotate,     t); //|Fixme: This doesn't actually work.
-    const translateX = lerp(start.translateX, end.translateX, t);
-    const translateY = lerp(start.translateY, end.translateY, t);
+    const scaleRatio = end.scale/start.scale;
 
-    return {scale, rotate, translateX, translateY};
+    const drot  = end.rotate - start.rotate;
+    const gamma = Math.abs(drot);
+
+    // Get the screen's top-left corner, at the start of the animation, in map coordinates.
+    const p0 = inverseXform(start, {x:0, y:0});
+    // Find out where that position on the map ends up, in screen coordinates, at the end of the animation.
+    const p1 = xform(end, p0);
+
+    //|Cleanup: wouldn't the below be better if we assumed b was unit-length instead (then we could multiply by scaleRatio instead of dividing).
+
+    // We don't know the lengths of AC and BC, but we know their ratio. So solve the triangle by pretending BC is unit-length.
+    // Reference for the law of cosines formulas used:
+    // https://en.wikipedia.org/wiki/Solution_of_triangles#Two_sides_and_the_included_angle_given_(SAS)
+    let a = 1;
+    let b = a/scaleRatio;
+    let c = Math.sqrt(Math.abs(a*a + b*b - 2*a*b*Math.cos(gamma))); // We use abs() because floating-point imprecision means this could otherwise try to get the square root of a negative number.
+
+    let alpha = Math.acos(Math.max(-1, Math.min(1, (b*b + c*c - a*a)/(2*b*c)))); // The min/max stuff here is also due to floating-point imprecision, and the fact that acos() is only defined for [-1,1].
+    if (drot > 0)  alpha *= -1;
+
+    // Now that we've solved the triangle, scale the lengths according the one we actually know, which is AB.
+    const actualc = Math.hypot(p1.x, p1.y);
+    a *= actualc/c;
+    b *= actualc/c;
+    c  = actualc;
+
+    // Turn the AB vector into the AC vector. |Cleanup: We should probably factor the maths below into functions like scaleVec and rotateVec.
+
+    // Normalise AB. c must be actualc!
+    const p2 = {x: p1.x/c, y: p1.y/c};
+    // Rotate it.
+    const p3 = {x: p2.x*Math.cos(alpha) - p2.y*Math.sin(alpha), y: p2.x*Math.sin(alpha) + p2.y*Math.cos(alpha)};
+    // Make it the correct length.
+    const p4 = {x: b*p3.x, y: b*p3.y};
+    // Put it into map coordinates.
+    const p5 = inverseXform(end, p4);
+
+    const newTransform = {scale, rotate, translateX:0, translateY:0};
+
+    const correction = xform(newTransform, p5);
+    newTransform.translateX += p4.x - correction.x;
+    newTransform.translateY += p4.y - correction.y;
+
+    if (debugSlerp)  Object.assign(debugSlerpInfo, {A: {x:0, y:0}, B: p1, C: p4});
+
+    return newTransform;
 }
 
 function clone(object) {
@@ -768,7 +843,7 @@ function handleUserEventsOnMap() {
 
                 const combined = combineBoxes(targetBox, envelope);
 
-                // It's a simple transition if one of the boxes contains the other.
+                // It's a simple transition if one of the boxes contains the other. //|Todo: It should be simple if these boxes overlap at all.
                 const simple = (combined === targetBox) || (combined === envelope);
 
                 if (simple) {
@@ -811,6 +886,32 @@ function handleUserEventsOnMap() {
                     });
                 }
             }
+        }
+
+        if (input.pressed['3']) {
+            // Just rotate the map by 90 degrees, to help test rotation animations.
+            const corners = getMapCorners(map.width, map.height, map.currentTransform);
+
+            const newTransform = clone(map.currentTransform);
+
+            newTransform.rotate += Math.PI/2;
+            if (newTransform.rotate > 2*Math.PI)  newTransform.rotate -= 2*Math.PI;
+
+            // If we applied the newTransform as-is, get the would-be screen coordinates of what used to be the top-left corner.
+            const screenCoords = xform(newTransform, corners[0]);
+            // And put it into the bottom-left corner.
+            newTransform.translateX -= screenCoords.x;
+            newTransform.translateY += map.height - screenCoords.y;
+
+            const duration = 1000;
+
+            map.animations.length = 0;
+            map.animations.push({
+                startTime: currentTime,
+                endTime:   currentTime + duration,
+                start:     clone(map.currentTransform),
+                end:       newTransform,
+            });
         }
 
         // Refetch vertices when the user presses 'r'. |Temporary
@@ -1356,6 +1457,34 @@ function drawFPS() {
     }
 }
 
+function drawSlerp() {
+    if (Object.keys(debugSlerpInfo).length == 0)  return;
+
+    const {A, B, C} = debugSlerpInfo;
+
+    ui.strokeStyle = 'white';
+    ui.lineWidth   = 2;
+
+    ui.moveTo(A.x, A.y);
+    ui.lineTo(B.x, B.y);
+    ui.lineTo(C.x, C.y);
+    ui.lineTo(A.x, A.y);
+    ui.stroke();
+
+    for (const key of Object.keys(debugSlerpInfo)) {
+        const p = debugSlerpInfo[key];
+
+        ui.fillStyle = 'red';
+        ui.fillRect(p.x-4, p.y-4, 8, 8);
+
+        ui.font = `12px monospace`;
+        ui.fillStyle = 'black';
+        ui.fillText(key, p.x+1, p.y+1);
+        ui.fillStyle = 'white';
+        ui.fillText(key, p.x, p.y);
+    }
+}
+
 function drawUI() {
     ui.canvas.width        = Math.floor(dpr*map.width);
     ui.canvas.height       = Math.floor(dpr*map.height);
@@ -1402,6 +1531,7 @@ function step(time) {
 
     if (debugTransform)  drawTransform();
     if (debugFPS)        drawFPS();
+    if (debugSlerp)      drawSlerp();
 
     window.requestAnimationFrame(step);
 }
