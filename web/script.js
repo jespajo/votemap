@@ -34,8 +34,8 @@
         @typedef {{locked: boolean, x: number, y: number}} PointerLock
 
         @typedef {{
-               startTime: DOMHighResTimeStamp,
-               endTime:   DOMHighResTimeStamp,
+               startTime: number,
+               endTime:   number,
                start:     Transform,
                end:       Transform,
                scroll?:   true
@@ -307,6 +307,32 @@ function inverseXform(transform, vec2) {
  */
 function lerp(a, b, t) {
     return (1-t)*a + t*b;
+}
+
+/**
+ * @type {(start: Transform, end: Transform, t: number) => Transform}
+ */
+function interpolateTransform(start, end, t) {
+    let scale = start.scale;
+
+    if (scale !== end.scale) {
+        // For a zoom animation to look linear, it has to happen at an exponential rate with respect to the scale---
+        // that is, treat the start and end scales as powers of two, and linearly interpolate the powers.
+        const exp0 = Math.log2(start.scale);
+        const exp1 = Math.log2(end.scale);
+        const exp  = lerp(exp0, exp1, t);
+
+        scale = Math.pow(2, exp);
+
+        // Update t so that translateX and translateY interpolate at the same rate as the scale, so zooms keep the same focal point.
+        t = (scale - start.scale)/(end.scale - start.scale);
+    }
+
+    const rotate     = lerp(start.rotate,     end.rotate,     t); //|Fixme: This doesn't actually work.
+    const translateX = lerp(start.translateX, end.translateX, t);
+    const translateY = lerp(start.translateY, end.translateY, t);
+
+    return {scale, rotate, translateX, translateY};
 }
 
 function clone(object) {
@@ -682,7 +708,7 @@ function handleUserEventsOnMap() {
         const {minScale, maxScale, maxScroll} = map;
         const ct = map.currentTransform;
 
-        const exp0 = Math.log2(minScale); // |Cleanup. We'd rather store the exponential value. Transform.scale should also be the exponential.
+        const exp0 = Math.log2(minScale);
         const exp1 = Math.log2(maxScale);
 
         if (!map.animations.length || !map.animations[0].scroll) {
@@ -825,37 +851,19 @@ async function fetchVertices() {
 function applyAnimationsToMap() {
     while (map.animations.length) {
         const {startTime, endTime, start, end} = map.animations[0];
-        const ct = map.currentTransform;
 
         if (currentTime < startTime)  break;
 
         if (currentTime < endTime) {
-            const keys = ["rotate", "translateX", "translateY"];
-
             const t = (currentTime - startTime)/(endTime - startTime);
 
-            if (end.scale === start.scale) {
-                keys.push("scale");
-                for (const key of keys)  ct[key] = lerp(start[key], end[key], t);
-            } else {
-                // |Speed: Store exp0 and exp1 on the animation object.
-                const exp0 = Math.log2(start.scale);
-                const exp1 = Math.log2(end.scale);
-                const exp  = lerp(exp0, exp1, t);
-
-                ct.scale = Math.pow(2, exp);
-
-                const t2 = (ct.scale - start.scale)/(end.scale - start.scale);
-
-                for (const key of keys)  ct[key] = lerp(start[key], end[key], t2);
-            }
+            map.currentTransform = interpolateTransform(start, end, t);
 
             break; // The first animation is ongoing, so we don't need to check the next one.
         }
 
         // The first animation has completed.
-        const keys = ["scale", "rotate", "translateX", "translateY"];
-        for (const key of keys)  ct[key] = end[key];
+        Object.assign(map.currentTransform, end);
 
         map.animations.shift(); // Remove the first animation (and check the next one).
     }
