@@ -1,67 +1,103 @@
-Make the party codes look nicer and selectable.
+Refactor web/script.js: make things global to reduce indentation.
 
-Actually choose 2CP/FP depending on the map state.
+Change scale so that we store the exponential.
 
 Fix the issue where there's a column of white pixels on the right sometimes depending on the screen size.
 
----
-
 On mobile, shrink the map when the panel is dragged up.
 
-Interpolate the colours in HSL.
+Fix font loading so that we don't load the same file twice.
 
-Add cities/suburbs to labels depending on zoom level
+Update the web server:
+    Initialise the response header itself (put the value on the Response object instead of a pointer).
+    Set the content-length header.
 
-Add rivers, train lines, roads to verts depending on zoom level
+Create the following types in the database:
+    count_type (2CP, FP)
+Create the following tables in the database and update our documentation:
+    elections
+      (id, name, date)
+    contests
+      (id, code, name)
+    booths
+      (id, name, address, geom)
+    candidates
+      (id, first_name, last_name, party_id)
+    parties
+      (id, code, name, colour)
+    electorates
+      (election_id, contest_id, enrolment, geom)
+    contest_votes
+      (election_id, contest_id, count_type, candidate_id, ballot_position, elected, ordinary_votes, absent_votes, provisional_votes, prepoll_votes, postal_votes, total_votes)
+    booth_votes
+      (election_id, contest_id, booth_id, count_type, candidate_id, votes)
 
-We drop a number of polling booths at different times when creating our Voronoi map. When we revise the process, we should analyse the polling booths that are being dropped at each step and see if we can make the dropping explicit (e.g. by removing prepolling booths specifically), or see if we can hold onto them.
+As the default view when the page loads, show electorates overall instead of the Voronoi.
+    Make one such choropleth for each federal election.
+    Make it possible to switch between them with < and > icons next to the election title.
 
-Turn the electorate edge data (currently topo being queried) into geometry so we can index it and also so we can associate lines with names when they are things like rivers, etc.
+Add an overall election result graph to the main panel that shows the number of seats won by each party.
 
-Get the front end to request the vertices in a predictable grid of tiles
+On the front end, come up with a convincing distinction between "tap" and "drag", so map labels can be tapped.
 
-triangulate_polygon():
-    Speed up with spatial hashing?
+Improve labels.
+    Update the way labels are fetched so that we await the vertices first.
+    Merge serve_vertices() and serve_labels() on the backend so they make the same set of database queries.
+    Make labels only exist in the data if the shapes they correspond to appear on the page.
+    Add a couple of different styles to labels.json.
+    Add cities and suburbs to the labels (depending on the zoom level).
 
-|Bug: Sometimes the web server to was failing to close the socket for the request for labels.json. It hasn't happened in a while though.
+When you tap on an electorate label:
+    Map updates:
+        Change to a flat-colour view of the map.
+        Zoom to that electorate.
+        Highlight the electorate bounds.
+        Make the chosen electorate label bigger.
+        Make the polling booths appear as circles.
+        When you tap on one of the polling booths, it shows some details about it, including the particular result being shown.
+    Panel updates:
+        Show the electorate name as the main title, squashing the election title into one line above that.
+        Add an X next to the electorate name (or something) to allow going back to the previous mode.
 
-serve_file_slowly():
-    Better than what we're doing would be: When the server starts up, recursively visit all files under the working directory and put their full paths into a big array. Also keep track of whether each one is a regular file or a directory. Keep the array sorted for quick searching. Then if the request path matches a path in the array, we know it's a valid file, so we'll try to load it into memory. Then you can do the normalisation of the URL (i.e. making '..' mean to go up a directory) in a separate function, which would simply take the request path as an argument and return the normalised path. This would be much quicker as we wouldn't need to make a thousand syscalls to serve every single file!
-    My main question is: if we're going to cache the files under our directory, when and how do we update this cache? Ideally---for as long as we're single-threaded---we would never update the cache until we've dealt with all pending requests. Then we would update it as soon as possible after that.
+In polling booth mode, show a 2CP chart just below the election name.
 
-Write up database schema plan docs/database.txt.
-Upload XML files to database:
-    polling booth info
-    candidate info
-    vote data
-    election info
+In polling booth mode, show a FP chart below the 2CP chart.
 
-|Bug: I left my computer with the current build open in the browser for a few hours and when I tried scrolling the mouse, it was super janky, like the transformations weren't being applied uniformly. I stupidly refreshed the page. The fact that it appeared after a while made me thing it was floating-point issues to do with currentTime being large, but I haven't been able to reproduce the issue by setting currentTime to large values.
+Slightly expend the bounding box of the requested vertices (i.e. have some buffer).
+Re-request the vertices and labels in some kind of debounced way when the map is being panned and zoomed.
 
-Front end: improve two-part transitions.
-    Only do them if you're going from one zoomed-in look to another in a different place?
-    Expand the combined bounds box?
-    Use some kind of spline!?
+In the default view, below the overall results chart in the panel, add a list of all electorates and allow tapping on them to go into that electorate's view.
 
-Front end: draw map legend scale (e.g. show a line equal to 5km for reference).
+Add swing mode.
+    The polling booths should show the percentage swing for each result.
+    The map should add an extra line showing the old bounds.
 
-Further label improvements:
-    There is still a bug where labels on one edge of the grid wrap around and fill grid squares on the other side. |Bug
-    Get the grid to make use of the screen space efficiently.
-    Get the labels to take up only the grid squares they actually touch, even when the map is rotated.
-    At the moment, our secret (or cheat) to making it look so stable is that the algorithm breaks as soon as it can't find space for one label on the map. It doesn't keep looking. Really we do want it to keep looking and to fill the available space with labels---up to a point: we don't want it to label one small random electorate in a cluster of unlabelled electorates...
-    In fact, what we mainly don't want, I think, is for labels to extend beyond the borders of their electorates. E.g. Eden-Monaro, being a long electorate name, shouldn't appear until it actually fits. Two ways to get this result come to mind: add a bounding box to each label, and add a single value, a width, to each label. In either case you'd only show the label if the width exceeds the map-space width of the text box. So if we can stop electorate labels from exceeding the geographic span of their districts, it might also solve the problem of showing a single electorate in a cluster.
-    Also if we cache the currently-shown labels and rate-limit how often we change this set, we could performance and perceived stability, and even improve the result, because if it's not running every frame we could increase the resolution.
-    Ultimately, the way to get truly great results will be by implementing a label-override system. Each thing being labelled would have an ID. The source code includes, as JSON text, a list of IDs and their corresponding overridden label attributes. Then we implement an editor on the front end that will let us move the labels around and export their current state as JSON. Bingo bango bongo.
+Further improve labels.
+    Update the label placer so that labels only occupy those tiles they actually touch when the map is rotated.
+    Add some labels to roads and rivers.
 
-Front end: draw compass.
-    On mobile, tap this to return to a view with north oriented upwards.
-    On desktop, when you press the compass you go into rotation mode. A circle appears in the middle of the screen with the compass directions etched in. Your cursor is on the edge of the compass. A change in the cursor image would be nice. While the mouse is held down, the circle rotates such that the point the cursor was originally on is the closest point on the circle to the cursor position.
+Web server: do fuzzing.
 
 Web server:
     Use getaddrinfo().
     Support IPv6.
     Parse request headers.
     Parse request bodies; support POST requests.
-    Make it multithreaded.
     Support Connection: Keep-Alive.
+    Support Windows.
+    Make it multithreaded.
+
+Front end: draw map legend scale (e.g. show a line equal to 5km for reference).
+
+Front end: draw compass.
+    On mobile, tap this to return to a view with north oriented upwards.
+    On desktop, when you press the compass you go into rotation mode. A circle appears in the middle of the screen with the compass directions etched in. Your cursor is on the edge of the compass. A change in the cursor image would be nice. While the mouse is held down, the circle rotates such that the point the cursor was originally on is the closest point on the circle to the cursor position.
+
+---
+
+In polling booth mode, when you hover/tap on the relevant places on the 2CP and FP charts, update the polling-booth circles appropriately.
+In the default mode, when you hover/tap on the relevant places on the overall election results chart, visualise the FP results for just that party on the map.
+
+serve_file_slowly():
+    Better than what we're doing would be: When the server starts up, recursively visit all files under the working directory and put their full paths into a big array. Also keep track of whether each one is a regular file or a directory. Keep the array sorted for quick searching. Then if the request path matches a path in the array, we know it's a valid file, so we'll try to load it into memory. Then you can do the normalisation of the URL (i.e. making '..' mean to go up a directory) in a separate function, which would simply take the request path as an argument and return the normalised path. This would be much quicker as we wouldn't need to make a thousand syscalls to serve every single file!
+    My main question is: if we're going to cache the files under our directory, when and how do we update this cache? Ideally---for as long as we're single-threaded---we would never update the cache until we've dealt with all pending requests. Then we would update it as soon as possible after that.
