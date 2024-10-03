@@ -18,9 +18,18 @@
 
         @typedef {[Vec2, Vec2, Vec2, Vec2]} Box4
 
+
+        @typedef {{id: number, x: number, y: number, down: boolean, pressed: boolean}} Pointer
+
+        @typedef {{pressed?: true, hover?: true}} PointerFlags
+
+        @typedef {{layer: number, rect: Rect}} Occlusion
+
+
         @typedef {{text: string, pos: [number, number]}} Label
 
         @typedef {{code: string, name: string, colour: string}} Party
+
 
         @typedef {{locked: boolean, x: number, y: number}} PointerLock
 
@@ -69,13 +78,22 @@ const FRAGMENT_SHADER_TEXT = `
 // Application state globals.
 //
 
+// The number of milliseconds since page load. Calculated once per frame.
+// For animations, not performance testing.
+/** @type number */
+let currentTime = document.timeline.currentTime;
+/** @type number */
+let timeDelta;
+
+/** @type number */
+let dpr = window.devicePixelRatio || 1;
+
 const input = {
     /**
      * pointers[0] will be the mouse, or the first finger to touch the screen. pointers[1] will be the second finger.
      * .down is true whenever the pointer is down. .pressed is true only on the first frame it's down.
      * .x and .y are in screen coordinates.
      *
-     * @typedef {{id: number, x: number, y: number, down: boolean, pressed: boolean}} Pointer
      * @type {[Pointer, Pointer]}
      */
     pointers: [
@@ -91,15 +109,20 @@ const input = {
     pressed: {}, // E.g. {a: true, b: true}. |Cleanup: Rename keysPressed?
 };
 
-// The number of milliseconds since page load. Calculated once per frame.
-// For animations, not performance testing.
-/** @type number */
-let currentTime = document.timeline.currentTime;
-/** @type number */
-let timeDelta;
+/** @enum {number} */
+const Layer = {
+    MAP:   1,
+    PANEL: 2,
+};
 
-/** @type number */
-let dpr = window.devicePixelRatio || 1;
+/**
+ * Any time we draw a rectangle that catches mouse events so that events on anything drawn below should be ignored, we add a rectangle of occlusion.
+ * The function getPointerFlags() looks at this occlusion array and returns pointer events that are not occluded.
+ * Actually there are two occlusion arrays. getPointerFlags looks at the one built during the previous frame, occlusions[0].
+ *
+ * @type [Occlusion[], Occlusion[]]
+ */
+const occlusions = [[], []];
 
 // The UI panel can be in desktop mode or mobile mode. In desktop mode, we calculate its position as a
 // function of the screen size each frame. In mobile mode (which for now we assume the phone is held in
@@ -519,22 +542,6 @@ function initInput() {
     });
 }
 
-/** @enum {number} */
-const Layer = {
-    MAP:   1,
-    PANEL: 2,
-};
-
-/**
- * Any time we draw a rectangle that catches mouse events so that events on anything drawn below should be ignored, we add a rectangle of occlusion.
- * The function getPointerFlags() looks at this occlusion array and returns pointer events that are not occluded.
- * Actually there are two occlusion arrays. getPointerFlags looks at the one built during the previous frame, occlusions[0].
- *
- * @typedef {{layer: number, rect: Rect}} Occlusion
- * @type [Occlusion[], Occlusion[]]
- */
-const occlusions = [[], []];
-
 /** @type {(layer: number, rect: Rect) => void} */
 function addOcclusion(layer, rect) {
     occlusions[1].push({layer, rect});
@@ -552,8 +559,6 @@ function resetInput() {
 }
 
 /**
- * @typedef {{pressed?: true, hover?: true}} PointerFlags
- *
  * @type {(rect: Rect, layer: number) => [PointerFlags, PointerFlags]}
  */
 function getPointerFlags(rect, layer) {
@@ -909,459 +914,452 @@ function drawWebGL() {
     if (error)  console.error(`WebGL error. Code: ${error}`);
 }
 
+function drawLabels() {
+    const height = 16; // Text height.
+    ui.font = `${height}px map-electorate`;
+    ui.textBaseline = "top";
+
+    //
+    // We want to break the screen up into a grid of squares. Then, when we draw labels, we
+    // can mark the squares we've drawn on, and in this way prevent labels from overlapping.
+    //   The complexity comes from the fact that we want our grid to be aligned with the
+    // map's transform. That's how we get labels that are mostly stable across transforms.
+    //   Our current approach involves expanding everything into rectangles aligned with the
+    // XY-axes of the map's coordinates. We do this with the screen's bounds initially,
+    // and again with the labels' text boxes.
+    //   When the map is rotated, the screen's bounding box becomes a diamond in map-space.
+    // So when we draw a rectangle around the diamond and establish our grid there,
+    // some of the grid's squares end up being off-screen, where they're not so useful.
+    //   Similarly, when the map is rotated, labels become diagonal relative to the
+    // map's axes, so they end up taking all the grid-squares required by the rectangles
+    // enclosing their diagonals.
+    //   When the map has not been rotated, our approach is fine, because the screen and
+    // text boxes are their smallest enclosing orthogonal rectangles already.
+    //   (When we start rotating the labels themselves, that won't be true anymore.)
+    //   So, for now, the below algorithm performs worse when the map is rotated. |Temporary.
+    //
+    const resolution = 256;
+    const usedSpace  = new Int8Array(resolution);
+
+    let gridSize, numGridCols, numGridRows, gridRect; {
+        // Find the map-axis-aligned rectangle enclosing the screen's bounding box.
+        const corners    = getMapCorners(map.width, map.height, map.currentTransform);
+        const [min, max] = getEnvelope(corners);
+
+        const focusWidth  = max.x - min.x;
+        const focusHeight = max.y - min.y;
+
+        const ratio = focusWidth/focusHeight;
+
+        const numRows = Math.sqrt(resolution/ratio);  // Not the real number of rows in our grid, but an intermediary.
+        const rowHeight = focusHeight/numRows;
+
+        // Round up to the nearest power of two.
+        let mask = 1;
+        while (mask < rowHeight)  mask <<= 1;
+        gridSize = mask; // gridSize is in map units.
+
+        numGridRows = Math.floor(numRows);            // The real number of rows in our grid.
+        numGridCols = Math.floor(resolution/numRows); // The real number of columns in our grid.
+
+        gridRect = {
+            x:      min.x - (min.x % gridSize),
+            y:      min.y - (min.y % gridSize),
+            width:  numGridCols*gridSize,
+            height: numGridRows*gridSize,
+        };
+    }
+
+    // Draw the labels.
+    for (const label of labels) {
+        const {width} = ui.measureText(label.text);
+        const screenPos = xform(map.currentTransform, {x: label.pos[0], y: label.pos[1]});
+        const textX = screenPos.x - width/2;
+        const textY = screenPos.y - height/2;
+        const textX1 = textX + width; // textX1 and textY1 are the bottom-right corner of the text box.
+        const textY1 = textY + height;
+
+        // Find the map-axis-aligned rectangle enclosing the text box:
+        /** @type Box4 */
+        const box = [
+            {x: textX,  y: textY},
+            {x: textX,  y: textY1},
+            {x: textX1, y: textY1},
+            {x: textX1, y: textY}
+        ];
+        for (let i = 0; i < 4; i++)  box[i] = inverseXform(map.currentTransform, box[i]);
+
+        const [min, max] = getEnvelope(box);
+
+        // Don't draw labels that are outside our grid:
+        if (min.y > gridRect.y + gridRect.height)  continue;
+        if (max.y < gridRect.y)                    continue;
+        if (min.x > gridRect.x + gridRect.width)   continue;
+        if (max.x < gridRect.x)                    continue;
+
+        // Check whether any of the grid squares we want have been taken.
+
+        let used = false;
+
+        const col0 = Math.floor((min.x - gridRect.x)/gridSize);
+        const row0 = Math.floor((min.y - gridRect.y)/gridSize);
+        const col1 = Math.ceil((max.x - gridRect.x)/gridSize);
+        const row1 = Math.ceil((max.y - gridRect.y)/gridSize);
+
+        {
+            let row = row0;
+            let col = col0;
+            while (row < row1) {
+                const index = row*numGridCols + col;
+                if (usedSpace[index]) {
+                    // We can't use this space.
+                    used = true;
+                    break;
+                }
+
+                if (col < col1) {
+                    col += 1;
+                } else {
+                    row += 1;
+                    col = col0;
+                }
+            }
+        }
+
+        // We've failed to find room for this label, but keep trying subsequent labels.
+        if (used)  continue;
+
+        // We are now going to use the space. Mark the squares as used.
+        for (let row = row0; row < row1; row++) {
+            for (let col = col0; col < col1; col++) {
+                const index = row*numGridCols + col;
+                usedSpace[index] = 1;
+            }
+        }
+
+        ui.strokeStyle = 'white';
+        ui.lineWidth = 3;
+        ui.strokeText(label.text, textX, textY);
+        ui.fillStyle = 'black';
+        ui.fillText(label.text, textX, textY);
+    }
+
+    if (debugLabels) { // Visualise the usedSpace grid. |Debug
+        ui.lineWidth = 1;
+        ui.strokeStyle = 'rgba(255,255,255,0.5)';
+
+        const ct = map.currentTransform;
+        const gr = gridRect;
+
+        for (let i = 0; i < numGridCols+1; i++) {
+            const {x: x1, y: y1} = xform(ct, {x: gr.x + gridSize*i, y: gr.y}); // |Cleanup. Make this point a variable and add gridSize each pass?
+            const {x: x2, y: y2} = xform(ct, {x: gr.x + gridSize*i, y: gr.y + gr.height});
+            ui.moveTo(x1, y1);
+            ui.lineTo(x2, y2);
+        }
+        for (let i = 0; i < numGridRows+1; i++) {
+            const {x: x1, y: y1} = xform(ct, {x: gr.x,            y: gr.y + gridSize*i});
+            const {x: x2, y: y2} = xform(ct, {x: gr.x + gr.width, y: gr.y + gridSize*i});
+            ui.moveTo(x1, y1);
+            ui.lineTo(x2, y2);
+        }
+        ui.stroke();
+
+        ui.fillStyle = 'rgba(255,255,255,0.35)';
+        ui.beginPath();
+        for (let row = 0; row < numGridRows; row++) {
+            for (let col = 0; col < numGridCols; col++) {
+                const index = numGridCols*row + col;
+                if (usedSpace[index]) {
+                    // |Speed: This is very slow when the screen has a non-zero rotation!
+                    const [p0, p1, p2, p3] = [
+                        {x: gr.x + gridSize*col,            y: gr.y + gridSize*row},
+                        {x: gr.x + gridSize*col,            y: gr.y + gridSize*row + gridSize},
+                        {x: gr.x + gridSize*col + gridSize, y: gr.y + gridSize*row + gridSize},
+                        {x: gr.x + gridSize*col + gridSize, y: gr.y + gridSize*row},
+                    ].map(
+                        point => xform(ct, point)
+                    );
+                    ui.moveTo(p0.x, p0.y);
+                    ui.lineTo(p1.x, p1.y);
+                    ui.lineTo(p2.x, p2.y);
+                    ui.lineTo(p3.x, p3.y);
+                }
+            }
+        }
+        ui.closePath();
+        ui.fill();
+    }
+}
+
+function drawPanel() {
+    if (document.body.clientWidth < 450) {
+        if (!mobileMode) {
+            // The user has just switched to mobile mode.
+            mobileMode = true;
+
+            panelRect.x      = 0;
+            panelRect.y      = 0.75*document.body.clientHeight;
+            panelRect.height = document.body.clientHeight - panelRect.y;
+        } else {
+            // Otherwise, if the user was already in mobile mode, the user controls the panel's dimensions.
+            panelRect.width = document.body.clientWidth;
+
+            if (panelIsBeingDragged) {
+                if (!input.pointers[0].down) {
+                    panelIsBeingDragged = false;
+                } else {
+                    const alwaysShow = 20; // Don't let the user drag the panel out of sight---always show at least this many pixels.
+
+                    const minY = document.body.clientHeight - panelRect.height;
+                    const maxY = document.body.clientHeight - alwaysShow;
+
+                    let dy = input.pointers[0].y - panelDragStartY;
+
+                    if (panelRect.y + dy < minY)       dy = minY - panelRect.y;
+                    else if (panelRect.y + dy > maxY)  dy = maxY - panelRect.y;
+
+                    panelRect.y     += dy;
+                    panelDragStartY += dy;
+                }
+            } else if (mobileMode) {
+                //|Todo: cutTop
+                const dragRect  = clone(panelRect);
+                dragRect.height = 50;
+
+                const flags = getPointerFlags(dragRect, Layer.PANEL);
+                if (flags[0].pressed) {
+                    panelIsBeingDragged = true;
+                    panelDragStartY     = input.pointers[0].y;
+                }
+            }
+
+            // Make sure we aren't leaving a gap at the bottom of the page.
+            const gap = document.body.clientHeight - (panelRect.y + panelRect.height);
+            if (gap > 0)  panelRect.y += gap;
+        }
+    } else {
+        mobileMode = false;
+
+        const margin    = 10;
+        panelRect.x     = margin;
+        panelRect.y     = margin;
+        panelRect.width = 0.34*document.body.clientWidth;
+        // The height gets set at the end of this scope, for the next frame.
+    }
+
+    addOcclusion(Layer.PANEL, panelRect);
+
+    ui.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ui.fillRect(panelRect.x, panelRect.y, panelRect.width, panelRect.height);
+
+    const panelPadding = 10;
+
+    const panelX     = panelRect.x + panelPadding;
+    const panelWidth = panelRect.width - 2*panelPadding;
+
+    let panelY = panelRect.y + panelPadding;
+
+    // Draw the election title.
+    {
+        let height = 40;
+        let text = "2022 Federal Election";
+        ui.fillStyle = 'black';
+
+        ui.font = height + 'px title';
+        let textWidth = ui.measureText(text).width;
+
+        if (textWidth < panelWidth) {
+            ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+            panelY += height;
+        } else {
+            text = '2022';
+            textWidth = ui.measureText(text).width;
+            ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+            panelY += height;
+
+            text = 'Federal Election';
+            height = 30;
+            ui.font = height + 'px title';
+            textWidth = ui.measureText(text).width;
+
+            if (textWidth < panelWidth) {
+                ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+                panelY += height;
+            } else {
+                height = 25;
+                ui.font = height + 'px title';
+
+                text = 'Federal';
+                textWidth = ui.measureText(text).width;
+                ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+                panelY += height;
+
+                text = 'Election';
+                textWidth = ui.measureText(text).width;
+                ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
+                panelY += height;
+            }
+        }
+    }
+
+    panelY += panelPadding;
+
+    // Draw the two-candidate preferred/first preferences toggle.
+    {
+        // Styles:
+        const toggleHeight      = 30;
+        const backgroundColours = ['#dddddd', '#ffffff']; // [unselected, selected]
+        const textColours       = ['#777777', '#000000'];
+        const fonts             = ['button-inactive', 'button-active']; //|Cleanup: Selected or active?
+        const borderColour      = '#000000';
+        const borderWidth       = 1;
+        const leftLabel         = "2CP"; //|Todo: Spell out the selected option in full.
+        const rightLabel        = "FP";  //|
+
+        // Computed styles:
+        const textMargin = Math.floor(toggleHeight/10);
+        const textHeight = toggleHeight - 2*textMargin;
+        const toggleRect = {x: panelX, y: panelY, width: panelWidth, height: toggleHeight};
+        const [leftRect, rightRect] = cutLeft(toggleRect, toggleRect.width/2);
+
+        // Change isFirstPreferences if the mouse is down over the unselected button.
+        {
+            const unselectedRect = (isFirstPreferences) ? leftRect : rightRect;
+
+            const pointerFlags = getPointerFlags(unselectedRect, Layer.PANEL);
+
+            if (pointerFlags[0].pressed)  isFirstPreferences = !isFirstPreferences;
+        }
+
+        // Draw the buttons.
+        for (let i = 0; i < 2; i++) {
+            const rect  = (i == 0) ? leftRect  : rightRect;
+            const label = (i == 0) ? leftLabel : rightLabel;
+
+            const selected = +(!i == !isFirstPreferences);
+
+            ui.fillStyle = backgroundColours[selected];
+            ui.fillRect(rect.x, rect.y, rect.width, rect.height);
+
+            ui.font      = textHeight + 'px ' + fonts[selected];
+            ui.fillStyle = textColours[selected];
+            const textWidth = ui.measureText(label).width;
+            ui.fillText(label, rect.x + rect.width/2 - textWidth/2, rect.y + textMargin);
+        }
+
+        // Draw a border.
+        ui.strokeStyle = borderColour;
+        ui.lineWidth   = borderWidth;
+        ui.strokeRect(toggleRect.x, toggleRect.y, toggleRect.width, toggleRect.height);
+
+        panelY += toggleRect.height;
+
+        if (isFirstPreferences && partyCodes) {
+            const height = 10;
+            ui.font = height + 'px party-label';
+
+            for (const label of partyCodes) {
+                ui.fillText(label, panelX, panelY);
+                panelY += height;
+            }
+        }
+    }
+
+    panelY += panelPadding;
+
+    // For the next frame, set the panel's height to the used height.
+    panelRect.height = panelY - panelRect.y;
+}
+
+function drawTransform() {
+    const height = 16; // Text height.
+    ui.font = height + 'px sans-serif';
+    ui.textBaseline = "top";
+
+    let y = map.height - height;
+
+    for (const target of ["translateY", "translateX", "rotate", "scale"]) {
+        const label = target + ': ' + map.currentTransform[target];
+        const width = 200;
+        const x     = map.width - width;
+
+        ui.fillStyle = 'rgba(255,255,255,0.9)';
+        ui.fillRect(x, y, width, height);
+
+        ui.fillStyle = 'black';
+        ui.fillText(label, x, y);
+
+        y -= height;
+    }
+}
+
+function drawFPS() {
+    // debugFPS will be true if the user pressed 'f' this frame, but we can only start taking
+    // performance samples on the next frame, because we need the frameStartTime. |Debug
+    const firstFrame = (frameStartTime === undefined);
+    if (firstFrame) {
+        numPerfSamples = 0;
+        fpsTextUpdated = currentTime;
+    } else {
+        const index = numPerfSamples % maxPerfSamples;
+        timeDeltaSamples[index] = timeDelta;
+        timeUsedSamples[index]  = performance.now() - frameStartTime;
+        numPerfSamples += 1;
+
+        // Update the FPS text no more than this many times a second (to make it more readable).
+        const rate = 5;
+
+        if (numPerfSamples > 4 && fpsTextUpdated+(1000/rate) < currentTime) {
+            let meanTimeDelta, meanTimeUsed; {
+                const numSamples = Math.min(numPerfSamples, maxPerfSamples);
+                let sumTimeDelta = 0;
+                let sumTimeUsed  = 0;
+                for (let i = 0; i < numSamples; i++) {
+                    sumTimeDelta += timeDeltaSamples[i];
+                    sumTimeUsed  += timeUsedSamples[i];
+                }
+                meanTimeDelta = sumTimeDelta/numSamples;
+                meanTimeUsed  = sumTimeUsed/numSamples;
+            }
+
+            const fps = 1000/meanTimeDelta;
+
+            fpsText  = '';
+            fpsText += `Quota: ${meanTimeDelta.toFixed(1)}ms for ${fps.toFixed(0)}Hz. `;
+            fpsText += `Used: ${meanTimeUsed.toFixed(1)}ms.\n`;
+
+            fpsTextUpdated = currentTime;
+        }
+
+        const textHeight = 14;
+        ui.font          = `${textHeight}px monospace`;
+        ui.textBaseline  = "top";
+
+        let x = 5;
+        let y = 5;
+        for (const line of fpsText.split('\n')) {
+            ui.fillStyle = 'black';
+            ui.fillText(line, x+1, y+1);
+            ui.fillStyle = 'white';
+            ui.fillText(line, x, y);
+            y += textHeight;
+        }
+    }
+}
+
 function drawUI() {
     ui.canvas.width        = Math.floor(dpr*map.width);
     ui.canvas.height       = Math.floor(dpr*map.height);
     ui.canvas.style.width  = map.width + 'px';
     ui.canvas.style.height = map.height + 'px';
 
-    // 2D canvas:
-    {
-        ui.scale(dpr, dpr);
-        ui.clearRect(0, 0, map.width, map.height);
+    ui.scale(dpr, dpr);
+    ui.clearRect(0, 0, map.width, map.height);
 
-        //
-        // Draw the labels from the JSON file, as stably as possible!
-        //
-        {
-            const height = 16; // Text height.
-            ui.font = `${height}px map-electorate`;
-            ui.textBaseline = "top";
+    drawLabels();
 
-            //
-            // We want to break the screen up into a grid of squares. Then, when we draw labels, we
-            // can mark the squares we've drawn on, and in this way prevent labels from overlapping.
-            //   The complexity comes from the fact that we want our grid to be aligned with the
-            // map's transform. That's how we get labels that are mostly stable across transforms.
-            //   Our current approach involves expanding everything into rectangles aligned with the
-            // XY-axes of the map's coordinates. We do this with the screen's bounds initially,
-            // and again with the labels' text boxes.
-            //   When the map is rotated, the screen's bounding box becomes a diamond in map-space.
-            // So when we draw a rectangle around the diamond and establish our grid there,
-            // some of the grid's squares end up being off-screen, where they're not so useful.
-            //   Similarly, when the map is rotated, labels become diagonal relative to the
-            // map's axes, so they end up taking all the grid-squares required by the rectangles
-            // enclosing their diagonals.
-            //   When the map has not been rotated, our approach is fine, because the screen and
-            // text boxes are their smallest enclosing orthogonal rectangles already.
-            //   (When we start rotating the labels themselves, that won't be true anymore.)
-            //   So, for now, the below algorithm performs worse when the map is rotated. |Temporary.
-            //
-            const resolution = 256;
-            const usedSpace  = new Int8Array(resolution);
-
-            let gridSize, numGridCols, numGridRows, gridRect; {
-                // Find the map-axis-aligned rectangle enclosing the screen's bounding box.
-                const corners    = getMapCorners(map.width, map.height, map.currentTransform);
-                const [min, max] = getEnvelope(corners);
-
-                const focusWidth  = max.x - min.x;
-                const focusHeight = max.y - min.y;
-
-                const ratio = focusWidth/focusHeight;
-
-                const numRows = Math.sqrt(resolution/ratio);  // Not the real number of rows in our grid, but an intermediary.
-                const rowHeight = focusHeight/numRows;
-
-                // Round up to the nearest power of two.
-                let mask = 1;
-                while (mask < rowHeight)  mask <<= 1;
-                gridSize = mask; // gridSize is in map units.
-
-                numGridRows = Math.floor(numRows);            // The real number of rows in our grid.
-                numGridCols = Math.floor(resolution/numRows); // The real number of columns in our grid.
-
-                gridRect = {
-                    x:      min.x - (min.x % gridSize),
-                    y:      min.y - (min.y % gridSize),
-                    width:  numGridCols*gridSize,
-                    height: numGridRows*gridSize,
-                };
-            }
-
-            // Draw the labels.
-            for (const label of labels) {
-                const {width} = ui.measureText(label.text);
-                const screenPos = xform(map.currentTransform, {x: label.pos[0], y: label.pos[1]});
-                const textX = screenPos.x - width/2;
-                const textY = screenPos.y - height/2;
-                const textX1 = textX + width; // textX1 and textY1 are the bottom-right corner of the text box.
-                const textY1 = textY + height;
-
-                // Find the map-axis-aligned rectangle enclosing the text box:
-                /** @type Box4 */
-                const box = [
-                    {x: textX,  y: textY},
-                    {x: textX,  y: textY1},
-                    {x: textX1, y: textY1},
-                    {x: textX1, y: textY}
-                ];
-                for (let i = 0; i < 4; i++)  box[i] = inverseXform(map.currentTransform, box[i]);
-
-                const [min, max] = getEnvelope(box);
-
-                // Don't draw labels that are outside our grid:
-                if (min.y > gridRect.y + gridRect.height)  continue;
-                if (max.y < gridRect.y)                    continue;
-                if (min.x > gridRect.x + gridRect.width)   continue;
-                if (max.x < gridRect.x)                    continue;
-
-                // Check whether any of the grid squares we want have been taken.
-
-                let used = false;
-
-                const col0 = Math.floor((min.x - gridRect.x)/gridSize);
-                const row0 = Math.floor((min.y - gridRect.y)/gridSize);
-                const col1 = Math.ceil((max.x - gridRect.x)/gridSize);
-                const row1 = Math.ceil((max.y - gridRect.y)/gridSize);
-
-                {
-                    let row = row0;
-                    let col = col0;
-                    while (row < row1) {
-                        const index = row*numGridCols + col;
-                        if (usedSpace[index]) {
-                            // We can't use this space.
-                            used = true;
-                            break;
-                        }
-
-                        if (col < col1) {
-                            col += 1;
-                        } else {
-                            row += 1;
-                            col = col0;
-                        }
-                    }
-                }
-
-                // We've failed to find room for this label, but keep trying subsequent labels.
-                if (used)  continue;
-
-                // We are now going to use the space. Mark the squares as used.
-                for (let row = row0; row < row1; row++) {
-                    for (let col = col0; col < col1; col++) {
-                        const index = row*numGridCols + col;
-                        usedSpace[index] = 1;
-                    }
-                }
-
-                ui.strokeStyle = 'white';
-                ui.lineWidth = 3;
-                ui.strokeText(label.text, textX, textY);
-                ui.fillStyle = 'black';
-                ui.fillText(label.text, textX, textY);
-            }
-
-            if (debugLabels) { // Visualise the usedSpace grid. |Debug
-                ui.lineWidth = 1;
-                ui.strokeStyle = 'rgba(255,255,255,0.5)';
-
-                const ct = map.currentTransform;
-                const gr = gridRect;
-
-                for (let i = 0; i < numGridCols+1; i++) {
-                    const {x: x1, y: y1} = xform(ct, {x: gr.x + gridSize*i, y: gr.y}); // |Cleanup. Make this point a variable and add gridSize each pass?
-                    const {x: x2, y: y2} = xform(ct, {x: gr.x + gridSize*i, y: gr.y + gr.height});
-                    ui.moveTo(x1, y1);
-                    ui.lineTo(x2, y2);
-                }
-                for (let i = 0; i < numGridRows+1; i++) {
-                    const {x: x1, y: y1} = xform(ct, {x: gr.x,            y: gr.y + gridSize*i});
-                    const {x: x2, y: y2} = xform(ct, {x: gr.x + gr.width, y: gr.y + gridSize*i});
-                    ui.moveTo(x1, y1);
-                    ui.lineTo(x2, y2);
-                }
-                ui.stroke();
-
-                ui.fillStyle = 'rgba(255,255,255,0.35)';
-                ui.beginPath();
-                for (let row = 0; row < numGridRows; row++) {
-                    for (let col = 0; col < numGridCols; col++) {
-                        const index = numGridCols*row + col;
-                        if (usedSpace[index]) {
-                            // |Speed: This is very slow when the screen has a non-zero rotation!
-                            const [p0, p1, p2, p3] = [
-                                {x: gr.x + gridSize*col,            y: gr.y + gridSize*row},
-                                {x: gr.x + gridSize*col,            y: gr.y + gridSize*row + gridSize},
-                                {x: gr.x + gridSize*col + gridSize, y: gr.y + gridSize*row + gridSize},
-                                {x: gr.x + gridSize*col + gridSize, y: gr.y + gridSize*row},
-                            ].map(
-                                point => xform(ct, point)
-                            );
-                            ui.moveTo(p0.x, p0.y);
-                            ui.lineTo(p1.x, p1.y);
-                            ui.lineTo(p2.x, p2.y);
-                            ui.lineTo(p3.x, p3.y);
-                        }
-                    }
-                }
-                ui.closePath();
-                ui.fill();
-            }
-        }
-
-        //
-        // Draw the panel.
-        //
-        {
-            if (document.body.clientWidth < 450) {
-                if (!mobileMode) {
-                    // The user has just switched to mobile mode.
-                    mobileMode = true;
-
-                    panelRect.x      = 0;
-                    panelRect.y      = 0.75*document.body.clientHeight;
-                    panelRect.height = document.body.clientHeight - panelRect.y;
-                } else {
-                    // Otherwise, if the user was already in mobile mode, the user controls the panel's dimensions.
-                    panelRect.width = document.body.clientWidth;
-
-                    if (panelIsBeingDragged) {
-                        if (!input.pointers[0].down) {
-                            panelIsBeingDragged = false;
-                        } else {
-                            const alwaysShow = 20; // Don't let the user drag the panel out of sight---always show at least this many pixels.
-
-                            const minY = document.body.clientHeight - panelRect.height;
-                            const maxY = document.body.clientHeight - alwaysShow;
-
-                            let dy = input.pointers[0].y - panelDragStartY;
-
-                            if (panelRect.y + dy < minY)       dy = minY - panelRect.y;
-                            else if (panelRect.y + dy > maxY)  dy = maxY - panelRect.y;
-
-                            panelRect.y     += dy;
-                            panelDragStartY += dy;
-                        }
-                    } else if (mobileMode) {
-                        //|Todo: cutTop
-                        const dragRect  = clone(panelRect);
-                        dragRect.height = 50;
-
-                        const flags = getPointerFlags(dragRect, Layer.PANEL);
-                        if (flags[0].pressed) {
-                            panelIsBeingDragged = true;
-                            panelDragStartY     = input.pointers[0].y;
-                        }
-                    }
-
-                    // Make sure we aren't leaving a gap at the bottom of the page.
-                    const gap = document.body.clientHeight - (panelRect.y + panelRect.height);
-                    if (gap > 0)  panelRect.y += gap;
-                }
-            } else {
-                mobileMode = false;
-
-                const margin    = 10;
-                panelRect.x     = margin;
-                panelRect.y     = margin;
-                panelRect.width = 0.34*document.body.clientWidth;
-                // The height gets set at the end of this scope, for the next frame.
-            }
-
-            addOcclusion(Layer.PANEL, panelRect);
-
-            ui.fillStyle = 'rgba(255, 255, 255, 0.95)';
-            ui.fillRect(panelRect.x, panelRect.y, panelRect.width, panelRect.height);
-
-            const panelPadding = 10;
-
-            const panelX     = panelRect.x + panelPadding;
-            const panelWidth = panelRect.width - 2*panelPadding;
-
-            let panelY = panelRect.y + panelPadding;
-
-            // Draw the election title.
-            {
-                let height = 40;
-                let text = "2022 Federal Election";
-                ui.fillStyle = 'black';
-
-                ui.font = height + 'px title';
-                let textWidth = ui.measureText(text).width;
-
-                if (textWidth < panelWidth) {
-                    ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-                    panelY += height;
-                } else {
-                    text = '2022';
-                    textWidth = ui.measureText(text).width;
-                    ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-                    panelY += height;
-
-                    text = 'Federal Election';
-                    height = 30;
-                    ui.font = height + 'px title';
-                    textWidth = ui.measureText(text).width;
-
-                    if (textWidth < panelWidth) {
-                        ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-                        panelY += height;
-                    } else {
-                        height = 25;
-                        ui.font = height + 'px title';
-
-                        text = 'Federal';
-                        textWidth = ui.measureText(text).width;
-                        ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-                        panelY += height;
-
-                        text = 'Election';
-                        textWidth = ui.measureText(text).width;
-                        ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-                        panelY += height;
-                    }
-                }
-            }
-
-            panelY += panelPadding;
-
-            // Draw the two-candidate preferred/first preferences toggle.
-            {
-                // Styles:
-                const toggleHeight      = 30;
-                const backgroundColours = ['#dddddd', '#ffffff']; // [unselected, selected]
-                const textColours       = ['#777777', '#000000'];
-                const fonts             = ['button-inactive', 'button-active']; //|Cleanup: Selected or active?
-                const borderColour      = '#000000';
-                const borderWidth       = 1;
-                const leftLabel         = "2CP"; //|Todo: Spell out the selected option in full.
-                const rightLabel        = "FP";  //|
-
-                // Computed styles:
-                const textMargin = Math.floor(toggleHeight/10);
-                const textHeight = toggleHeight - 2*textMargin;
-                const toggleRect = {x: panelX, y: panelY, width: panelWidth, height: toggleHeight};
-                const [leftRect, rightRect] = cutLeft(toggleRect, toggleRect.width/2);
-
-                // Change isFirstPreferences if the mouse is down over the unselected button.
-                {
-                    const unselectedRect = (isFirstPreferences) ? leftRect : rightRect;
-
-                    const pointerFlags = getPointerFlags(unselectedRect, Layer.PANEL);
-
-                    if (pointerFlags[0].pressed)  isFirstPreferences = !isFirstPreferences;
-                }
-
-                // Draw the buttons.
-                for (let i = 0; i < 2; i++) {
-                    const rect  = (i == 0) ? leftRect  : rightRect;
-                    const label = (i == 0) ? leftLabel : rightLabel;
-
-                    const selected = +(!i == !isFirstPreferences);
-
-                    ui.fillStyle = backgroundColours[selected];
-                    ui.fillRect(rect.x, rect.y, rect.width, rect.height);
-
-                    ui.font      = textHeight + 'px ' + fonts[selected];
-                    ui.fillStyle = textColours[selected];
-                    const textWidth = ui.measureText(label).width;
-                    ui.fillText(label, rect.x + rect.width/2 - textWidth/2, rect.y + textMargin);
-                }
-
-                // Draw a border.
-                ui.strokeStyle = borderColour;
-                ui.lineWidth   = borderWidth;
-                ui.strokeRect(toggleRect.x, toggleRect.y, toggleRect.width, toggleRect.height);
-
-                panelY += toggleRect.height;
-
-                if (isFirstPreferences && partyCodes) {
-                    const height = 10;
-                    ui.font = height + 'px party-label';
-
-                    for (const label of partyCodes) {
-                        ui.fillText(label, panelX, panelY);
-                        panelY += height;
-                    }
-                }
-            }
-
-            panelY += panelPadding;
-
-            // For the next frame, set the panel's height to the used height.
-            panelRect.height = panelY - panelRect.y;
-        }
-
-        // Draw the map's current transform in the bottom-right corner of the canvas. |Debug
-        if (debugTransform) {
-            const height = 16; // Text height.
-            ui.font = height + 'px sans-serif';
-            ui.textBaseline = "top";
-
-            let y = map.height - height;
-
-            for (const target of ["translateY", "translateX", "rotate", "scale"]) {
-                const label = target + ': ' + map.currentTransform[target];
-                const width = 200;
-                const x     = map.width - width;
-
-                ui.fillStyle = 'rgba(255,255,255,0.9)';
-                ui.fillRect(x, y, width, height);
-
-                ui.fillStyle = 'black';
-                ui.fillText(label, x, y);
-
-                y -= height;
-            }
-        }
-
-        // Display FPS: |Debug
-        if (debugFPS) {
-            // debugFPS will be true if the user pressed 'f' this frame, but we can only start taking
-            // performance samples on the next frame, because we need the frameStartTime. |Debug
-            const firstFrame = (frameStartTime === undefined);
-            if (firstFrame) {
-                numPerfSamples = 0;
-                fpsTextUpdated = currentTime;
-            } else {
-                const index = numPerfSamples % maxPerfSamples;
-                timeDeltaSamples[index] = timeDelta;
-                timeUsedSamples[index]  = performance.now() - frameStartTime;
-                numPerfSamples += 1;
-
-                // Update the FPS text no more than this many times a second (to make it more readable).
-                const rate = 5;
-
-                if (numPerfSamples > 4 && fpsTextUpdated+(1000/rate) < currentTime) {
-                    let meanTimeDelta, meanTimeUsed; {
-                        const numSamples = Math.min(numPerfSamples, maxPerfSamples);
-                        let sumTimeDelta = 0;
-                        let sumTimeUsed  = 0;
-                        for (let i = 0; i < numSamples; i++) {
-                            sumTimeDelta += timeDeltaSamples[i];
-                            sumTimeUsed  += timeUsedSamples[i];
-                        }
-                        meanTimeDelta = sumTimeDelta/numSamples;
-                        meanTimeUsed  = sumTimeUsed/numSamples;
-                    }
-
-                    const fps = 1000/meanTimeDelta;
-
-                    fpsText  = '';
-                    fpsText += `Quota: ${meanTimeDelta.toFixed(1)}ms for ${fps.toFixed(0)}Hz. `;
-                    fpsText += `Used: ${meanTimeUsed.toFixed(1)}ms.\n`;
-
-                    fpsTextUpdated = currentTime;
-                }
-
-                const textHeight = 14;
-                ui.font          = `${textHeight}px monospace`;
-                ui.textBaseline  = "top";
-
-                let x = 5;
-                let y = 5;
-                for (const line of fpsText.split('\n')) {
-                    ui.fillStyle = 'black';
-                    ui.fillText(line, x+1, y+1);
-                    ui.fillStyle = 'white';
-                    ui.fillText(line, x, y);
-                    y += textHeight;
-                }
-            }
-        }
-    }
+    drawPanel();
 }
 
 //
@@ -1371,6 +1369,7 @@ function step(time) {
     //
     // Update state.
     //
+    timeDelta = time - currentTime;
     currentTime = time;
 
     if (debugFPS)  frameStartTime = performance.now();
@@ -1387,12 +1386,14 @@ function step(time) {
 
     applyAnimationsToMap();
 
-
     drawWebGL();
 
     drawUI();
 
     resetInput();
+
+    if (debugTransform)  drawTransform();
+    if (debugFPS)        drawFPS();
 
     window.requestAnimationFrame(step);
 }
