@@ -152,7 +152,7 @@ const map = {
     /** @type {Transform} */
     currentTransform: {
         scale:      1,
-        rotate:     0, // The angle, in radians, of a counter-clockwise rotation.
+        rotate:     0, // The angle, in radians, of a counter-clockwise rotation. Always in the range [-Math.PI, Math.PI).
         translateX: 0,
         translateY: 0,
     },
@@ -237,7 +237,7 @@ let debugLabels = false;
 /** @type boolean */
 let debugFPS = false;
 /** @type boolean */
-let debugSlerp = true;
+let debugSlerp = false;
 
 //
 // Stuff for FPS calculations.
@@ -334,7 +334,7 @@ function sameTransform(a, b) {
  * @type {(start: Transform, end: Transform, t: number) => Transform}
  */
 function interpolateTransform(start, end, t) {
-    if (sameTransform(start, end))  return end; //|Robustness: We're doing this because otherwise the whole program crashes in the common case that the transforms are the same. We should figure out why and see if the crash could occur in any other situation.
+    if (sameTransform(start, end))  return end;
 
     //
     // Our goal is to transition the map from one state to another in a way that looks smooth.
@@ -350,7 +350,7 @@ function interpolateTransform(start, end, t) {
     // - the angle inside the triangle at point C is equal to the rotation being applied in the animation, and
     // - the ratio of the lengths of the sides AC and BC is equal to the scale being applied in the animation.
     // You make it look smooth by ensuring that point C doesn't move for the duration of the animation.
-    // (Also, set debugSlerp to true to see the triangle.)
+    // (Also this triangle gets drawn on the screen if debugSlerp is true.)
     //
 
     const exp0  = Math.log2(start.scale);
@@ -378,6 +378,14 @@ function interpolateTransform(start, end, t) {
     let a = 1;
     let b = a/scaleRatio;
     let c = Math.sqrt(Math.abs(a*a + b*b - 2*a*b*Math.cos(gamma))); // We use abs() because floating-point imprecision means this could otherwise try to get the square root of a negative number.
+
+    if (c == 0) {
+        // I think this only happens if the start transform is the same as the end transform. They just differ slightly
+        // due to floating-point error---sameTransform() checked for exact equality. It would be nicer if sameTransform()
+        // had figured out that they are equal and returned true, but I don't know how to choose the epsilon correctly.
+        // By doing it here, we detect precisely those cases where it would cause a divide-by-zero problem.
+        return end;
+    }
 
     let alpha = Math.acos(Math.max(-1, Math.min(1, (b*b + c*c - a*a)/(2*b*c)))); // The min/max stuff here is also due to floating-point imprecision, and the fact that acos() is only defined for [-1,1].
     if (drot > 0)  alpha *= -1;
@@ -895,7 +903,6 @@ function handleUserEventsOnMap() {
             const newTransform = clone(map.currentTransform);
 
             newTransform.rotate += Math.PI/2;
-            if (newTransform.rotate > 2*Math.PI)  newTransform.rotate -= 2*Math.PI;
 
             // If we applied the newTransform as-is, get the would-be screen coordinates of what used to be the top-left corner.
             const screenCoords = xform(newTransform, corners[0]);
@@ -921,6 +928,7 @@ function handleUserEventsOnMap() {
         if (input.pressed['t'])  debugTransform = !debugTransform;
         if (input.pressed['l'])  debugLabels    = !debugLabels;
         if (input.pressed['f'])  debugFPS       = !debugFPS;
+        if (input.pressed['s'])  debugSlerp     = !debugSlerp;
     }
 }
 
@@ -1519,9 +1527,16 @@ function step(time) {
 
     handleUserEventsOnMap();
 
-    if (shouldFetchVertices)  fetchVertices();
-
     applyAnimationsToMap();
+
+    // Enforce the range of the map's rotation.
+    {
+        const ct = map.currentTransform;
+        if (ct.rotate < -Math.PI)       ct.rotate += 2*Math.PI;
+        else if (ct.rotate >= Math.PI)  ct.rotate -= 2*Math.PI;
+    }
+
+    if (shouldFetchVertices)  fetchVertices();
 
     drawWebGL();
 
