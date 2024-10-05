@@ -103,11 +103,23 @@ const input = {
     ],
     //|Todo: The pointers array currently always has two members. Maybe we would prefer it if it had a variable number: zero, one or two, depending on how many are currently relevant. Then we wouldn't need to do potentially pointless calculations in getPointerFlags() on pointers that aren't around any more. This optimisation is slightly harder than it sounds because each member of this array is associated with a map.pointerLock in the same index. There is also the fact that there may well be a greater performance penalty to creating/deleting these objects on the fly rather than just updating the ones we have.
 
-    /** @type {number} */
-    scroll: 0, // The deltaY of wheel events.
+    /**
+     * The deltaY of wheel events.
+     * @type number
+     */
+    scroll: 0,
 
-    /** @type {{[key: string]: boolean}} */
-    pressed: {}, // E.g. {a: true, b: true}. |Cleanup: Rename keysPressed?
+    /**
+     * The keys are the codes of keydown events. E.g. {KeyA: true, Digit1: true}.
+     * @type {{[key: string]: boolean}}
+     */
+    keysPressed: {},
+
+    /**
+     * We can make this into a keyFlags object later if we want ctrl/alt.
+     * @type boolean
+     */
+    shift: false,
 };
 
 /** @enum {number} */
@@ -180,6 +192,9 @@ const map = {
      */
     scrollOffset: 0,
 };
+
+/** @type {{[key: string]: Transform }} */
+const savedTransforms = {};
 
 //|Cleanup: Merge these into a panel object.
 /** @type Rect */
@@ -317,52 +332,51 @@ function lerp(a, b, t) {
 }
 
 /**
- * @type {(a: Transform, b: Transform) => boolean}
- */
-function sameTransform(a, b) {
-    let same = true;
-
-    same &&= (a.scale === b.scale);
-    same &&= (a.rotate === b.rotate);
-    same &&= (a.translateX === b.translateX);
-    same &&= (a.translateY === b.translateY);
-
-    return same;
-}
-
-/**
  * @type {(start: Transform, end: Transform, t: number) => Transform}
  */
 function interpolateTransform(start, end, t) {
-    if (sameTransform(start, end))  return end;
-
     //
     // Our goal is to transition the map from one state to another in a way that looks smooth.
-    // For a zoom to look linear, it has to happen at an exponential rate with respect to the scale.
-    // That is, consider the scales at the start and end of the animation as powers of two, and linearly interpolate the powers.
-    // If the animation affects both scale and rotation, getting them to change smoothly in concert is a bit trickier.
     // To see how we achieve this, imagine drawing a triangle ABC on the screen.
     // Point A is at the origin in the top-left corner.
     // Now say the animation is about to start.
     // Find the map coordinate currently at point A.
-    // Then put the map into its final state, as though the animation has completed, and see where that map coordinate ends up---that's point B.
+    // Then put the map into its final state and see where that coordinate ends up---that's point B.
     // Find point C such that:
     // - the angle inside the triangle at point C is equal to the rotation being applied in the animation, and
     // - the ratio of the lengths of the sides AC and BC is equal to the scale being applied in the animation.
     // You make it look smooth by ensuring that point C doesn't move for the duration of the animation.
-    // (Also this triangle gets drawn on the screen if debugSlerp is true.)
+    // (This triangle gets drawn on the screen if debugSlerp is true.)
     //
+    if ((start.scale == end.scale) && (start.rotate == end.rotate)) {
+        // The interpolation does not change scale or rotation. We will skip most of the computations and return early.
+        // This isn't for speed. We are actually handling two cases where this function doesn't work:
+        // 1. The start and end states are the same. In this case the triangle ABC is a single point.
+        // 2. The start and end states only differ by translation. In this case there is no point C because every vector changes.
+        const scale  = start.scale;
+        const rotate = start.rotate;
 
+        const translateX = lerp(start.translateX, end.translateX, t);
+        const translateY = lerp(start.translateY, end.translateY, t);
+
+        return {scale, rotate, translateX, translateY};
+    }
+
+    // For a zoom to look linear, it has to happen at an exponential rate with respect to the scale.
+    // That is, consider the scales at the start and end of the animation as powers of two, and linearly interpolate the powers.
     const exp0  = Math.log2(start.scale);
     const exp1  = Math.log2(end.scale);
     const exp   = lerp(exp0, exp1, t);
     const scale = Math.pow(2, exp);
 
-    const rotate = lerp(start.rotate, end.rotate, t);
-
     const scaleRatio = end.scale/start.scale;
 
-    const drot  = end.rotate - start.rotate;
+    let drot = end.rotate - start.rotate;
+    if (drot < -Math.PI)       drot += 2*Math.PI; // Take the shortest path.
+    else if (drot > Math.PI)   drot -= 2*Math.PI;
+
+    const rotate = lerp(start.rotate, start.rotate+drot, t);
+
     const gamma = Math.abs(drot);
 
     // Get the screen's top-left corner, at the start of the animation, in map coordinates.
@@ -380,10 +394,10 @@ function interpolateTransform(start, end, t) {
     let c = Math.sqrt(Math.abs(a*a + b*b - 2*a*b*Math.cos(gamma))); // We use abs() because floating-point imprecision means this could otherwise try to get the square root of a negative number.
 
     if (c == 0) {
-        // I think this only happens if the start transform is the same as the end transform. They just differ slightly
-        // due to floating-point error---sameTransform() checked for exact equality. It would be nicer if sameTransform()
-        // had figured out that they are equal and returned true, but I don't know how to choose the epsilon correctly.
-        // By doing it here, we detect precisely those cases where it would cause a divide-by-zero problem.
+        // I think we should only get here if the start transform is the same as the end transform. They must
+        // differ slightly due to floating point error, or we would have noticed that they were the same at the
+        // top of this function, but they're too close to calculate a triangle. It would be nice to have a
+        // sameTransform() function that detects this, but I'm not sure how to choose the epsilon correctly.
         return end;
     }
 
@@ -418,7 +432,7 @@ function interpolateTransform(start, end, t) {
     return newTransform;
 }
 
-function clone(object) {
+function copy(object) {
     return JSON.parse(JSON.stringify(object));
 }
 
@@ -512,6 +526,22 @@ function getEnvelope(box) {
 }
 
 /**
+ * @type {(a: Box, b: Box) => boolean}
+ */
+function boxesTouch(a, b) {
+    if (a[1].x < b[0].x)  return false;
+    if (a[0].x > b[1].x)  return false;
+    if (a[1].y < b[0].y)  return false;
+    if (a[0].y > b[1].y)  return false;
+    if (b[1].x < a[0].x)  return false;
+    if (b[0].x > a[1].x)  return false;
+    if (b[1].y < a[0].y)  return false;
+    if (b[0].y > a[1].y)  return false;
+
+    return true;
+}
+
+/**
  * @type {(point: Vec2, rect: Rect) => boolean}
  */
 function pointInRect(point, rect) {
@@ -527,8 +557,8 @@ function pointInRect(point, rect) {
  * @type {(rect: Rect, width: number) => [Rect, Rect]}
  */
 function cutLeft(rect, width) {
-    const leftRect  = clone(rect);
-    const remainder = clone(rect);
+    const leftRect  = copy(rect);
+    const remainder = copy(rect);
 
     leftRect.width   = width;
     remainder.x     += width;
@@ -647,7 +677,17 @@ function initInput() {
     }, {passive: true});
 
     window.addEventListener("keydown", event => {
-        input.pressed[event.key] = true;
+        if (event.key == "Shift") {
+            input.shift = true;
+        } else {
+            input.keysPressed[event.code] = true;
+        }
+    });
+
+    window.addEventListener("keyup", event => {
+        if (event.key == "Shift") {
+            input.shift = false;
+        }
     });
 }
 
@@ -664,7 +704,7 @@ function resetInput() {
     input.pointers[0].pressed = false;
     input.pointers[1].pressed = false;
     input.scroll = 0;
-    input.pressed = {};
+    input.keysPressed = {};
 }
 
 /**
@@ -810,7 +850,7 @@ function handleUserEventsOnMap() {
         const t   = map.scrollOffset/maxScroll;
         const exp = lerp(exp0, exp1, t);
 
-        const newTransform = clone(ct);
+        const newTransform = copy(ct);
         newTransform.scale = Math.pow(2, exp);
 
         const mouse  = input.pointers[0];
@@ -827,7 +867,7 @@ function handleUserEventsOnMap() {
         map.animations.push({
             startTime: currentTime,
             endTime:   currentTime + duration,
-            start:     clone(ct),
+            start:     copy(ct),
             end:       newTransform,
             scroll:    true, // A special flag just for scroll-zoom animations, so we know we can trust map.scrollOffset.
         });
@@ -835,38 +875,32 @@ function handleUserEventsOnMap() {
 
     // Handle keyboard presses.
     {
-        // When the user presses certain numbers, animate the map to show different locations. |Temporary
-        const aust = [{x:-1863361, y: 1168642}, {x: 2087981, y: 4840595}];
-        const melb = [{x: 1140377, y: 4187714}, {x: 1149001, y: 4196377}];
-        const syd  = [{x: 1757198, y: 3827047}, {x: 1763103, y: 3834946}];
+        // Press shift and a number to save the map's current transformation. Then press just the number to return to it later.
+        for (const key of Object.keys(input.keysPressed)) {
+            const match = key.match(/^(Digit|Numpad)(\d)$/);
+            if (!match)  continue;
 
-        const boxes = {'0': aust, '1': melb, '2': syd};
+            const saveKey = match[2];
 
-        for (const key of Object.keys(boxes)) {
-            if (input.pressed[key]) {
-                const targetBox = boxes[key];
+            if (input.shift) {
+                savedTransforms[saveKey] = copy(map.currentTransform);
+            } else if (savedTransforms[saveKey]) {
+                // We are going to transition to one of the saved transforms.
+                const newTransform = copy(savedTransforms[saveKey]);
 
-                const corners  = getMapCorners(map.width, map.height, map.currentTransform);
-                const envelope = getEnvelope(corners);
-
-                const combined = combineBoxes(targetBox, envelope);
-
-                // It's a simple transition if one of the boxes contains the other. //|Todo: It should be simple if these boxes overlap at all.
-                const simple = (combined === targetBox) || (combined === envelope);
+                // It will be a simple transition if there is any overlap between the map's bounding boxes before and after the transition.
+                const box0 = getEnvelope(getMapCorners(map.width, map.height, map.currentTransform));
+                const box1 = getEnvelope(getMapCorners(map.width, map.height, newTransform));
+                const simple = boxesTouch(box0, box1);
 
                 if (simple) {
                     const duration = 1000;
-
-                    /** @type Box */
-                    const screen = [{x: 0, y: 0}, {x: map.width, y: map.height}];
-
-                    const newTransform = fitBox(targetBox, screen);
 
                     map.animations.length = 0;
                     map.animations.push({
                         startTime: currentTime,
                         endTime:   currentTime + duration,
-                        start:     clone(map.currentTransform),
+                        start:     copy(map.currentTransform),
                         end:       newTransform,
                     });
                 } else {
@@ -875,32 +909,30 @@ function handleUserEventsOnMap() {
                     /** @type Box */
                     const screen = [{x: 0, y: 0}, {x: map.width, y: map.height}];
 
-                    // |Todo: Expand the combined box by 10%.
-                    const transform1 = fitBox(combined, screen);
-                    const transform2 = fitBox(targetBox, screen);
+                    const midTransform = fitBox(combineBoxes(box0, box1), screen);
 
                     map.animations.length = 0;
                     map.animations.push({
                         startTime: currentTime,
                         endTime:   currentTime + durations[0],
-                        start:     clone(map.currentTransform),
-                        end:       transform1,
+                        start:     copy(map.currentTransform),
+                        end:       midTransform,
                     });
                     map.animations.push({
                         startTime: currentTime + durations[0],
                         endTime:   currentTime + durations[0] + durations[1],
-                        start:     transform1,
-                        end:       transform2,
+                        start:     midTransform,
+                        end:       newTransform,
                     });
                 }
             }
         }
 
-        if (input.pressed['3']) {
+        if (input.keysPressed['KeyE']) { //|Temporary
             // Just rotate the map by 90 degrees, to help test rotation animations.
             const corners = getMapCorners(map.width, map.height, map.currentTransform);
 
-            const newTransform = clone(map.currentTransform);
+            const newTransform = copy(map.currentTransform);
 
             newTransform.rotate += Math.PI/2;
 
@@ -916,19 +948,19 @@ function handleUserEventsOnMap() {
             map.animations.push({
                 startTime: currentTime,
                 endTime:   currentTime + duration,
-                start:     clone(map.currentTransform),
+                start:     copy(map.currentTransform),
                 end:       newTransform,
             });
         }
 
         // Refetch vertices when the user presses 'r'. |Temporary
-        if (input.pressed['r'])  shouldFetchVertices = true;
+        if (input.keysPressed['KeyR'])  shouldFetchVertices = true;
 
         // Check whether developer visualisations have been toggled:
-        if (input.pressed['t'])  debugTransform = !debugTransform;
-        if (input.pressed['l'])  debugLabels    = !debugLabels;
-        if (input.pressed['f'])  debugFPS       = !debugFPS;
-        if (input.pressed['s'])  debugSlerp     = !debugSlerp;
+        if (input.keysPressed['KeyT'])  debugTransform = !debugTransform;
+        if (input.keysPressed['KeyL'])  debugLabels    = !debugLabels;
+        if (input.keysPressed['KeyF'])  debugFPS       = !debugFPS;
+        if (input.keysPressed['KeyS'])  debugSlerp     = !debugSlerp;
     }
 }
 
@@ -1241,7 +1273,7 @@ function drawPanel() {
                 }
             } else if (mobileMode) {
                 //|Todo: cutTop
-                const dragRect  = clone(panelRect);
+                const dragRect  = copy(panelRect);
                 dragRect.height = 50;
 
                 const flags = getPointerFlags(dragRect, Layer.PANEL);
@@ -1582,7 +1614,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    // When the page loads, fit Australia on the screen. |Cleanup! Terrible!
+    // When the page loads, fit Australia on the screen. |Cleanup
     {
         map.width  = document.body.clientWidth;
         map.height = document.body.clientHeight;
@@ -1593,6 +1625,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         const screen = [{x: 0, y: 0}, {x: map.width, y: map.height}];
 
         map.currentTransform = fitBox(aust, screen);
+
+        // Return to this state by pressing 1.
+        savedTransforms[1] = copy(map.currentTransform);
 
         shouldFetchVertices = true;
     }

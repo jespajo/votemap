@@ -1,7 +1,3 @@
-Implement testing of scale+rotate rotations.
-- Add shift key modifier to input.
-- Save transforms by hitting shift and a number.
-
 Fix the issue where there's a column of white pixels on the right sometimes depending on the screen size.
 
 On mobile, shrink the map when the panel is dragged up.
