@@ -265,9 +265,8 @@ Response serve_vertices(Request *request, Memory_context *context)
 
     Response response = {200, .body = verts->data, .size = verts->count*sizeof(Vertex)};
 
-    response.headers = NewDict(response.headers, ctx);
-
-    *Set(response.headers, "content-type") = "application/octet-stream";
+    response.headers = (string_dict){.context = ctx, .string_mode = true};
+    *Set(&response.headers, "content-type") = "application/octet-stream";
 
     return response;
 }
@@ -302,9 +301,8 @@ Response serve_labels(Request *request, Memory_context *context)
 
     Response response = {200, .body = json->data, .size = json->count};
 
-    response.headers = NewDict(response.headers, ctx);
-
-    *Set(response.headers, "content-type") = "application/json";
+    response.headers = (string_dict){.context = ctx, .string_mode = true};
+    *Set(&response.headers, "content-type") = "application/json";
 
     return response;
 }
@@ -391,8 +389,8 @@ Response serve_parties(Request *request, Memory_context *context)
 
     Response response = {200, .body = body->data, .size = body->count};
 
-    response.headers = NewDict(response.headers, ctx);
-    *Set(response.headers, "content-type") = "application/json";
+    response.headers = (string_dict){.context = ctx, .string_mode = true};
+    *Set(&response.headers, "content-type") = "application/json";
 
     return response;
 }

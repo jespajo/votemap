@@ -1,7 +1,3 @@
-Update the web server:
-    Initialise the response header itself (put the value on the Response object instead of a pointer).
-    Set the content-length header.
-
 Create the following types in the database:
     count_type (2CP, FP)
 Create the following tables in the database and update our documentation:

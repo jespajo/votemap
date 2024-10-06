@@ -38,7 +38,7 @@ struct Request {
 
 struct Response {
     int                     status;
-    string_dict            *headers;
+    string_dict             headers;        // The request handler is expected to set the content-type header. The server sets the content-length header.
     void                   *body;
     s64                     size;           // The number of bytes in the body. If 0, body (if set) points to a zero-terminated string.
 };

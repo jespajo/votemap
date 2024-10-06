@@ -596,12 +596,20 @@ void start_server(Server *server)
             // If the response has a body but no size, calculate the size assuming the body is a zero-terminated string.
             if (response->body && !response->size)  response->size = strlen(response->body);
 
+            if (!response->headers.context) {
+                // If the headers dict has no context, we assume the handler didn't touch it beyond zero-initialising it.
+                assert(!memcmp(&response->headers, &(string_dict){0}, sizeof(string_dict)));
+                response->headers = (string_dict){.context = client->context, .string_mode = true};
+            }
+            // Add a content-length header.
+            *Set(&response->headers, "content-length") = get_string(client->context, "%ld", response->size)->data;
+
             char_array *reply_header = &client->reply_header;
             *reply_header = (char_array){.context = client->context};
 
             print_string(reply_header, "HTTP/1.0 %d\r\n", response->status);
-            if (response->headers) {
-                string_dict *h = response->headers;
+            {
+                string_dict *h = &response->headers;
                 for (s64 i = 0; i < h->count; i++)  print_string(reply_header, "%s: %s\r\n", h->keys[i], h->vals[i]);
             }
             print_string(reply_header, "\r\n");
@@ -683,9 +691,8 @@ Response serve_file_insecurely(Request *request, Memory_context *context)
         else if (!strcmp(file_extension, "ttf"))   content_type = "font/ttf";
     }
 
-    string_dict *headers = NewDict(headers, context);
-
-    if (content_type)  *Set(headers, "content-type") = content_type;
+    string_dict headers = {.context = context, .string_mode = true};
+    if (content_type)  *Set(&headers, "content-type") = content_type;
 
     return (Response){200, headers, file->data, file->count};
 }
