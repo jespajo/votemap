@@ -909,6 +909,8 @@ function handleUserEventsOnMap() {
                     /** @type Box */
                     const screen = [{x: 0, y: 0}, {x: map.width, y: map.height}];
 
+                    //|Todo: It would be better if the mid-point was halfway between the start and end in terms of rotation. At the moment, if both start and end have a non-zero rotation---even if they're the same rotation---this two-part transition will go to 0 degrees in the middle, resulting in a near-360 in some cases.
+                    //| I also think it may look smoother if, rather than each part having a hard-coded equal duration, the relative durations depended on the relative change in each part of the scale's exponent.
                     const midTransform = fitBox(combineBoxes(box0, box1), screen);
 
                     map.animations.length = 0;
@@ -1036,8 +1038,8 @@ function drawWebGL() {
     }
 
     const canvas = /**@type HTMLCanvasElement*/(gl.canvas);
-    canvas.width        = Math.floor(dpr*map.width);
-    canvas.height       = Math.floor(dpr*map.height);
+    canvas.width        = Math.ceil(dpr*map.width);
+    canvas.height       = Math.ceil(dpr*map.height);
     canvas.style.width  = map.width + 'px';
     canvas.style.height = map.height + 'px';
 
@@ -1526,8 +1528,8 @@ function drawSlerp() {
 }
 
 function drawUI() {
-    ui.canvas.width        = Math.floor(dpr*map.width);
-    ui.canvas.height       = Math.floor(dpr*map.height);
+    ui.canvas.width        = Math.ceil(dpr*map.width);
+    ui.canvas.height       = Math.ceil(dpr*map.height);
     ui.canvas.style.width  = map.width + 'px';
     ui.canvas.style.height = map.height + 'px';
 
@@ -1551,8 +1553,8 @@ function step(time) {
 
     if (debugFPS)  frameStartTime = performance.now();
 
-    map.width  = document.body.clientWidth;
-    map.height = document.body.clientHeight;
+    map.width  = document.body.clientWidth+1;
+    map.height = document.body.clientHeight+1;
 
     dpr = window.devicePixelRatio || 1;
 
@@ -1577,8 +1579,8 @@ function step(time) {
     resetInput();
 
     if (debugTransform)  drawTransform();
-    if (debugFPS)        drawFPS();
     if (debugSlerp)      drawSlerp();
+    if (debugFPS)        drawFPS();
 
     window.requestAnimationFrame(step);
 }
@@ -1616,8 +1618,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // When the page loads, fit Australia on the screen. |Cleanup
     {
-        map.width  = document.body.clientWidth;
-        map.height = document.body.clientHeight;
+        map.width  = document.body.clientWidth+1;
+        map.height = document.body.clientHeight+1;
 
         /** @type Box */
         const aust = [{x:-1863361, y: 1168642}, {x: 2087981, y: 4840595}];
