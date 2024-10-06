@@ -599,7 +599,7 @@ void start_server(Server *server)
             if (!response->headers.context) {
                 // If the headers dict has no context, we assume the handler didn't touch it beyond zero-initialising it.
                 assert(!memcmp(&response->headers, &(string_dict){0}, sizeof(string_dict)));
-                response->headers = (string_dict){.context = client->context, .string_mode = true};
+                response->headers = (string_dict){.context = client->context};
             }
             // Add a content-length header.
             *Set(&response->headers, "content-length") = get_string(client->context, "%ld", response->size)->data;
@@ -691,7 +691,7 @@ Response serve_file_insecurely(Request *request, Memory_context *context)
         else if (!strcmp(file_extension, "ttf"))   content_type = "font/ttf";
     }
 
-    string_dict headers = {.context = context, .string_mode = true};
+    string_dict headers = {.context = context};
     if (content_type)  *Set(&headers, "content-type") = content_type;
 
     return (Response){200, headers, file->data, file->count};

@@ -180,14 +180,14 @@ static char *copy_string(char *source, Memory_context *context)
     return copy;
 }
 
-s64 set_key(void *keys, s64 *count, u64 key_size, Hash_bucket *buckets, s64 num_buckets, Memory_context *context, bool string_mode)
+s64 set_key(void *keys, s64 *count, u64 key_size, Hash_bucket *buckets, s64 num_buckets, Memory_context *context, bool binary_mode)
 // Assume the key to set is stored in map->keys[-1]. Add the key to the map's hash table if it
 // wasn't already there and return the key's index in the map->keys array.
 {
     assert(context);
     assert(*count < num_buckets); // Assume empty buckets exist so the while loops below aren't infinite loops.
 
-    if (string_mode) {
+    if (!binary_mode) {
         // The key is a C-style string.
         char *key = ((char **)keys)[-1];
         u64  hash = hash_string(key);
@@ -236,9 +236,9 @@ s64 set_key(void *keys, s64 *count, u64 key_size, Hash_bucket *buckets, s64 num_
     }
 }
 
-s64 get_bucket_index(void *keys, u64 key_size, Hash_bucket *buckets, s64 num_buckets, bool string_mode)
+s64 get_bucket_index(void *keys, u64 key_size, Hash_bucket *buckets, s64 num_buckets, bool binary_mode)
 {
-    if (string_mode) {
+    if (!binary_mode) {
         // The key is a C-style string.
         char *key = ((char **)keys)[-1];
         u64  hash = hash_string(key);
@@ -273,10 +273,10 @@ s64 get_bucket_index(void *keys, u64 key_size, Hash_bucket *buckets, s64 num_buc
     }
 }
 
-bool delete_key(void *keys, void *vals, s64 *count, u64 key_size, u64 val_size, Hash_bucket *buckets, s64 num_buckets, Memory_context *context, bool string_mode)
+bool delete_key(void *keys, void *vals, s64 *count, u64 key_size, u64 val_size, Hash_bucket *buckets, s64 num_buckets, Memory_context *context, bool binary_mode)
 // Return true if the key existed.
 {
-    s64 bucket_index = get_bucket_index(keys, key_size, buckets, num_buckets, string_mode);
+    s64 bucket_index = get_bucket_index(keys, key_size, buckets, num_buckets, binary_mode);
     if (bucket_index < 0)  return false;
 
     s64 kv_index = buckets[bucket_index].index;
@@ -312,7 +312,7 @@ bucket_deleted:
     // Delete the key and value.
     {
         // If it's a string-mode map, delete the copy we made of the key.
-        if (string_mode)  dealloc(((char **)keys)[kv_index], context);
+        if (!binary_mode)  dealloc(((char **)keys)[kv_index], context);
 
         if (kv_index < *count-1) {
             // Copy the final kv pair into the places of the pair we're deleting.
@@ -320,7 +320,7 @@ bucket_deleted:
             memcpy((u8 *)vals+val_size*kv_index, (u8 *)vals+val_size*(*count-1), val_size);
 
             // Update the hash table with the new index of the pair that we moved.
-            u64 hash = (string_mode)
+            u64 hash = (!binary_mode)
                 ? hash_string(((char **)keys)[*count-1])
                 : hash_bytes((u8 *)keys+key_size*(*count-1), key_size);
 

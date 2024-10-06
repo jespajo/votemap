@@ -235,7 +235,7 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
     Memory_context *ctx = context;
 
     Postgres_result *result = New(Postgres_result, ctx);
-    result->columns = (int_dict){.context = ctx, .string_mode = true};
+    result->columns = (int_dict){.context = ctx};
     result->rows    = (u8_array3){.context = ctx};
     SetDefault(&result->columns, -1);
 
@@ -306,7 +306,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
         printf("Found cache file %s.\n", cache_file_name);
 
         Postgres_result *result = New(Postgres_result, ctx);
-        result->columns = (int_dict){.context = ctx, .string_mode = true};
+        result->columns = (int_dict){.context = ctx};
         result->rows    = (u8_array3){.context = ctx};
         SetDefault(&result->columns, -1);
 
