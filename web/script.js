@@ -569,18 +569,27 @@ function cutLeft(rect, width) {
 
 async function loadFonts() {
     const fonts = {
-        //|Temporary: This is a convenient way to play with the fonts. Unfortunately the browser loads every font in this list independently, even if it shares a URL with another font. So at some point we'll either replace our keys with unique identifiers, or, since new FontFace() can take an ArrayBuffer, we could deduplicate the values and fetch them ourselves.
-        "map-electorate":       "url(../fonts/RadioCanada.500.80.woff2)",
-        "title":                "url(../fonts/RadioCanada.500.90.woff2)",
-        "button-active":        "url(../fonts/RadioCanada.700.90.woff2)",
-        "button-inactive":      "url(../fonts/RadioCanada.300.90.woff2)",
-        "party-label":          "url(../fonts/RadioCanada.700.90.woff2)",
+        "map-electorate":       "../fonts/RadioCanada.500.80.woff2",
+        "title":                "../fonts/RadioCanada.500.90.woff2",
+        "button-active":        "../fonts/RadioCanada.700.90.woff2",
+        "button-inactive":      "../fonts/RadioCanada.300.90.woff2",
+        "party-label":          "../fonts/RadioCanada.700.90.woff2",
     };
 
+    const promises = {};
+
     for (const name of Object.keys(fonts)) {
-        const fontFace = new FontFace(name, fonts[name]);
-        const f = await fontFace.load();
-        document.fonts.add(f);
+        const url = fonts[name];
+
+        if (!promises[url]) {
+            promises[url] = fetch(url).then(response => response.arrayBuffer());
+        }
+
+        promises[url].then(data => {
+            const fontFace = new FontFace(name, data);
+
+            fontFace.load().then(f => document.fonts.add(f));
+        });
     }
 }
 

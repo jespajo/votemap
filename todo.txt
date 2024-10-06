@@ -1,5 +1,3 @@
-Fix font loading so that we don't load the same file twice.
-
 Update the web server:
     Initialise the response header itself (put the value on the Response object instead of a pointer).
     Set the content-length header.
