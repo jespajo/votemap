@@ -1,54 +1,5 @@
-Half-finished documentation.
+# DEPRECATED DOCUMENTATION THAT WE'RE CURRENTLY IN THE PROCESS OF GUTTING
 
-Process:
-
-## 1. Import shapefiles with coastline and district data.
-
-All shapefiles are at e.g. /tmp/shapes/boundaries.shp.
-Their coordinate reference system is ESPG:4283 (GDA94 using lon/lat)---project them to ESPG:3577 (Australian Albers using metres).
-Put this in a database table called `shp.bounds22` (you have to create the schema `shp` first).
-```
-    shp2pgsql -D -I -s 4283:3577 /tmp/shapes/boundaries shp.bounds_22 | pq
-```
-Do the same for the coastline.
-
-## 2. Create a new table for extra info related to districts.
-
-```
-    create table electorates_22 (
-        name varchar(32) primary key
-      );
-
-    insert into electorates_22
-    select elect_div as name
-    from shp.bounds_22;
-```
-
-Create a new geometry column in the district table, clipping each district by the coast:
-
-```
-    --|Todo: Also clip out rivers (and other water?) using OSM data.
-
-    select addgeometrycolumn('public', 'electorates_22', 'geom', 3577, 'MULTIPOLYGON', 2);
-
-    update electorates_22 as e
-    set geom = st_force2d(
-        st_multi(st_collectionextract(clipped, 3))
-      )
-    from (
-        select bounds.elect_div,
-          st_intersection(bounds.geom, land.geom, 3.0) as clipped
-        from shp.bounds_22 bounds
-          join (
-            select st_union(geom) as geom
-            from shp.coast
-            where feat_code in ('mainland', 'island')
-          ) land on st_intersects(bounds.geom, land.geom)
-      ) t
-    where e.name = t.elect_div;
-
-    create index electorates_22_geom_idx on electorates_22 using gist(geom);
-```
 
 ## 3. Create a topology for the new geometry column.
 
@@ -103,22 +54,6 @@ Turn that into a new geometry column!
     create index electorates_22_new_geom_idx on electorates_22 using gist(new_geom);
 ```
 
-## 4. Add XML data to the database.
-
-```
-    create table xml.aec_pollingdistricts (
-        election_id int primary key,
-        xmldata     xml
-      );
-```
-
-From the shell:
-```
-    ELECTION_ID=27966
-    printf "insert into xml.aec_pollingdistricts values ($ELECTION_ID, '$(
-        xmllint --noblanks /tmp/aec-mediafeed-pollingdistricts.xml | sed "1d;s/'/''/g"
-    )');" | pq
-```
 
 ## 5. Create a table of booth locations.
 
@@ -293,20 +228,7 @@ This is just so we can make use of a spatial index.
 First the XML table:
 
 ```
-    create table xml.eml_candidates (
-        election_id int primary key,
-        xmldata     xml
-      );
-```
-
-Then populate that from the shell:
-
-```
-    DATA_DIR=/home/jpj/src/webgl/reference/votemap-1-data/aec
-    ELECTION_ID=27966
-    printf "insert into xml.eml_candidates values ($ELECTION_ID, '$(
-        xmllint --noblanks $DATA_DIR/$ELECTION_ID/eml-230-candidates.xml | sed "1d;s/'/''/g"
-    )');" | pq
+    done    
 ```
 
 Now the actual SQL table:
@@ -356,22 +278,11 @@ Add a splash of wrong, temporary colours.
 
 From SQL:
 
-```
-    create table xml.aec_results (
-        election_id int primary key,
-        xmldata     xml
-      );
-```
+done
 
 Then from the shell:
 
-```
-    DATA_DIR=/home/jpj/src/webgl/reference/votemap-1-data/aec
-    ELECTION_ID=27966
-    printf "insert into xml.aec_results values ($ELECTION_ID, '$(
-        xmllint --noblanks $DATA_DIR/$ELECTION_ID/aec-mediafeed-results-detailed-light.xml | sed "1d;s/'/''/g"
-    )');" | pq
-```
+done
 
 Extract it into a table.
 Only include the lower-house results for now.
