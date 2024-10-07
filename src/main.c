@@ -73,97 +73,43 @@ Response serve_vertices(Request *request, Memory_context *context)
         *Add(&params) = get_string(ctx, "%f", -y1)->data;
     }
 
-    // Draw the Voronoi map polygons.
+    // Get the election boundaries to draw from the query.
     {
-        char *query = load_text_file("queries/voronoi.sql", ctx)->data;
+        char **year = Get(request->query, "year");
+        if (!*year) {
+            char_array *error = get_string(ctx, "Missing query parameter 'year'.\n");
+            return (Response){400, .body = error->data, .size = error->count};
+        }
 
-        Postgres_result *result = query_database(db, query, &params, ctx);
-        if (!result->rows.count)  Fatal("A query for polygons returned no results.");
-
-        int booth_id_column = *Get(&result->columns, "booth_id");
-        int polygons_column = *Get(&result->columns, "polygon");
-        int fraction_column = *Get(&result->columns, "fraction_of_votes");
-        int colour_column   = *Get(&result->columns, "colour");
-        if (booth_id_column < 0)  Fatal("Couldn't find a \"booth_id\" column in the results.");
-        if (polygons_column < 0)  Fatal("Couldn't find a \"polygon\" column in the results.");
-        if (fraction_column < 0)  Fatal("Couldn't find a \"fraction_of_votes\" column in the results.");
-        if (colour_column < 0)    Fatal("Couldn't find a \"colour\" column in the results.");
-
-        //
-        // Draw the polygons.
-        //
-        for (s64 i = 0; i < result->rows.count; i++) {
-            u8_array *booth_id_cell = &result->rows.data[i].data[booth_id_column];
-            u8_array *polygons_cell = &result->rows.data[i].data[polygons_column];
-            u8_array *fraction_cell = &result->rows.data[i].data[fraction_column];
-            u8_array *colour_cell   = &result->rows.data[i].data[colour_column];
-
-            u32 booth_id = get_u32_from_cell(booth_id_cell); //|Debug
-
-            Polygon_array polygons = {.context = ctx};
-            {
-                assert(polygons_cell->count > 0);
-
-                u8 *end_data = NULL;
-                parse_polygons(polygons_cell->data, &polygons, &end_data);
-
-                assert(end_data == &polygons_cell->data[polygons_cell->count]);
-            }
-
-            Vector3 colour;
-            if (colour_cell->count) {
-                u32   parsed_colour   = get_u32_from_cell(colour_cell);
-                float parsed_fraction = get_float_from_cell(fraction_cell);//|Incomplete: Use this!
-
-                //|Todo: Interpolate in HSL at least.
-                int r = (parsed_colour & 0xff0000) >> 16;
-                int g = (parsed_colour & 0x00ff00) >> 8;
-                int b = (parsed_colour & 0x0000ff);
-
-                colour = lerp_rgb((Vector3){1,1,1}, (Vector3){r,g,b}, parsed_fraction);
-            } else {
-                colour = (Vector3){0.5, 0.5, 0.5};
-            }
-
-            for (s64 j = 0; j < polygons.count; j++)  draw_polygon(&polygons.data[j], colour, verts);
+        if (!strcmp(*year, "2010"))       *Add(&params) = "15508";
+        else if (!strcmp(*year, "2013"))  *Add(&params) = "17496";
+        else if (!strcmp(*year, "2016"))  *Add(&params) = "20499";
+        else if (!strcmp(*year, "2019"))  *Add(&params) = "24310";
+        else if (!strcmp(*year, "2022"))  *Add(&params) = "27966";
+        else {
+            char_array *error = get_string(ctx, "Unexpected value for 'year': '%s'\n", *year);
+            return (Response){400, .body = error->data, .size = error->count};
         }
     }
 
-    // Draw some rivers.
+    // Draw the election boundaries.
     {
         char *query =
-            " select st_asbinary(                         "
-            "     st_collectionextract(                   "
-            "       st_makevalid(                         "
-            "         st_force2d(                         "
-            "           st_simplify(way, $1::float)       "
-            "         )                                   "
-            "       ), 3                                  "
-            "     )                                       "
-            "   ) as polygon                              "
-            " from planet_osm_polygon                     "
-            " where (                                     "
-            "     waterway in ('dock', 'riverbank')       "
-            "     or landuse in ('reservoir', 'basin')    "
-            "     or \"natural\" in ('water', 'glacier')  "
-            "   )                                         "
-            "   and building is null                      "
-            "   and way_area > ($1::float * $1::float)    "
-            "   and way && st_setsrid(                    "
-            "     st_makebox2d(                           "
-            "       st_point($2::float, $3::float),       "
-            "       st_point($4::float, $5::float)        "
-            "     ),                                      "
-            "     3577                                    "
-            "   )                                         ";
+        " select name, st_asbinary(st_collectionextract(st_makevalid(st_snaptogrid(bounds, $1::float)), 3)) as polygon       "
+        " from electorates                                                                                                   "
+        " where bounds && st_setsrid(st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), 3577)     "
+        "   and election_id = $6::int                                                                                        ";
 
         Postgres_result *result = query_database(db, query, &params, ctx);
 
         int polygons_column = *Get(&result->columns, "polygon");
+        int name_column     = *Get(&result->columns, "name");
         if (polygons_column < 0)  Fatal("Couldn't find a \"polygon\" column in the results.");
+        if (name_column < 0)      Fatal("Couldn't find a \"name\" column in the results.");
 
         for (s64 i = 0; i < result->rows.count; i++) {
             u8_array *polygons_cell = &result->rows.data[i].data[polygons_column];
+            u8_array *name_cell     = &result->rows.data[i].data[name_column];
 
             if (!polygons_cell->count)  continue;
 
@@ -175,89 +121,17 @@ Response serve_vertices(Request *request, Memory_context *context)
                 assert(end_data == &polygons_cell->data[polygons_cell->count]);
             }
 
-            Vector3 colour = {0.1, 0.1, 0.1};
+            char_array *name = copy_char_array_from_cell(name_cell, ctx);
 
-            for (s64 j = 0; j < polygons.count; j++)  draw_polygon(&polygons.data[j], colour, verts);
-        }
-    }
+            u64 hash = hash_string(name->data);
+            float r = 0.5 + 0.5*((float)(hash & 0xff)/255);
+            float g = 0.5 + 0.5*((float)(hash>>8 & 0xff)/255);
+            float b = 0.5 + 0.5*((float)(hash>>16 & 0xff)/255);
+            Vector3 colour = {r, g, b};
 
-    // Draw some roads.
-    if (upp < 10) {
-        char *query =
-        "  select st_asbinary(                                  "
-        "      st_makevalid(                                    "
-        "        st_force2d(st_simplify(way, $1::float))        "
-        "      )                                                "
-        "    ) as path                                          "
-        "  from planet_osm_line                                 "
-        "    where (name is not null or ref is not null)        "
-        "    and (highway is not null or railway is not null)   "
-        "    and way && st_setsrid(                             "
-        "      st_makebox2d(                                    "
-        "        st_point($2::float, $3::float),                "
-        "        st_point($4::float, $5::float)                 "
-        "      ),                                               "
-        "      3577                                             "
-        "    )                                                  ";
-
-        Path_array *paths = query_paths(db, query, &params, ctx);
-
-        for (s64 i = 0; i < paths->count; i++) {
-            Vector3 colour = {0.3, 0.3, 0.3};
-            float line_width = 1*upp;
-
-            draw_path(&paths->data[i], line_width, colour, verts);
-        }
-    } else if (upp < 200) {
-        char *query =
-        "  select st_asbinary(                                  "
-        "      st_makevalid(                                    "
-        "        st_force2d(st_simplify(way, $1::float))        "
-        "      )                                                "
-        "    ) as path                                          "
-        "  from planet_osm_roads                                "
-        "    where (name is not null or ref is not null)        "
-        "    and (highway is not null or railway is not null)   "
-        "    and way && st_setsrid(                             "
-        "      st_makebox2d(                                    "
-        "        st_point($2::float, $3::float),                "
-        "        st_point($4::float, $5::float)                 "
-        "      ),                                               "
-        "      3577                                             "
-        "    )                                                  ";
-
-        Path_array *paths = query_paths(db, query, &params, ctx);
-
-        for (s64 i = 0; i < paths->count; i++) {
-            Vector3 colour = {0.3, 0.3, 0.3};
-            float line_width = 1*upp;
-
-            draw_path(&paths->data[i], line_width, colour, verts);
-        }
-    }
-
-    // Draw the electorate boundaries as lines.
-    {
-        char *query =
-            " select st_asbinary(t.geom) as path                                                    "
-            " from (                                                                                "
-            "     select st_simplify(geom, $1::float) as geom                                       "
-            "     from electorates_22_topo.edge_data                                                "
-            "     where geom && st_setsrid(                                                         "
-            "         st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
-            "         3577                                                                          "
-            "       )                                                                               "
-            "       and (left_face != 0 and right_face != 0)                                        "
-            "   ) t                                                                                 ";
-
-        Path_array *paths = query_paths(db, query, &params, ctx);
-
-        for (s64 i = 0; i < paths->count; i++) {
-            Vector3 colour = {0, 0, 0};
-
-            float line_width = 2*upp;
-
-            draw_path(&paths->data[i], line_width, colour, verts);
+            for (s64 j = 0; j < polygons.count; j++) {
+                draw_polygon(&polygons.data[j], colour, verts);
+            }
         }
     }
 

@@ -146,6 +146,9 @@ let mobileMode = false;
 //|Temporary: this should go in the map state and also be an enum or something, not a boolean.
 let isFirstPreferences = true;
 
+//|Temporary: We're testing the different election years.
+let electionYear = 2022;
+
 const map = {
     //
     // Map constants:
@@ -992,6 +995,8 @@ async function fetchVertices() {
     const upp = 1/map.currentTransform.scale;
     url += '&upp=' + upp;
 
+    url += '&year=' + electionYear;
+
     const response = await fetch(url);
     const data = await response.arrayBuffer();
 
@@ -1323,7 +1328,7 @@ function drawPanel() {
     // Draw the election title.
     {
         let height = 40;
-        let text = "2022 Federal Election";
+        let text = electionYear + " Federal Election";
         ui.fillStyle = 'black';
 
         ui.font = height + 'px title';
@@ -1333,7 +1338,7 @@ function drawPanel() {
             ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
             panelY += height;
         } else {
-            text = '2022';
+            text = '' + electionYear;
             textWidth = ui.measureText(text).width;
             ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
             panelY += height;

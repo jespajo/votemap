@@ -474,7 +474,7 @@ float get_float_from_cell(u8_array *cell)
 }
 
 char_array *copy_char_array_from_cell(u8_array *cell, Memory_context *context)
-//|Speed: This makes a copy of the string.
+//|Todo: Don't make a copy. For this to work, we need to make sure the data is zero-terminated in the Postgres_result.
 {
     char_array *result = NewArray(result, context);
 
