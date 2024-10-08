@@ -1,3 +1,5 @@
+Delete old tables and enums from the database.
+
 As the default view when the page loads, show electorates overall instead of the Voronoi.
     Make one such choropleth for each federal election.
     Make it possible to switch between them with < and > icons next to the election title.
