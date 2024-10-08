@@ -200,7 +200,7 @@ Create a topology.
     SELECT ST_CreateTopoGeo('electorates_topo', ST_Collect(bounds))
     FROM electorates;
 
-That last command is very slow.
+That last command is slow.
 
 Create a topology layer to associate the faces in the newly-created topology with the electorates they represent.
 
@@ -366,7 +366,7 @@ There are only a few cases of the latter, and they're probably just mistakes, bu
       ) t;
 
 The `DISTINCT ON` means we use the first name that happens to appear for each party, for each election.
-There is variation here even within elections.
+There is variation in the party names associated with the same ID even within elections.
 
 Add some colours.
 
@@ -394,44 +394,88 @@ Add some colours.
 
 ## Extract votes for the lower house.
 
-Create the following types in the database:
-    count_type (2CP, FP)
+    CREATE TYPE vote_count_type AS ENUM ('FP', '2CP');
 
-    contest_votes
-      (election_id, contest_id, count_type, candidate_id, ballot_position, elected, ordinary_votes, absent_votes, provisional_votes, prepoll_votes, postal_votes, total_votes)
+    CREATE TABLE contest_votes (
+      election_id INT,
+      electorate_id INT,
+      count_type vote_count_type,
+      candidate_id INT,
+      ballot_position INT,
+      elected BOOLEAN,
+      ordinary_votes INT,
+      absent_votes INT,
+      provisional_votes INT,
+      prepoll_votes INT,
+      postal_votes INT,
+      total_votes INT,
+      historic_votes INT,
 
-    booth_votes
-      (election_id, contest_id, booth_id, count_type, candidate_id, votes)
+      PRIMARY KEY (election_id, electorate_id, count_type, candidate_id)
+    );
 
----
+    CREATE TABLE booth_votes (
+      election_id INT,
+      electorate_id INT,
+      booth_id INT,
+      count_type vote_count_type,
+      candidate_id INT,
+      votes INT,
 
-    --|Todo: Include the electorate ID (so we can get the votes as a fraction of the total for each electorate) as well as the election ID.
+      PRIMARY KEY (election_id, electorate_id, booth_id, count_type, candidate_id)
+    );
 
-    create type house_vote_type as enum ('FP', '2CP');
-
-    create table results_house_22 (
-        booth_id     int,
-        vote_type    house_vote_type,
-        candidate_id int,
-        num_votes    int
-      );
-
-    insert into results_house_22
-    select booth_id,
-      (case when vt = 'FirstPreferences' then 'FP' when vt = 'TwoCandidatePreferred' then '2CP' end)::house_vote_type as vote_type,
-      (xpath('/*/*[local-name()=''CandidateIdentifier'']/@Id', candidate))[1]::text::int                              as candidate_id,
-      (xpath('/*/*[local-name()=''Votes'']/text()', candidate))[1]::text::int                                         as num_votes
-    from (
-        select booth_id,
-          (xpath('name(/*)', fp_or_tcp))[1]::text                      as vt,
-          unnest(xpath('/*/*[local-name()=''Candidate'']', fp_or_tcp)) as candidate
-        from (
-            select (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Id', house_booths))[1]::text::int                    as booth_id,
-              unnest(xpath('/*/*[local-name()=''FirstPreferences'' or local-name()=''TwoCandidatePreferred'']', house_booths)) as fp_or_tcp
-            from (
-                select unnest(xpath('/*/*/*/*[local-name()=''House'']/*/*/*/*[local-name()=''PollingPlace'']', xmldata)) as house_booths
-                from xml.aec_results
+    INSERT INTO contest_votes
+    SELECT election_id, electorate_id,
+      (CASE WHEN ct = 'FirstPreferences' THEN 'FP' WHEN ct = 'TwoCandidatePreferred' THEN '2CP' END)::vote_count_type AS count_type,
+      (xpath('/*/*[local-name()=''CandidateIdentifier'']/@Id', candidate))[1]::TEXT::INT AS candidate_id,
+      (xpath('/*/*[local-name()=''BallotPosition'']/text()', candidate))[1]::TEXT::INT AS ballot_position,
+      (xpath('/*/*[local-name()=''Elected'']/text()', candidate))[1]::TEXT::BOOLEAN AS elected,
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Ordinary'']/text()', candidate))[1]::TEXT::INT AS ordinary_votes,
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Absent'']/text()', candidate))[1]::TEXT::INT AS absent_votes,
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Provisional'']/text()', candidate))[1]::TEXT::INT AS provisional_votes,
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''PrePoll'']/text()', candidate))[1]::TEXT::INT AS prepoll_votes,
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Postal'']/text()', candidate))[1]::TEXT::INT AS postal_votes,
+      (xpath('/*/*[local-name()=''Votes'']/text()', candidate))[1]::TEXT::INT AS total_votes,
+      (xpath('/*/*[local-name()=''Votes'']/@MatchedHistoric', candidate))[1]::TEXT::INT AS historic_votes
+    FROM (
+        SELECT election_id, electorate_id,
+          (xpath('name(/*)', fp_or_tcp))[1]::text AS ct,
+          unnest(xpath('/*/*[local-name()=''Candidate'']', fp_or_tcp)) AS candidate
+        FROM (
+            SELECT election_id,
+              (xpath('/*/*[local-name()=''ContestIdentifier'']/@Id', contest))[1]::TEXT::INT AS electorate_id,
+              unnest(xpath('/*/*[local-name()=''FirstPreferences'' or local-name()=''TwoCandidatePreferred'']', contest)) AS fp_or_tcp
+            FROM (
+                SELECT election_id,
+                  unnest(xpath('//*[local-name()=''House'']/*/*[local-name()=''Contest'']', xmldata)) AS contest
+                FROM xml.aec_results
               ) t
           ) t
       ) t;
 
+    INSERT INTO booth_votes
+    SELECT election_id, electorate_id, booth_id,
+      (CASE WHEN ct = 'FirstPreferences' THEN 'FP' WHEN ct = 'TwoCandidatePreferred' THEN '2CP' END)::vote_count_type AS count_type,
+      (xpath('/*/*[local-name()=''CandidateIdentifier'']/@Id', candidate))[1]::TEXT::INT AS candidate_id,
+      (xpath('/*/*[local-name()=''Votes'']/text()', candidate))[1]::TEXT::INT AS votes
+    FROM (
+        SELECT election_id, electorate_id, booth_id,
+          (xpath('name(/*)', fp_or_tcp))[1]::TEXT AS ct,
+          unnest(xpath('/*/*[local-name()=''Candidate'']', fp_or_tcp)) AS candidate
+        FROM (
+            SELECT election_id, electorate_id,
+              (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Id', place))[1]::TEXT::INT AS booth_id,
+              unnest(xpath('/*/*[local-name()=''FirstPreferences'' or local-name()=''TwoCandidatePreferred'']', place)) AS fp_or_tcp
+            FROM (
+                SELECT election_id,
+                  (xpath('/*/*[local-name()=''ContestIdentifier'']/@Id', contest))[1]::TEXT::INT AS electorate_id,
+                  unnest(xpath('/*/*/*[local-name()=''PollingPlace'']', contest)) AS place
+                FROM (
+                    SELECT election_id,
+                      unnest(xpath('//*[local-name()=''House'']/*/*[local-name()=''Contest'']', xmldata)) AS contest
+                    FROM xml.aec_results
+                  ) t
+              ) t
+          ) t
+      ) t;
