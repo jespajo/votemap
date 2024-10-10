@@ -195,18 +195,18 @@ We need to build the 2016 boundaries from the 2013 data and redistributions for 
 
 Create a topology.
 
+    --|Todo: Set the tolerance to 3.
     SELECT CreateTopology('electorates_topo', 3577);
 
     SELECT ST_CreateTopoGeo('electorates_topo', ST_Collect(bounds))
     FROM electorates;
 
 That last command is slow.
+It takes a few hours.
 
 Create a topology layer to associate the faces in the newly-created topology with the electorates they represent.
 
     SELECT AddTopoGeometryColumn('electorates_topo', 'public', 'electorates', 'bounds_topo', 'MULTIPOLYGON');
-
----
 
 Make a note of the layer ID returned by the above command and use it in the command below.
 The command below creates a new topology column in the electorates table.
@@ -217,38 +217,53 @@ This topology column holds the topology's face IDs for each electorate.
     --| Requires Postgis 3.2.0. (Not sure if this actually works.)
 
     UPDATE electorates e
-    SET bounds_topo = CreateTopoGeom('electorates_topo', 3, /*LAYER ID:*/1, faces)
+    SET bounds_topo = CreateTopoGeom('electorates_topo', 3, /*LAYER ID:*/4, faces)
     FROM (
-        WITH e AS (
-          SELECT e.election_id,
-            e.name,
-            f.face_id,
-            ST_Area(ST_Intersection(e.bounds, ST_GetFaceGeometry('electorates_topo', f.face_id))) AS area
-          FROM electorates e
-            INNER JOIN electorates_topo.face f ON e.bounds && f.mbr
-        )
-        SELECT e1.election_id,
-          e1.name,
-          TopoElementArray_Agg(ARRAY[e1.face_id, 3]) AS faces
-        FROM e e1
-        WHERE area = (SELECT max(area) FROM e e2 WHERE e1.face_id = e2.face_id)
-        GROUP BY e1.election_id, e1.name
+        SELECT election_id, id, TopoElementArray_Agg(ARRAY[face_id, 3]) AS faces
+        FROM (
+            SELECT DISTINCT ON (election_id, face_id)
+              e.election_id,
+              e.id,
+              f.face_id
+            FROM electorates e
+              INNER JOIN electorates_topo.face f ON e.bounds && f.mbr
+            ORDER BY f.face_id,
+              e.election_id,
+              ST_Area(ST_Intersection(e.bounds, ST_GetFaceGeometry('electorates_topo', f.face_id))) DESC
+          ) t
+        GROUP BY election_id, id
       ) t
     WHERE e.election_id = t.election_id
-      AND e.name = t.name;
+      AND e.id = t.id;
 
-Update the original geometries with the topologically validated ones.
+In the above command, we look at all the faces in the topology and distribute them among the electorates.
+We want to assign each face to five districts: one district for each of the five elections.
 
----
+In our boundary shapefiles, there is inconsistency from year to year about the coastline.
+For example, between 2019 and 2022, the government remapped the north coast of Australia and included a lot more islands.
+As a result, our topology contains a lot of unnecessary faces.
+For instance, if an island was made bigger, there is one face for the original island and more faces for the extra parts added to it.
+These extra faces are not interesting to us.
+We only care about extra faces if they represent real changes in electoral boundaries due to redistrubutions.
+Furthermore, we don't want the coastline changing from year to year.
 
-**HAVEN'T RUN THIS**
+In the above query, we try to assign *every* face in the topology to one district for each election---even if that election's shapefile didn't actually define the face in its own boundaries.
+We achieve this with the `INNER JOIN ON e.bounds && f.mbr`, which creates a table with one row for every face/district combination where the bounding box of the face intersects with the district's bounding box.
+In most cases, the join creates five rows for each face: one for each election.
+This is the ideal case because there is no ambiguity about which district the face belongs to for each election.
+When the inner join produces more than five rows, the `DISTINCT ON ... ORDER BY` assigns the face to whichever district it has the largest intersection with for that election.
+If there are fewer than five rows, the face is dropped from the map for those elections where its bounding box does not intersect with that of any district.
+
+In version 3.3.0 of Postgis, there is a topology function called `RemoveUnusedPrimitives`, which I think we could now run to remove the extra edges we don't care about from the topology.
+I think we could achieve the same thing with our current version by creating a new topology from scratch out of our now-topologically-validated geometries.
+
+Anyway, for now just update the original geometries with the topologically validated ones.
 
     UPDATE electorates SET bounds = bounds_topo::geometry;
 
     DROP INDEX electorates_bounds_idx;
     CREATE INDEX electorates_bounds_idx ON electorates USING gist(bounds);
 
----
 
 ## Extract the booths.
 

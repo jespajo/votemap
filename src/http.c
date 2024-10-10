@@ -623,7 +623,7 @@ cleanup:
         for (s64 request_index = 0; request_index < clients->count; request_index++) {
             Client *client = &clients->vals[request_index];
 
-            s64 CONNECTION_TIMEOUT = 500*1000; // The maximum age of any connection in milliseconds. |Cleanup: ATM this is so high it's pointless. Also we probably want to log about sockets we drop because they've timed out.
+            s64 CONNECTION_TIMEOUT = 50000*1000; // The maximum age of any connection in milliseconds. |Cleanup: ATM this is so high it's pointless. Also we probably want to log about sockets we drop because they've timed out.
 
             // Skip sockets that we shouldn't close, unless the server should stop, in which case we will disconnect everyone.
             bool should_close = server_should_stop;

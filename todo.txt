@@ -1,4 +1,5 @@
 Delete old tables and enums from the database.
+Also vacuum.
 
 As the default view when the page loads, show electorates overall instead of the Voronoi.
     Make one such choropleth for each federal election.
