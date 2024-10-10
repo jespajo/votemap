@@ -3,8 +3,6 @@ Colour the electorates by the party of the winning candidate.
 Make it possible to switch between elections with < and > icons next to the election title.
 
 Database stuff:
-    Currently we're creating a electorates_topo_2 topology with a tolerance of 3. Wait for that to finish.
-    Look at topologysummary('electorates_topo_2') and see how much we improved it.
     Create a new topogeometry column in electorates called bounds_topo_2.
     Make sure the new and old topogeometry columns are similar in area.
     Draw all the edges of the new topology in random colours and observe that the edges only change colours at nodes.
@@ -16,6 +14,7 @@ Database stuff:
         Do a full vacuum on electorates.
     Also rename the table names to remove plurals.
         Remove _votes suffixes from contest_vote columns and rename booth_vote.votes to booth_vote.total.
+        Probably just make everything lowercase.
 
 On the front end, come up with a convincing distinction between "tap" and "drag", so map labels can be tapped.
 

@@ -95,21 +95,54 @@ Response serve_vertices(Request *request, Memory_context *context)
     // Draw the election boundaries.
     {
         char *query =
-        " select name, st_asbinary(st_collectionextract(st_makevalid(st_snaptogrid(bounds, $1::float)), 3)) as polygon       "
-        " from electorates                                                                                                   "
-        " where bounds && st_setsrid(st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), 3577)     "
-        "   and election_id = $6::int                                                                                        ";
+        " select e.name,                                                                "
+        "   st_asbinary(                                                                "
+        "     st_collectionextract(st_makevalid(st_snaptogrid(e.bounds, $1::float)), 3) "
+        "   ) as polygon,                                                               "
+        "   t.party_id,                                                                 "
+        "   t.colour                                                                    "
+        " from electorates e                                                            "
+        "   left join (                                                                 "
+        "     select v.election_id,                                                     "
+        "       v.electorate_id,                                                        "
+        "       p.id as party_id,                                                       "
+        "       p.colour                                                                "
+        "     from contest_votes v                                                      "
+        "       inner join candidates c on (                                            "
+        "         c.election_id = v.election_id                                         "
+        "         and c.electorate_id = v.electorate_id                                 "
+        "       )                                                                       "
+        "       inner join parties p on (                                               "
+        "         p.election_id = v.election_id                                         "
+        "         and c.party_id = p.id                                                 "
+        "       )                                                                       "
+        "     where v.elected                                                           "
+        "   ) t on (                                                                    "
+        "     t.election_id = e.election_id                                             "
+        "     and t.electorate_id = e.id)                                               "
+        " where e.bounds && st_setsrid(                                                 "
+        "     st_makebox2d(                                                             "
+        "       st_point($2::float, $3::float),                                         "
+        "       st_point($4::float, $5::float)                                          "
+        "     ), 3577)                                                                  "
+        "   and e.election_id = $6::int                                                 ";
 
         Postgres_result *result = query_database(db, query, &params, ctx);
 
         int polygons_column = *Get(&result->columns, "polygon");
         int name_column     = *Get(&result->columns, "name");
+        int party_id_column = *Get(&result->columns, "party_id");
+        int colour_column   = *Get(&result->columns, "colour");
         if (polygons_column < 0)  Fatal("Couldn't find a \"polygon\" column in the results.");
         if (name_column < 0)      Fatal("Couldn't find a \"name\" column in the results.");
+        if (party_id_column < 0)  Fatal("Couldn't find a \"party_id\" column in the results.");
+        if (colour_column < 0)    Fatal("Couldn't find a \"colour\" column in the results.");
 
         for (s64 i = 0; i < result->rows.count; i++) {
             u8_array *polygons_cell = &result->rows.data[i].data[polygons_column];
             u8_array *name_cell     = &result->rows.data[i].data[name_column];
+            u8_array *party_id_cell = &result->rows.data[i].data[party_id_column];
+            u8_array *colour_cell   = &result->rows.data[i].data[colour_column];
 
             if (!polygons_cell->count)  continue;
 
@@ -123,11 +156,31 @@ Response serve_vertices(Request *request, Memory_context *context)
 
             char_array *name = copy_char_array_from_cell(name_cell, ctx);
 
-            u64 hash = hash_string(name->data);
-            float r = 0.5 + 0.5*((float)(hash & 0xff)/255);
-            float g = 0.5 + 0.5*((float)(hash>>8 & 0xff)/255);
-            float b = 0.5 + 0.5*((float)(hash>>16 & 0xff)/255);
-            Vector3 colour = {r, g, b};
+            Vector3 colour;
+            if (!party_id_cell->count) {
+                // We don't know the winner. Make it grey.
+                colour = (Vector3){0.5, 0.5, 0.5};
+            } else {
+                int party_id = (int)get_u32_from_cell(party_id_cell);
+
+                if (party_id < 0) {
+                    colour = (Vector3){0.3, 0.3, 0.3}; // Independents are dark grey.
+                } else {
+                    u32 colour_u32 = get_u32_from_cell(colour_cell);
+
+                    if (colour_u32 == 0) {
+                        // We know who won, but we haven't got a colour for this party in the database. Make it light grey.
+                        colour = (Vector3){0.7, 0.7, 0.7};
+                    } else {
+                        // We know who won and we have a colour.
+                        int r = colour_u32 >> 16 & 0xff;
+                        int g = colour_u32 >> 8 & 0xff;
+                        int b = colour_u32 & 0xff;
+
+                        colour = (Vector3){r/255.0, g/255.0, b/255.0};
+                    }
+                }
+            }
 
             for (s64 j = 0; j < polygons.count; j++) {
                 draw_polygon(&polygons.data[j], colour, verts);
