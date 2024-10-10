@@ -28,8 +28,6 @@
 
         @typedef {{text: string, pos: [number, number]}} Label
 
-        @typedef {{code: string, name: string, colour: string}} Party
-
 
         @typedef {{locked: boolean, x: number, y: number}} PointerLock
 
@@ -238,11 +236,7 @@ let updateVertices = false;
 /** @type CanvasRenderingContext2D */
 let ui;
 /** @type Label[] */
-let labels;
-/** @type {{[key: string]: Party}} */
-let parties;
-/** @type string[] */
-let partyCodes;
+let labels = [];
 
 //
 // Toggle developer visualisations.
@@ -576,7 +570,6 @@ async function loadFonts() {
         "title":                "../fonts/RadioCanada.500.90.woff2",
         "button-active":        "../fonts/RadioCanada.700.90.woff2",
         "button-inactive":      "../fonts/RadioCanada.300.90.woff2",
-        "party-label":          "../fonts/RadioCanada.700.90.woff2",
     };
 
     const promises = {};
@@ -1003,6 +996,16 @@ async function fetchVertices() {
     vertices = new Float32Array(data);
 
     updateVertices = true;
+
+    // Fetch labels.
+    {
+        labels = [];
+
+        const response = await fetch(`../bin/labels.json?year=${electionYear}`);
+        const json = await response.json();
+
+        labels = json.labels;
+    }
 }
 
 function applyAnimationsToMap() {
@@ -1419,16 +1422,6 @@ function drawPanel() {
         ui.strokeRect(toggleRect.x, toggleRect.y, toggleRect.width, toggleRect.height);
 
         panelY += toggleRect.height;
-
-        if (isFirstPreferences && partyCodes) {
-            const height = 10;
-            ui.font = height + 'px party-label';
-
-            for (const label of partyCodes) {
-                ui.fillText(label, panelX, panelY);
-                panelY += height;
-            }
-        }
     }
 
     panelY += panelPadding;
@@ -1608,27 +1601,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     initWebGLProgram();
 
     ui = $("canvas#gui").getContext("2d");
-
-    // Fetch labels. |Speed: Make this fetch async.
-    {
-        const response = await fetch("../bin/labels.json");
-        const json = await response.json();
-
-        labels = json.labels;
-    }
-
-    // Fetch party codes. |Speed: Make this fetch async.
-    {
-        const response = await fetch("/parties");
-        const json     = await response.json();
-        parties = json.parties;
-
-        partyCodes = [];
-        for (const id of Object.keys(parties)) {
-            const code = parties[id].code;
-            if (code && partyCodes.indexOf(code) < 0)  partyCodes.push(code);
-        }
-    }
 
     // When the page loads, fit Australia on the screen. |Cleanup
     {
