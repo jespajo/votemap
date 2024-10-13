@@ -51,8 +51,7 @@ void print_string(char_array *out, char *format, ...)
 }
 
 void print_double(double number, char_array *out)
-// We can extend this later. For now just remove trailing zero decimal places and if it's a whole
-// number then remove the whole decimal part.
+// Remove trailing zero decimal places and if it's a whole number then remove the whole decimal part.
 {
     s64 old_count = out->count;
     print_string(out, "%.15f", number);

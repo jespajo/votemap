@@ -158,7 +158,6 @@ void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_cont
 }
 
 void array_unordered_remove_by_index_(void *data, s64 *count, u64 unit_size, s64 index_to_remove)
-// Decrements *count. We didn't end up using this when we wrote it, but we'll probably need it some day.
 {
     assert(0 <= index_to_remove && index_to_remove < *count);
 

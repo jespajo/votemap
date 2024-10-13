@@ -25,10 +25,10 @@ u64 hash_bytes(void *p, u64 size)
         hash = hash * 0x27d4eb2d;
         hash ^= seed;
         hash = hash ^ (hash >> 15);
-        u64 hash64 = (((u64) hash << 16 << 16) | hash) ^ seed;
+        u64 hash64 = (((u64)hash << 16 << 16) | hash) ^ seed;
         return (hash64) ? hash64 : 1;
-
-    } else if (size == 8 && sizeof(u64) == 8) {
+    }
+    if (size == 8 && sizeof(u64) == 8) {
         u64 hash = d[0] | ((u64)d[1] << 8) | ((u64)d[2] << 16) | ((u64)d[3] << 24);
         hash |= ((u64)d[4] | ((u64)d[5] << 8) | ((u64)d[6] << 16) | ((u64)d[7] << 24)) << 16 << 16;
         hash ^= seed;
@@ -44,17 +44,17 @@ u64 hash_bytes(void *p, u64 size)
         return (hash) ? hash : 1;
     }
 
-    u64 v0 = ((((u64) 0x736f6d65 << 16) << 16) + 0x70736575) ^  seed;
-    u64 v1 = ((((u64) 0x646f7261 << 16) << 16) + 0x6e646f6d) ^ ~seed;
-    u64 v2 = ((((u64) 0x6c796765 << 16) << 16) + 0x6e657261) ^  seed;
-    u64 v3 = ((((u64) 0x74656462 << 16) << 16) + 0x79746573) ^ ~seed;
+    u64 v0 = ((((u64)0x736f6d65 << 16) << 16) + 0x70736575) ^  seed;
+    u64 v1 = ((((u64)0x646f7261 << 16) << 16) + 0x6e646f6d) ^ ~seed;
+    u64 v2 = ((((u64)0x6c796765 << 16) << 16) + 0x6e657261) ^  seed;
+    u64 v3 = ((((u64)0x74656462 << 16) << 16) + 0x79746573) ^ ~seed;
 
 #define SipRound() \
     do { \
-        v0 += v1; v1 = RotateLeft(v1, 13);  v1 ^= v0;  v0 = RotateLeft(v0, 8*sizeof(u8)/2); \
-        v2 += v3; v3 = RotateLeft(v3, 16);  v3 ^= v2;                                       \
-        v2 += v1; v1 = RotateLeft(v1, 17);  v1 ^= v2;  v2 = RotateLeft(v2, 8*sizeof(u8)/2); \
-        v0 += v3; v3 = RotateLeft(v3, 21);  v3 ^= v0;                                       \
+        v0 += v1;  v1 = RotateLeft(v1, 13);  v1 ^= v0;  v0 = RotateLeft(v0, 8*sizeof(u8)/2); \
+        v2 += v3;  v3 = RotateLeft(v3, 16);  v3 ^= v2;                                       \
+        v2 += v1;  v1 = RotateLeft(v1, 17);  v1 ^= v2;  v2 = RotateLeft(v2, 8*sizeof(u8)/2); \
+        v0 += v3;  v3 = RotateLeft(v3, 21);  v3 ^= v0;                                       \
     } while (0)
 
     u64 data, i;
