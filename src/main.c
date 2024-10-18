@@ -151,7 +151,6 @@ Response serve_vertices(Request *request, Memory_context *context)
 
             char_array *name = copy_char_array_from_cell(name_cell, ctx);
 
-/* |Todo:
             Vector3 colour;
             if (!party_id_cell->count) {
                 // We don't know the winner. Make it grey.
@@ -177,12 +176,8 @@ Response serve_vertices(Request *request, Memory_context *context)
                     }
                 }
             }
-*/
-            Vector3 colour = get_colour_from_hash(hash_string(name->data));
 
-            for (s64 j = 0; j < polygons.count; j++) {
-                draw_polygon(&polygons.data[j], colour, verts);
-            }
+            for (s64 j = 0; j < polygons.count; j++)  draw_polygon(&polygons.data[j], colour, verts);
         }
     }
 

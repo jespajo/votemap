@@ -1,25 +1,8 @@
-Colour the electorates by the party of the winning candidate.
-
 Make it possible to switch between elections with < and > icons next to the election title.
-
-Database stuff:
-    Create a new topogeometry column in electorates called bounds_topo_2.
-    Make sure the new and old topogeometry columns are similar in area.
-    Draw all the edges of the new topology in random colours and observe that the edges only change colours at nodes.
-    See whether it is now feasible to draw the polygons with st_simplify() on the topology instead of st_snaptogrid() on the geometry.
-    If it all looks good:
-        Update electorates.bounds with the topogeometries.
-        Update our documentation to add the tolerance parameter to CreateTopology.
-        Delete the old electorates.bounds_topo topogeometry and electorates_topo topology and rename their replacements to remove the _2 suffixes.
-        Do a full vacuum on electorates.
-    Also rename the table names to remove plurals.
-        Remove _votes suffixes from contest_vote columns and rename booth_vote.votes to booth_vote.total.
-        Probably just make everything lowercase.
 
 On the front end, come up with a convincing distinction between "tap" and "drag", so map labels can be tapped.
 
 Improve labels.
-    Update the way labels are fetched so that we await the vertices first.
     Merge serve_vertices() and serve_labels() on the backend so they make the same set of database queries.
     Make labels only exist in the data if the shapes they correspond to appear on the page.
     Add a couple of different styles to labels.json.

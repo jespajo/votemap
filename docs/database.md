@@ -121,8 +121,6 @@ Note that we will restrict all data to the lower house.
           ) t
       ) t;
 
-Update the enrolment column separately because we have to get it from a different XML source.
-
     UPDATE district d
     SET enrolment = t.enrolment
     FROM (
