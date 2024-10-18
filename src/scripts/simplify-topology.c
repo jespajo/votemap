@@ -1,10 +1,10 @@
 #include <math.h>
 
-#include "array.h"
-#include "map.h"
-#include "pg.h"
-#include "shapes.h"
-#include "strings.h"
+#include "../array.h"
+#include "../map.h"
+#include "../pg.h"
+#include "../shapes.h"
+#include "../strings.h"
 
 const double PI = 4*atan(1);
 
