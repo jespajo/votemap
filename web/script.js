@@ -999,8 +999,6 @@ async function fetchVertices() {
 
     // Fetch labels.
     {
-        labels = [];
-
         const response = await fetch(`../bin/labels.json?year=${electionYear}`);
         const json = await response.json();
 

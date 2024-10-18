@@ -72,13 +72,13 @@ Import from the shell.
 
 ## Extract the elections into a table.
 
-    CREATE TABLE elections (
+    CREATE TABLE election (
       id INT PRIMARY KEY,
       name TEXT,
       date DATE
     );
 
-    INSERT INTO elections
+    INSERT INTO election
     SELECT election_id AS id,
       (xpath('//*[local-name()=''EventName'']/text()', xmldata))[1]::TEXT AS name,
       (xpath('//*[local-name()=''Election''][*/@Id=''H'']//*[local-name()=''SingleDate'']/text()', xmldata))[1]::TEXT::DATE AS date
@@ -92,7 +92,7 @@ Note that we will restrict all data to the lower house.
     CREATE TYPE australian_state AS ENUM ('ACT', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA');
     CREATE TYPE aec_demographic AS ENUM ('OuterMetropolitan', 'Rural', 'InnerMetropolitan', 'Provincial');
 
-    CREATE TABLE electorates (
+    CREATE TABLE district (
       election_id INT,
       id INT,
       name TEXT,
@@ -104,7 +104,7 @@ Note that we will restrict all data to the lower house.
       PRIMARY KEY (election_id, id)
     );
 
-    INSERT INTO electorates
+    INSERT INTO district
     SELECT election_id,
       (xpath('/*/@Id', identifier)) [1]::TEXT::INT AS id,
       (xpath('/*/*[local-name()=''Name'']/text()', identifier))[1]::TEXT AS name,
@@ -123,7 +123,7 @@ Note that we will restrict all data to the lower house.
 
 Update the enrolment column separately because we have to get it from a different XML source.
 
-    UPDATE electorates e
+    UPDATE district d
     SET enrolment = t.enrolment
     FROM (
         SELECT election_id,
@@ -135,19 +135,21 @@ Update the enrolment column separately because we have to get it from a differen
             FROM xml.aec_results
           ) t
       ) t
-    WHERE e.election_id = t.election_id
-      AND e.id = t.id;
+    WHERE d.election_id = t.election_id
+      AND d.id = t.id;
 
 Create a column for the electorates' boundaries.
 
-    SELECT AddGeometryColumn('public', 'electorates', 'bounds', 3577, 'MULTIPOLYGON', 2);
+    SELECT AddGeometryColumn('public', 'district', 'bounds', 3577, 'MULTIPOLYGON', 2);
 
 Add the bounds for each year, clipping by the Australian coastline.
 
 Recall that 2016 is a weird year.
 We need to build the 2016 boundaries from the 2013 data and redistributions for three individual states: ACT, NSW and WA.
 
-    UPDATE electorates e
+    --|Todo: Also clip out river polygons.
+
+    UPDATE district d
     SET bounds = ST_Force2D(ST_Multi(ST_CollectionExtract(clipped, 3)))
     FROM (
         SELECT election_id,
@@ -188,55 +190,54 @@ We need to build the 2016 boundaries from the 2013 data and redistributions for 
             WHERE feat_code IN ('mainland', 'island')
           ) c ON b.geom && c.geom
       ) t
-    WHERE e.election_id = t.election_id
-      AND e.name ILIKE t.elect_div;
+    WHERE d.election_id = t.election_id
+      AND d.name ILIKE t.elect_div;
 
-    CREATE INDEX electorates_bounds_idx ON electorates USING gist(bounds);
+    CREATE INDEX district_bounds_idx ON district USING gist(bounds);
 
 Create a topology.
 
-    --|Todo: Set the tolerance to 3.
-    SELECT CreateTopology('electorates_topo', 3577);
+    SELECT CreateTopology('district_topo', 3577, 1);
 
-    SELECT ST_CreateTopoGeo('electorates_topo', ST_Collect(bounds))
-    FROM electorates;
+    SELECT ST_CreateTopoGeo('district_topo', ST_Collect(bounds))
+    FROM district;
 
 That last command is slow.
 It takes a few hours.
 
-Create a topology layer to associate the faces in the newly-created topology with the electorates they represent.
+Create a topology layer to associate the faces in the newly created topology with the districts they represent.
 
-    SELECT AddTopoGeometryColumn('electorates_topo', 'public', 'electorates', 'bounds_topo', 'MULTIPOLYGON');
+    SELECT AddTopoGeometryColumn('district_topo', 'public', 'district', 'bounds_faces', 'MULTIPOLYGON');
 
 Make a note of the layer ID returned by the above command and use it in the command below.
-The command below creates a new topology column in the electorates table.
-This topology column holds the topology's face IDs for each electorate.
+The command below creates a topogeometry column in the district table.
+This topogeometry column holds the topology's face IDs for each district.
 
     --|Todo: Use FindLayer() to get the layer ID dynamically:
-    --| SET bounds_topo = CreateTopoGeom('electorates_topo', 3, Layer_ID(FindLayer('electorates', 'topo')), faces)
+    --| SET bounds_faces = CreateTopoGeom('district_topo', 3, Layer_ID(FindLayer('district', 'topo')), faces)
     --| Requires Postgis 3.2.0. (Not sure if this actually works.)
 
-    UPDATE electorates e
-    SET bounds_topo = CreateTopoGeom('electorates_topo', 3, /*LAYER ID:*/4, faces)
+    UPDATE district d
+    SET bounds_faces = CreateTopoGeom('district_topo', 3, /*LAYER ID:*/1, faces)
     FROM (
         SELECT election_id, id, TopoElementArray_Agg(ARRAY[face_id, 3]) AS faces
         FROM (
             SELECT DISTINCT ON (election_id, face_id)
-              e.election_id,
-              e.id,
+              d.election_id,
+              d.id,
               f.face_id
-            FROM electorates e
-              INNER JOIN electorates_topo.face f ON e.bounds && f.mbr
+            FROM district d
+              INNER JOIN district_topo.face f ON d.bounds && f.mbr
             ORDER BY f.face_id,
-              e.election_id,
-              ST_Area(ST_Intersection(e.bounds, ST_GetFaceGeometry('electorates_topo', f.face_id))) DESC
+              d.election_id,
+              ST_Area(ST_Intersection(d.bounds, ST_GetFaceGeometry('district_topo', f.face_id))) DESC
           ) t
         GROUP BY election_id, id
       ) t
-    WHERE e.election_id = t.election_id
-      AND e.id = t.id;
+    WHERE d.election_id = t.election_id
+      AND d.id = t.id;
 
-In the above command, we look at all the faces in the topology and distribute them among the electorates.
+In the above command, we look at all the faces in the topology and distribute them among the districts.
 We want to assign each face to five districts: one district for each of the five elections.
 
 In our boundary shapefiles, there is inconsistency from year to year about the coastline.
@@ -248,7 +249,7 @@ We only care about extra faces if they represent real changes in electoral bound
 Furthermore, we don't want the coastline changing from year to year.
 
 In the above query, we try to assign *every* face in the topology to one district for each election---even if that election's shapefile didn't actually define the face in its own boundaries.
-We achieve this with the `INNER JOIN ON e.bounds && f.mbr`, which creates a table with one row for every face/district combination where the bounding box of the face intersects with the district's bounding box.
+We achieve this with the `INNER JOIN ON d.bounds && f.mbr`, which creates a table with one row for every face/district combination where the bounding box of the face intersects with the district's bounding box.
 In most cases, the join creates five rows for each face: one for each election.
 This is the ideal case because there is no ambiguity about which district the face belongs to for each election.
 When the inner join produces more than five rows, the `DISTINCT ON ... ORDER BY` assigns the face to whichever district it has the largest intersection with for that election.
@@ -257,36 +258,52 @@ If there are fewer than five rows, the face is dropped from the map for those el
 In version 3.3.0 of Postgis, there is a topology function called `RemoveUnusedPrimitives`, which I think we could now run to remove the extra edges we don't care about from the topology.
 I think we could achieve the same thing with our current version by creating a new topology from scratch out of our now-topologically-validated geometries.
 
-Anyway, for now just update the original geometries with the topologically validated ones.
+Now get the outer edge IDs for each district.
+We could make this a topogeometry column, but for now it's just an array of IDs.
 
-    UPDATE electorates SET bounds = bounds_topo::geometry;
+    ALTER TABLE district ADD edge_ids INT[];
 
-    DROP INDEX electorates_bounds_idx;
-    CREATE INDEX electorates_bounds_idx ON electorates USING gist(bounds);
+    UPDATE district d
+    SET edge_ids = t.edge_ids
+    FROM (
+        SELECT t.election_id, t.id, array_agg(e.edge_id) AS edge_ids
+        FROM (
+            SELECT d.election_id, d.id, array_agg(r.element_id) AS face_ids
+            FROM district d
+              JOIN district_topo.relation r ON r.topogeo_id = (d.bounds_faces).id
+            GROUP BY d.election_id, d.id
+          ) t
+          JOIN district_topo.edge e ON (
+            (e.left_face = any(t.face_ids) AND NOT e.right_face = any(t.face_ids))
+            OR (e.right_face = any(t.face_ids) AND NOT e.left_face = any(t.face_ids))
+          )
+        GROUP BY election_id, id
+      ) t
+    WHERE (d.election_id, d.id) = (t.election_id, t.id);
 
 
 ## Extract the booths.
 
-    CREATE TABLE booths (
+    CREATE TABLE booth (
       election_id INT,
       id INT,
       name TEXT,
       address TEXT[],
-      electorate_id INT,
+      district_id INT,
 
       PRIMARY KEY (election_id, id)
     );
 
-    INSERT INTO booths
+    INSERT INTO booth
     SELECT election_id,
       (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Id', place))[1]::TEXT::INT AS id,
       (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Name', place))[1]::TEXT AS name,
       (xpath('//*[local-name()=''AddressLine'']/text()', place))::TEXT[] AS address,
-      electorate_id
+      district_id
     FROM (
         SELECT election_id,
           unnest(xpath('/*/*/*[local-name()=''PollingPlace'']', district)) AS place,
-          (xpath('/*/*[local-name()=''PollingDistrictIdentifier'']/@Id', district))[1]::TEXT::INT AS electorate_id
+          (xpath('/*/*[local-name()=''PollingDistrictIdentifier'']/@Id', district))[1]::TEXT::INT AS district_id
         FROM (
             SELECT election_id,
               unnest(xpath('/*/*/*[local-name()=''PollingDistrict'']', xmldata)) AS district
@@ -296,9 +313,9 @@ Anyway, for now just update the original geometries with the topologically valid
 
 Get the booth's location separately because many booths don't have lat/lon info but we still want them in the table.
 
-    SELECT AddGeometryColumn('public', 'booths', 'location', 3577, 'POINT', 2);
+    SELECT AddGeometryColumn('public', 'booth', 'location', 3577, 'POINT', 2);
 
-    UPDATE booths b
+    UPDATE booth b
     SET location = ST_Transform(ST_SetSRID(ST_Point(lon, lat), 4283), 3577)
     FROM (
         SELECT election_id,
@@ -314,22 +331,22 @@ Get the booth's location separately because many booths don't have lat/lon info 
     WHERE (t.lat IS NOT NULL AND t.lon IS NOT NULL)
       AND (b.election_id = t.election_id AND b.id = t.id);
 
-    CREATE INDEX booths_location_idx ON booths USING gist(location);
+    CREATE INDEX booth_location_idx ON booth USING gist(location);
 
 ## Extract the candidates and parties.
 
-    CREATE TABLE candidates (
+    CREATE TABLE candidate (
       election_id INT,
       id INT,
       first_name TEXT,
       last_name TEXT,
       party_id INT,
-      electorate_id INT,
+      district_id INT,
 
       PRIMARY KEY (election_id, id)
     );
 
-    INSERT INTO candidates
+    INSERT INTO candidate
     SELECT election_id,
       (xpath('/*/*[local-name()=''CandidateIdentifier'']/@Id', candidate))[1]::TEXT::INT AS id,
       COALESCE(
@@ -341,11 +358,11 @@ Get the booth's location separately because many booths don't have lat/lon info 
           WHEN (xpath('/*/@Independent', candidate))[1]::TEXT::BOOLEAN THEN -1
           ELSE (xpath('//*[local-name()=''AffiliationIdentifier'']/@Id', candidate))[1]::TEXT::INT
         END, -2) AS party_id,
-      electorate_id
+      district_id
     FROM (
         SELECT election_id,
           unnest(xpath('//*[local-name()=''Candidate'']', contest)) AS candidate,
-          (xpath('/*/*[local-name()=''ContestIdentifier'']/@Id', contest))[1]::TEXT::INT AS electorate_id
+          (xpath('/*/*[local-name()=''ContestIdentifier'']/@Id', contest))[1]::TEXT::INT AS district_id
         FROM (
             SELECT election_id,
               unnest(xpath('//*[local-name()=''Election''][*/@Id=''H'']//*[local-name()=''Contest'']', xmldata)) AS contest
@@ -357,7 +374,7 @@ We give candidates a party ID of -1 when the AEC data notes that they are indepe
 When the data says they are not independent, but they have no affiliation, we put -2.
 There are only a few cases of the latter, and they're probably just mistakes, but we preserve the distinction anyway.
 
-    CREATE TABLE parties (
+    CREATE TABLE party (
       election_id INT,
       id INT,
       name TEXT,
@@ -367,7 +384,7 @@ There are only a few cases of the latter, and they're probably just mistakes, bu
       PRIMARY KEY (election_id, id)
     );
 
-    INSERT INTO parties
+    INSERT INTO party
     SELECT DISTINCT ON (election_id, id)
       election_id,
       (xpath('/*/@Id', identifier))[1]::TEXT::INT AS id,
@@ -385,81 +402,81 @@ There is variation in the party names associated with the same ID even within el
 
 Add some colours.
 
-    UPDATE parties SET colour = x'bf1e2e'::INT WHERE short_code = 'AJP';
-    UPDATE parties SET colour = x'c31f2f'::INT WHERE short_code = 'ALP';
-    UPDATE parties SET colour = x'e41e0c'::INT WHERE short_code = 'ASP';
-    UPDATE parties SET colour = x'1725a1'::INT WHERE short_code = 'CDP';
-    UPDATE parties SET colour = x'fe7330'::INT WHERE short_code = 'CLP';
-    UPDATE parties SET colour = x'dd2a30'::INT WHERE short_code = 'CLR';
-    UPDATE parties SET colour = x'183a82'::INT WHERE short_code = 'FACN';
-    UPDATE parties SET colour = x'008c44'::INT WHERE short_code = 'GRN';
-    UPDATE parties SET colour = x'008c44'::INT WHERE short_code = 'GVIC';
-    UPDATE parties SET colour = x'ffdf00'::INT WHERE short_code = 'JLN';
-    UPDATE parties SET colour = x'e10e12'::INT WHERE short_code = 'KAP';
-    UPDATE parties SET colour = x'0e3b6d'::INT WHERE short_code = 'LDP';
-    UPDATE parties SET colour = x'0057a0'::INT WHERE short_code = 'LNP';
-    UPDATE parties SET colour = x'0057a0'::INT WHERE short_code = 'LNQ';
-    UPDATE parties SET colour = x'19488f'::INT WHERE short_code = 'LP';
-    UPDATE parties SET colour = x'00512d'::INT WHERE short_code = 'NP';
-    UPDATE parties SET colour = x'f36c21'::INT WHERE short_code = 'ON';
-    UPDATE parties SET colour = x'fe971a'::INT WHERE short_code = 'SPP';
-    UPDATE parties SET colour = x'feed01'::INT WHERE short_code = 'UAPP';
-    UPDATE parties SET colour = x'e46729'::INT WHERE short_code = 'XEN';
+    UPDATE party SET colour = x'bf1e2e'::INT WHERE short_code = 'AJP';
+    UPDATE party SET colour = x'c31f2f'::INT WHERE short_code = 'ALP';
+    UPDATE party SET colour = x'e41e0c'::INT WHERE short_code = 'ASP';
+    UPDATE party SET colour = x'1725a1'::INT WHERE short_code = 'CDP';
+    UPDATE party SET colour = x'fe7330'::INT WHERE short_code = 'CLP';
+    UPDATE party SET colour = x'dd2a30'::INT WHERE short_code = 'CLR';
+    UPDATE party SET colour = x'183a82'::INT WHERE short_code = 'FACN';
+    UPDATE party SET colour = x'008c44'::INT WHERE short_code = 'GRN';
+    UPDATE party SET colour = x'008c44'::INT WHERE short_code = 'GVIC';
+    UPDATE party SET colour = x'ffdf00'::INT WHERE short_code = 'JLN';
+    UPDATE party SET colour = x'e10e12'::INT WHERE short_code = 'KAP';
+    UPDATE party SET colour = x'0e3b6d'::INT WHERE short_code = 'LDP';
+    UPDATE party SET colour = x'0057a0'::INT WHERE short_code = 'LNP';
+    UPDATE party SET colour = x'0057a0'::INT WHERE short_code = 'LNQ';
+    UPDATE party SET colour = x'19488f'::INT WHERE short_code = 'LP';
+    UPDATE party SET colour = x'00512d'::INT WHERE short_code = 'NP';
+    UPDATE party SET colour = x'f36c21'::INT WHERE short_code = 'ON';
+    UPDATE party SET colour = x'fe971a'::INT WHERE short_code = 'SPP';
+    UPDATE party SET colour = x'feed01'::INT WHERE short_code = 'UAPP';
+    UPDATE party SET colour = x'e46729'::INT WHERE short_code = 'XEN';
 
 
 ## Extract votes for the lower house.
 
     CREATE TYPE vote_count_type AS ENUM ('FP', '2CP');
 
-    CREATE TABLE contest_votes (
+    CREATE TABLE contest_vote (
       election_id INT,
-      electorate_id INT,
+      district_id INT,
       count_type vote_count_type,
       candidate_id INT,
       ballot_position INT,
       elected BOOLEAN,
-      ordinary_votes INT,
-      absent_votes INT,
-      provisional_votes INT,
-      prepoll_votes INT,
-      postal_votes INT,
-      total_votes INT,
-      historic_votes INT,
+      ordinary INT,
+      absent INT,
+      provisional INT,
+      prepoll INT,
+      postal INT,
+      total INT,
+      historic INT,
 
-      PRIMARY KEY (election_id, electorate_id, count_type, candidate_id)
+      PRIMARY KEY (election_id, district_id, count_type, candidate_id)
     );
 
-    CREATE TABLE booth_votes (
+    CREATE TABLE booth_vote (
       election_id INT,
-      electorate_id INT,
+      district_id INT,
       booth_id INT,
       count_type vote_count_type,
       candidate_id INT,
-      votes INT,
+      total INT,
 
-      PRIMARY KEY (election_id, electorate_id, booth_id, count_type, candidate_id)
+      PRIMARY KEY (election_id, district_id, booth_id, count_type, candidate_id)
     );
 
-    INSERT INTO contest_votes
-    SELECT election_id, electorate_id,
+    INSERT INTO contest_vote
+    SELECT election_id, district_id,
       (CASE WHEN ct = 'FirstPreferences' THEN 'FP' WHEN ct = 'TwoCandidatePreferred' THEN '2CP' END)::vote_count_type AS count_type,
       (xpath('/*/*[local-name()=''CandidateIdentifier'']/@Id', candidate))[1]::TEXT::INT AS candidate_id,
       (xpath('/*/*[local-name()=''BallotPosition'']/text()', candidate))[1]::TEXT::INT AS ballot_position,
       (xpath('/*/*[local-name()=''Elected'']/text()', candidate))[1]::TEXT::BOOLEAN AS elected,
-      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Ordinary'']/text()', candidate))[1]::TEXT::INT AS ordinary_votes,
-      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Absent'']/text()', candidate))[1]::TEXT::INT AS absent_votes,
-      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Provisional'']/text()', candidate))[1]::TEXT::INT AS provisional_votes,
-      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''PrePoll'']/text()', candidate))[1]::TEXT::INT AS prepoll_votes,
-      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Postal'']/text()', candidate))[1]::TEXT::INT AS postal_votes,
-      (xpath('/*/*[local-name()=''Votes'']/text()', candidate))[1]::TEXT::INT AS total_votes,
-      (xpath('/*/*[local-name()=''Votes'']/@MatchedHistoric', candidate))[1]::TEXT::INT AS historic_votes
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Ordinary'']/text()', candidate))[1]::TEXT::INT AS ordinary,
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Absent'']/text()', candidate))[1]::TEXT::INT AS absent,
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Provisional'']/text()', candidate))[1]::TEXT::INT AS provisional,
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''PrePoll'']/text()', candidate))[1]::TEXT::INT AS prepoll,
+      (xpath('/*/*/*[local-name()=''Votes'' and @Type=''Postal'']/text()', candidate))[1]::TEXT::INT AS postal,
+      (xpath('/*/*[local-name()=''Votes'']/text()', candidate))[1]::TEXT::INT AS total,
+      (xpath('/*/*[local-name()=''Votes'']/@MatchedHistoric', candidate))[1]::TEXT::INT AS historic
     FROM (
-        SELECT election_id, electorate_id,
+        SELECT election_id, district_id,
           (xpath('name(/*)', fp_or_tcp))[1]::text AS ct,
           unnest(xpath('/*/*[local-name()=''Candidate'']', fp_or_tcp)) AS candidate
         FROM (
             SELECT election_id,
-              (xpath('/*/*[local-name()=''ContestIdentifier'']/@Id', contest))[1]::TEXT::INT AS electorate_id,
+              (xpath('/*/*[local-name()=''ContestIdentifier'']/@Id', contest))[1]::TEXT::INT AS district_id,
               unnest(xpath('/*/*[local-name()=''FirstPreferences'' or local-name()=''TwoCandidatePreferred'']', contest)) AS fp_or_tcp
             FROM (
                 SELECT election_id,
@@ -469,22 +486,22 @@ Add some colours.
           ) t
       ) t;
 
-    INSERT INTO booth_votes
-    SELECT election_id, electorate_id, booth_id,
+    INSERT INTO booth_vote
+    SELECT election_id, district_id, booth_id,
       (CASE WHEN ct = 'FirstPreferences' THEN 'FP' WHEN ct = 'TwoCandidatePreferred' THEN '2CP' END)::vote_count_type AS count_type,
       (xpath('/*/*[local-name()=''CandidateIdentifier'']/@Id', candidate))[1]::TEXT::INT AS candidate_id,
-      (xpath('/*/*[local-name()=''Votes'']/text()', candidate))[1]::TEXT::INT AS votes
+      (xpath('/*/*[local-name()=''Votes'']/text()', candidate))[1]::TEXT::INT AS total
     FROM (
-        SELECT election_id, electorate_id, booth_id,
+        SELECT election_id, district_id, booth_id,
           (xpath('name(/*)', fp_or_tcp))[1]::TEXT AS ct,
           unnest(xpath('/*/*[local-name()=''Candidate'']', fp_or_tcp)) AS candidate
         FROM (
-            SELECT election_id, electorate_id,
+            SELECT election_id, district_id,
               (xpath('/*/*[local-name()=''PollingPlaceIdentifier'']/@Id', place))[1]::TEXT::INT AS booth_id,
               unnest(xpath('/*/*[local-name()=''FirstPreferences'' or local-name()=''TwoCandidatePreferred'']', place)) AS fp_or_tcp
             FROM (
                 SELECT election_id,
-                  (xpath('/*/*[local-name()=''ContestIdentifier'']/@Id', contest))[1]::TEXT::INT AS electorate_id,
+                  (xpath('/*/*[local-name()=''ContestIdentifier'']/@Id', contest))[1]::TEXT::INT AS district_id,
                   unnest(xpath('/*/*/*[local-name()=''PollingPlace'']', contest)) AS place
                 FROM (
                     SELECT election_id,

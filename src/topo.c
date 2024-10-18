@@ -377,9 +377,14 @@ void simplify_topology(Topology *topology, Memory_context *scratch)
             float perim = get_path_length(face.data, face.count);
             float ratio = (4*PI*area)/(perim*perim); // A measure of thickness. A circle is 1. Everything else is less.
 
-            bool keep = false;
-            keep |= (area > 1000000);                   //|Cleanup: These numbers should be params.
-            keep |= (area > 50000 && ratio > 0.125);    //|
+            bool keep = false; //|Todo: Make these numbers configurable.
+            keep |= (area > 10000000000);
+            keep |= (area >   100000000 && ratio > 0.1);
+            keep |= (area >    20000000 && ratio > 0.125);
+            keep |= (area >     3000000 && ratio > 0.14);
+            keep |= (area >      431000 && ratio > 0.15);
+            keep |= (area >      300000 && ratio > 0.4);
+            keep |= (area >      125000 && ratio > 0.55);
             if (keep)  continue;
 
             // We are going to delete the edge.
@@ -440,8 +445,7 @@ int main()
 
     PGconn *db = connect_to_database("postgres://postgres:postgisclarity@osm.tal/gis");
 
-    //Topology *topo = load_topology(db, "jpj_topo", ctx);
-    Topology *topo = load_topology(db, "electorates_topo_2", ctx);
+    Topology *topo = load_topology(db, "jpj_topo", ctx);
 
     simplify_topology(topo, NULL);
 

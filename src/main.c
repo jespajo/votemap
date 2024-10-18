@@ -27,6 +27,16 @@ Vector3 lerp_rgb(Vector3 a, Vector3 b, float t)
     return (Vector3){red, green, blue};
 }
 
+Vector3 get_colour_from_hash(u64 hash)
+// Turn a hash into a colour. Useful for when you want things to be coloured randomly but consistently.
+{
+    float r = 0.3 + 0.5*((hash & 0xff)/255.0);
+    float g = 0.3 + 0.5*((hash>>8 & 0xff)/255.0);
+    float b = 0.3 + 0.5*((hash>>16 & 0xff)/255.0);
+
+    return (Vector3){r, g, b};
+}
+
 Response serve_vertices(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
@@ -95,37 +105,22 @@ Response serve_vertices(Request *request, Memory_context *context)
     // Draw the election boundaries.
     {
         char *query =
-        " select e.name,                                                                "
-        "   st_asbinary(                                                                "
-        "     st_collectionextract(st_makevalid(st_snaptogrid(e.bounds, $1::float)), 3) "
-        "   ) as polygon,                                                               "
-        "   t.party_id,                                                                 "
-        "   t.colour                                                                    "
-        " from electorates e                                                            "
-        "   left join (                                                                 "
-        "     select v.election_id,                                                     "
-        "       v.electorate_id,                                                        "
-        "       p.id as party_id,                                                       "
-        "       p.colour                                                                "
-        "     from contest_votes v                                                      "
-        "       inner join candidates c on (                                            "
-        "         c.election_id = v.election_id                                         "
-        "         and c.electorate_id = v.electorate_id                                 "
-        "       )                                                                       "
-        "       inner join parties p on (                                               "
-        "         p.election_id = v.election_id                                         "
-        "         and c.party_id = p.id                                                 "
-        "       )                                                                       "
-        "     where v.elected                                                           "
-        "   ) t on (                                                                    "
-        "     t.election_id = e.election_id                                             "
-        "     and t.electorate_id = e.id)                                               "
-        " where e.bounds && st_setsrid(                                                 "
-        "     st_makebox2d(                                                             "
-        "       st_point($2::float, $3::float),                                         "
-        "       st_point($4::float, $5::float)                                          "
-        "     ), 3577)                                                                  "
-        "   and e.election_id = $6::int                                                 ";
+        " select d.name, t.party_id, t.colour,                                                                              "
+        "   st_asbinary(st_simplify(d.bounds_faces, $1::float)) as polygon                                                  "
+        " from district d                                                                                                   "
+        "   left join (                                                                                                     "
+        "     select v.election_id, v.district_id, p.id as party_id, p.colour                                               "
+        "     from contest_vote v                                                                                           "
+        "       inner join candidate c on (c.election_id = v.election_id and c.district_id = v.district_id and v.candidate_id = c.id) "
+        "       inner join party p on (p.election_id = v.election_id and c.party_id = p.id)                                 "
+        "     where v.count_type = '2CP' and v.elected                                                                      "
+        "   ) t on (t.election_id = d.election_id and t.district_id = d.id)                                                 "
+        " where d.bounds && st_setsrid(st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), 3577)  "
+        "   and d.election_id = $6::int                                                                                     "
+        // Order by the size of the face's bounding box. This is so that larger polygons don't cover smaller
+        // ones, because we don't draw inner rings yet. |Todo
+        " order by st_area(box2d(d.bounds)) desc                                                                            "
+        ;
 
         Postgres_result *result = query_database(db, query, &params, ctx);
 
@@ -156,6 +151,7 @@ Response serve_vertices(Request *request, Memory_context *context)
 
             char_array *name = copy_char_array_from_cell(name_cell, ctx);
 
+/* |Todo:
             Vector3 colour;
             if (!party_id_cell->count) {
                 // We don't know the winner. Make it grey.
@@ -181,10 +177,38 @@ Response serve_vertices(Request *request, Memory_context *context)
                     }
                 }
             }
+*/
+            Vector3 colour = get_colour_from_hash(hash_string(name->data));
 
             for (s64 j = 0; j < polygons.count; j++) {
                 draw_polygon(&polygons.data[j], colour, verts);
             }
+        }
+    }
+
+    // Draw the topology lines.
+    {
+        char *query =
+        " select st_asbinary(st_simplify(geom, $1::float)) as path                          "
+        " from district_topo.edge                                                           "
+        " where edge_id in (                                                                "
+        "     select unnest(edge_ids)                                                       "
+        "     from district d                                                               "
+        "     where election_id = $6::int                                                   "
+        "   )                                                                               "
+        "   and geom && st_setsrid(                                                         "
+        "     st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
+        "     3577                                                                          "
+        "   )                                                                               "
+        ;
+
+        Path_array *paths = query_paths(db, query, &params, ctx);
+
+        for (s64 i = 0; i < paths->count; i++) {
+            Vector3 colour = {0.8, 0.8, 0.8};
+            float line_width = 1.5*upp;
+
+            draw_path(&paths->data[i], line_width, colour, verts);
         }
     }
 
@@ -237,7 +261,7 @@ Response serve_labels(Request *request, Memory_context *context)
       " from (                                                                                   "
       "     select name,                                                                         "
       "       st_centroid(bounds) as centroid                                                    "
-      "     from electorates                                                                     "
+      "     from district                                                                     "
       "     where election_id = $1::int                                                          "
       "     order by st_area(bounds) desc                                                        "
       "   ) t;                                                                                   ";
