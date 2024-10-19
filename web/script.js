@@ -219,6 +219,12 @@ let panelIsBeingDragged = false;
 /** @type number */
 let panelDragStartY = 0; // If the panel is being dragged, this is the Y value of the pointer when the drag was last done.
 
+//|Cleanup: Put these into a button state object.
+/** @type number */
+let prevElectionButtonLastPressed;
+/** @type number */
+let nextElectionButtonLastPressed;
+
 //
 // WebGL-related globals.
 //
@@ -1436,6 +1442,9 @@ function drawPanel() {
             const normalColour   = "black";
             const disabledColour = "lightgrey";
 
+            const animationDuration   = 250; // In milliseconds.
+            const animationStartShade = 150; // Out of 255, as in a shade of grey.
+
             const iconHeight = 0.5*minButtonSize;
             const iconWidth  = iconHeight/2;
 
@@ -1454,7 +1463,17 @@ function drawPanel() {
                     if (flags.pressed) {
                         currentElectionIndex -= 1;
                         shouldFetchVertices = true;
+
+                        prevElectionButtonLastPressed = currentTime;
                     }
+                }
+
+                const timeSincePressed = currentTime - prevElectionButtonLastPressed;
+                if (timeSincePressed < animationDuration) {
+                    const shade = lerp(animationStartShade, 255, timeSincePressed/animationDuration);
+
+                    ui.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+                    ui.fillRect(leftButtonRect.x, leftButtonRect.y, leftButtonRect.width, leftButtonRect.height);
                 }
 
                 let x = leftButtonRect.x + leftButtonRect.width/2 - iconWidth/2;
@@ -1485,7 +1504,17 @@ function drawPanel() {
                     if (flags.pressed) {
                         currentElectionIndex += 1;
                         shouldFetchVertices = true;
+
+                        nextElectionButtonLastPressed = currentTime;
                     }
+                }
+
+                const timeSincePressed = currentTime - nextElectionButtonLastPressed;
+                if (timeSincePressed < animationDuration) {
+                    const shade = lerp(animationStartShade, 255, timeSincePressed/animationDuration);
+
+                    ui.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+                    ui.fillRect(rightButtonRect.x, rightButtonRect.y, rightButtonRect.width, rightButtonRect.height);
                 }
 
                 let x = rightButtonRect.x + rightButtonRect.width/2 - iconWidth/2
