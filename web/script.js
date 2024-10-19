@@ -144,8 +144,13 @@ let mobileMode = false;
 //|Temporary: this should go in the map state and also be an enum or something, not a boolean.
 let isFirstPreferences = true;
 
-//|Temporary: We're testing the different election years.
-let electionYear = 2022;
+/**
+ * @typedef {{id: number, name: string, date: Date}} Election
+ * @type Election[]
+ */
+let elections = [];
+/** @type number */
+let currentElectionIndex = -1;
 
 const map = {
     //
@@ -589,6 +594,18 @@ async function loadFonts() {
     }
 }
 
+/**
+ * @type {() => Promise<Election[]>}
+ */
+async function fetchElections() {
+    const response  = await fetch("/elections");
+    const elections = await response.json();
+
+    for (const election of elections)  election.date = new Date(election.date);
+
+    return elections;
+}
+
 // gl must be initialised first. This function initialises program, u_proj and u_view.
 function initWebGLProgram() {
     program = gl.createProgram();
@@ -988,6 +1005,7 @@ async function fetchVertices() {
     const upp = 1/map.currentTransform.scale;
     url += '&upp=' + upp;
 
+    const electionYear = '' + elections[currentElectionIndex].date.getFullYear(); //|Todo: Use the election ID.
     url += '&year=' + electionYear;
 
     const response = await fetch(url);
@@ -1326,8 +1344,10 @@ function drawPanel() {
 
     let panelY = panelRect.y + panelPadding;
 
-    // Draw the election title.
+    // Draw the election year switcher.
     {
+        const electionYear = '' + elections[currentElectionIndex].date.getFullYear();
+
         let height = 40;
         let text = electionYear + " Federal Election";
         ui.fillStyle = 'black';
@@ -1595,10 +1615,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     initInput();
 
     gl = $("canvas#map").getContext("webgl");
-
     initWebGLProgram();
 
     ui = $("canvas#gui").getContext("2d");
+
+    elections = await fetchElections();
+    currentElectionIndex = elections.length-1;
 
     // When the page loads, fit Australia on the screen. |Cleanup
     {

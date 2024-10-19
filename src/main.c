@@ -37,6 +37,28 @@ Vector3 get_colour_from_hash(u64 hash)
     return (Vector3){r, g, b};
 }
 
+Response serve_elections(Request *request, Memory_context *context)
+{
+    Memory_context *ctx = context;
+
+    PGconn *db = connect_to_database(DATABASE_URL);
+
+    char *query = "select jsonb_agg(to_jsonb(t.*))::text from (select * from election) t";
+
+    Postgres_result *result = query_database(db, query, NULL, ctx);
+
+    assert(*Get(&result->columns, "jsonb_agg") == 0);
+    assert(result->rows.count == 1);
+    u8_array *json = &result->rows.data[0].data[0];
+
+    Response response = {200, .body = json->data, .size = json->count};
+
+    response.headers = (string_dict){.context = ctx};
+    *Set(&response.headers, "content-type") = "application/json";
+
+    return response;
+}
+
 Response serve_vertices(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
@@ -289,6 +311,7 @@ int main()
 
     add_route(server, GET, "/bin/vertices",    &serve_vertices);
     add_route(server, GET, "/bin/labels.json", &serve_labels);
+    add_route(server, GET, "/elections",       &serve_elections);
     add_route(server, GET, "/.*",              &serve_file_insecurely);
 
     start_server(server);
