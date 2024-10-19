@@ -1429,27 +1429,76 @@ function drawPanel() {
 
         // Draw the buttons.
         {
+            const normalColour   = "black";
+            const disabledColour = "grey";
+
             const u = buttonSize;
 
-            ui.lineWidth = 0.1*u;
+            // The left one.
+            {
+                let x = leftButtonX;
+                let y = leftButtonY;
 
-            let x = leftButtonX;
-            let y = leftButtonY;
-            ui.moveTo(x + 0.625*u, y + 0.25*u);
-            ui.lineTo(x + 0.375*u, y + 0.50*u);
-            ui.lineTo(x + 0.625*u, y + 0.75*u);
+                ui.beginPath();
+                ui.moveTo(x + 0.625*u, y + 0.25*u);
+                ui.lineTo(x + 0.375*u, y + 0.50*u);
+                ui.lineTo(x + 0.625*u, y + 0.75*u);
 
-            ui.strokeStyle = "black";
-            ui.stroke();
+                let colour = normalColour;
+                let width  = 0.1*u;
 
-            x = rightButtonX;
-            y = rightButtonY;
-            ui.moveTo(x + 0.375*u, y + 0.25*u);
-            ui.lineTo(x + 0.625*u, y + 0.50*u);
-            ui.lineTo(x + 0.375*u, y + 0.75*u);
+                if (currentElectionIndex == 0) {
+                    colour = disabledColour;
+                } else {
+                    //|Cleanup: Instead of creating the rect here, we should do it at the top (using a cutMargins() function or something) and base the drawing on it.
+                    const rect = {x: leftButtonX + 0.25*u, y: leftButtonY + 0.25*u, width: 0.5*u, height: 0.5*u};
+                    const [flags] = getPointerFlags(rect, Layer.PANEL);
 
-            ui.strokeStyle = "black";
-            ui.stroke();
+                    if (flags.hover)  width = 0.2*u;
+
+                    if (flags.pressed) {
+                        currentElectionIndex -= 1;
+                        shouldFetchVertices = true;
+                    }
+                }
+
+                ui.lineWidth = width;
+                ui.strokeStyle = colour;
+                ui.stroke();
+            }
+
+            // The right one.
+            {
+                let x = rightButtonX;
+                let y = rightButtonY;
+
+                ui.beginPath();
+                ui.moveTo(x + 0.375*u, y + 0.25*u);
+                ui.lineTo(x + 0.625*u, y + 0.50*u);
+                ui.lineTo(x + 0.375*u, y + 0.75*u);
+
+                let colour = normalColour;
+                let width  = 0.1*u;
+
+                if (currentElectionIndex == elections.length-1) {
+                    colour = disabledColour;
+                } else {
+                    //|Cleanup: Instead of creating the rect here, we should do it at the top (using a cutMargins() function or something) and base the drawing on it.
+                    const rect = {x: rightButtonX + 0.25*u, y: rightButtonY + 0.25*u, width: 0.5*u, height: 0.5*u};
+                    const [flags] = getPointerFlags(rect, Layer.PANEL);
+
+                    if (flags.hover)  width = 0.2*u;
+
+                    if (flags.pressed) {
+                        currentElectionIndex += 1;
+                        shouldFetchVertices = true;
+                    }
+                }
+
+                ui.lineWidth = width;
+                ui.strokeStyle = colour;
+                ui.stroke();
+            }
         }
 
         ui.restore();
