@@ -569,6 +569,20 @@ function cutLeft(rect, width) {
     return [leftRect, remainder];
 }
 
+/**
+ * @type {(rect: Rect, width: number) => [Rect, Rect]}
+ */
+function cutRight(rect, width) {
+    const rightRect = copy(rect);
+    const remainder = copy(rect);
+
+    remainder.width -= width;
+    rightRect.x     += remainder.width;
+    rightRect.width  = width;
+
+    return [rightRect, remainder];
+}
+
 async function loadFonts() {
     const fonts = {
         "map-electorate":       "../fonts/RadioCanada.500.80.woff2",
@@ -1346,47 +1360,99 @@ function drawPanel() {
 
     // Draw the election year switcher.
     {
-        const electionYear = '' + elections[currentElectionIndex].date.getFullYear();
+        ui.save();
 
-        let height = 40;
-        let text = electionYear + " Federal Election";
-        ui.fillStyle = 'black';
+        const election = elections[currentElectionIndex];
 
-        ui.font = height + 'px title';
-        let textWidth = ui.measureText(text).width;
+        let isTitle = true; //|Incomplete: We will have a small size version when it's sitting above the title.
+        const textHeight = (isTitle) ? 25 : 10;
 
-        if (textWidth < panelWidth) {
-            ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-            panelY += height;
-        } else {
-            text = '' + electionYear;
-            textWidth = ui.measureText(text).width;
-            ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-            panelY += height;
+        const buttonSize = textHeight;
+        const maxTextWidth = panelWidth - 2*buttonSize;
+        const electionYear = '' + election.date.getFullYear();
 
-            text = 'Federal Election';
-            height = 30;
-            ui.font = height + 'px title';
-            textWidth = ui.measureText(text).width;
+        let leftButtonX, leftButtonY, rightButtonX, rightButtonY;
 
-            if (textWidth < panelWidth) {
-                ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-                panelY += height;
-            } else {
-                height = 25;
-                ui.font = height + 'px title';
+        // Try drawing '<year> Federal Election' on one line. If there isn't room, just draw the year.
+        {
+            let text = electionYear + ' Federal Election';
+            let onlyYearDrawn = false;
 
-                text = 'Federal';
+            ui.font = textHeight + 'px title';
+            let textWidth = ui.measureText(text).width;
+
+            if (textWidth > maxTextWidth) {
+                text = electionYear;
                 textWidth = ui.measureText(text).width;
-                ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-                panelY += height;
+                onlyYearDrawn = true;
+            }
 
-                text = 'Election';
-                textWidth = ui.measureText(text).width;
-                ui.fillText(text, panelX + panelWidth/2 - textWidth/2, panelY);
-                panelY += height;
+            const textX = panelX + panelWidth/2 - textWidth/2;
+
+            ui.fillStyle = 'black';
+            ui.fillText(text, textX, panelY);
+
+            const unusedWidth = panelWidth - textWidth - 2*buttonSize;
+            const padding = unusedWidth/5; // Padding between text and arrow.
+
+            leftButtonX  = textX - buttonSize - padding;
+            leftButtonY  = panelY;
+            rightButtonX = textX + textWidth + padding;
+            rightButtonY = panelY;
+
+            panelY += textHeight;
+
+            // If it's the title, draw "Federal Election" on a line below if we didn't have room on one line.
+            if (isTitle && onlyYearDrawn) {
+                const textHeight = 20;
+                const text = 'Federal Election';
+                ui.font = textHeight + 'px title';
+                const textWidth = ui.measureText(text).width;
+
+                const textX = panelX + panelWidth/2 - textWidth/2;
+                ui.fillText(text, textX, panelY);
+
+                panelY += textHeight;
+
+                // Also push the buttons down if there is room.
+                const unusedWidth = panelWidth - textWidth - 2*buttonSize;
+                if (unusedWidth > 0) {
+                    const padding = unusedWidth/8; // Padding between text and arrow.
+
+                    leftButtonX   = textX - buttonSize - padding;
+                    leftButtonY  += textHeight/2;
+                    rightButtonX  = textX + textWidth + padding;
+                    rightButtonY += textHeight/2;
+                }
             }
         }
+
+        // Draw the buttons.
+        {
+            const u = buttonSize;
+
+            ui.lineWidth = 0.1*u;
+
+            let x = leftButtonX;
+            let y = leftButtonY;
+            ui.moveTo(x + 0.625*u, y + 0.25*u);
+            ui.lineTo(x + 0.375*u, y + 0.50*u);
+            ui.lineTo(x + 0.625*u, y + 0.75*u);
+
+            ui.strokeStyle = "black";
+            ui.stroke();
+
+            x = rightButtonX;
+            y = rightButtonY;
+            ui.moveTo(x + 0.375*u, y + 0.25*u);
+            ui.lineTo(x + 0.625*u, y + 0.50*u);
+            ui.lineTo(x + 0.375*u, y + 0.75*u);
+
+            ui.strokeStyle = "black";
+            ui.stroke();
+        }
+
+        ui.restore();
     }
 
     panelY += panelPadding;
