@@ -1,4 +1,9 @@
-Make it possible to switch between elections with < and > icons next to the election title.
+Fix issues with left and right arrow buttons.
+    Don't hold onto the hover style when the user's finger leaves the screen.
+    Make the hit box the whole area to the side of the button.
+    Have some way of showing that the click was registered.
+
+Come up with some temporary way of reloading the map when the portion on screen changes.
 
 On the front end, come up with a convincing distinction between "tap" and "drag", so map labels can be tapped.
 

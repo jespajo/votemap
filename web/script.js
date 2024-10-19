@@ -19,10 +19,6 @@
         @typedef {[Vec2, Vec2, Vec2, Vec2]} Box4
 
 
-        @typedef {{id: number, x: number, y: number, down: boolean, pressed: boolean}} Pointer
-
-        @typedef {{pressed?: true, hover?: true}} PointerFlags
-
         @typedef {{layer: number, rect: Rect}} Occlusion
 
 
@@ -90,16 +86,19 @@ let dpr = window.devicePixelRatio || 1;
 const input = {
     /**
      * pointers[0] will be the mouse, or the first finger to touch the screen. pointers[1] will be the second finger.
-     * .down is true whenever the pointer is down. .pressed is true only on the first frame it's down.
+     * .down is true whenever the pointer is down.
+     * .pressed is true only on the first frame it's down.
      * .x and .y are in screen coordinates.
+     * If .active is false, the rest should be ignored.
+     *
+     * @typedef {{id: number, x: number, y: number, active: boolean, down: boolean, pressed: boolean}} Pointer
      *
      * @type {[Pointer, Pointer]}
      */
     pointers: [
-        {id: 0, x: 0, y: 0, down: false, pressed: false},
-        {id: 0, x: 0, y: 0, down: false, pressed: false},
+        {id: 0, x: 0, y: 0, active: false, down: false, pressed: false},
+        {id: 0, x: 0, y: 0, active: false, down: false, pressed: false},
     ],
-    //|Todo: The pointers array currently always has two members. Maybe we would prefer it if it had a variable number: zero, one or two, depending on how many are currently relevant. Then we wouldn't need to do potentially pointless calculations in getPointerFlags() on pointers that aren't around any more. This optimisation is slightly harder than it sounds because each member of this array is associated with a map.pointerLock in the same index. There is also the fact that there may well be a greater performance penalty to creating/deleting these objects on the fly rather than just updating the ones we have.
 
     /**
      * The deltaY of wheel events.
@@ -664,47 +663,53 @@ function initInput() {
 
             if (ptr.down)  continue;
 
-            ptr.id      = event.pointerId;
-            ptr.x       = event.clientX;
-            ptr.y       = event.clientY;
+            ptr.id = event.pointerId;
+            ptr.x  = event.clientX;
+            ptr.y  = event.clientY;
+            ptr.active  = true;
             ptr.down    = true;
             ptr.pressed = true;
 
-            break;
+            return;
         }
     });
 
     window.addEventListener("pointerup", event => {
         for (let i = 0; i < 2; i++) {
             const ptr = input.pointers[i];
-
+    
             if (ptr.id !== event.pointerId)  continue;
 
+            ptr.x = event.clientX;
+            ptr.y = event.clientY;
+            ptr.active = true;
             ptr.down = false;
-            ptr.x    = event.clientX; // |Cleanup: Necessary?
-            ptr.y    = event.clientY; // |Cleanup: Necessary?
 
-            break;
+            return;
         }
     });
 
     window.addEventListener("pointermove", event => {
-        const [ptr0, ptr1] = input.pointers;
+        const [p0, p1] = input.pointers;
 
-        if (!ptr0.down && !ptr1.down) {
-            ptr0.x = event.clientX;
-            ptr0.y = event.clientY;
-        } else {
-            for (let i = 0; i < 2; i++) {
-                const ptr = input.pointers[i];
+        if (event.pointerId === p0.id || (!p0.down && !p1.down)) {
+            p0.id = event.pointerId;
+            p0.x  = event.clientX;
+            p0.y  = event.clientY;
+            p0.active = true;
+        } else if (event.pointerId === p1.id) {
+            p1.id = event.pointerId;
+            p1.x  = event.clientX;
+            p1.y  = event.clientY;
+            p1.active = true;
+        }
+    });
 
-                if (ptr.id !== event.pointerId)  continue;
-
-                ptr.x = event.clientX;
-                ptr.y = event.clientY;
-
-                break;
-            }
+    window.addEventListener("pointerout", event => {
+        if (event.pointerId === input.pointers[0].id) {
+            input.pointers[0].active = false;
+        } else if (event.pointerId === input.pointers[1].id) {
+            input.pointers[1].active = false;
         }
     });
 
@@ -744,30 +749,38 @@ function resetInput() {
 }
 
 /**
+ * @typedef {{pressed: boolean, hover: boolean}} PointerFlags
+ *
  * @type {(rect: Rect, layer: number) => [PointerFlags, PointerFlags]}
  */
 function getPointerFlags(rect, layer) {
     /** @type [PointerFlags, PointerFlags] */
-    const result = [{}, {}];
+    const result = [
+        {pressed: false, hover: false},
+        {pressed: false, hover: false}
+    ];
 
-    //|Todo: See the Todo in the declaration of the global `input` variable. Note as well that there's really no such thing as input.pointers[1].hover, which we try to create in this function---because the second pointer is always a finger, which can't hover. It's either down or nowhere to speak of. That's why it'd be better for both input.pointers and the array returned by this function to be variable-length.
     for (let i = 0; i < 2; i++) {
-        if (!pointInRect(input.pointers[i], rect))  continue;
+        const ptr = input.pointers[i];
+
+        if (!ptr.active)  continue;
+
+        if (!pointInRect(ptr, rect))  continue;
 
         let occluded = false;
 
         for (let j = occlusions[0].length-1; j >= 0; j--) {
             if (occlusions[0][j].layer == layer)  break;
 
-            if (pointInRect(input.pointers[0], occlusions[0][j].rect)) {
+            if (pointInRect(ptr, occlusions[0][j].rect)) {
                 occluded = true;
                 break;
             }
         }
 
         if (!occluded) {
-            if (input.pointers[i].pressed)     result[i].pressed = true;
-            else if (!input.pointers[i].down)  result[i].hover   = true;
+            if (ptr.pressed)     result[i].pressed = true;
+            else if (!ptr.down)  result[i].hover   = true;
         }
     }
 
@@ -1430,7 +1443,7 @@ function drawPanel() {
         // Draw the buttons.
         {
             const normalColour   = "black";
-            const disabledColour = "grey";
+            const disabledColour = "lightgrey";
 
             const u = buttonSize;
 
