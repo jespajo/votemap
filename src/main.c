@@ -37,7 +37,7 @@ Vector3 get_colour_from_hash(u64 hash)
     return (Vector3){r, g, b};
 }
 
-Response serve_elections(Request *request, Memory_context *context)
+Response serve_elections(Request *request, Memory_context *context) //|Deprecated
 {
     Memory_context *ctx = context;
 

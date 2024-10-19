@@ -1,5 +1,4 @@
 Fix issues with left and right arrow buttons.
-    Don't hold onto the hover style when the user's finger leaves the screen.
     Make the hit box the whole area to the side of the button.
     Have some way of showing that the click was registered.
 

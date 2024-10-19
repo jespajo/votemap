@@ -19,9 +19,6 @@
         @typedef {[Vec2, Vec2, Vec2, Vec2]} Box4
 
 
-        @typedef {{layer: number, rect: Rect}} Occlusion
-
-
         @typedef {{text: string, pos: [number, number]}} Label
 
 
@@ -130,6 +127,8 @@ const Layer = {
  * The function getPointerFlags() looks at this occlusion array and returns pointer events that are not occluded.
  * Actually there are two occlusion arrays. getPointerFlags looks at the one built during the previous frame, occlusions[0].
  *
+ * @typedef {{layer: number, rect: Rect}} Occlusion
+ *
  * @type [Occlusion[], Occlusion[]]
  */
 const occlusions = [[], []];
@@ -144,12 +143,18 @@ let mobileMode = false;
 let isFirstPreferences = true;
 
 /**
- * @typedef {{id: number, name: string, date: Date}} Election
+ * @typedef {{id: number, date: Date}} Election
  * @type Election[]
  */
-let elections = [];
+let elections = [
+    {id: 15508, date: new Date("2010-08-21")},
+    {id: 17496, date: new Date("2013-09-07")},
+    {id: 20499, date: new Date("2016-07-02")},
+    {id: 24310, date: new Date("2019-05-18")},
+    {id: 27966, date: new Date("2022-05-21")},
+];
 /** @type number */
-let currentElectionIndex = -1;
+let currentElectionIndex = elections.length-1;
 
 const map = {
     //
@@ -605,18 +610,6 @@ async function loadFonts() {
             fontFace.load().then(f => document.fonts.add(f));
         });
     }
-}
-
-/**
- * @type {() => Promise<Election[]>}
- */
-async function fetchElections() {
-    const response  = await fetch("/elections");
-    const elections = await response.json();
-
-    for (const election of elections)  election.date = new Date(election.date);
-
-    return elections;
 }
 
 // gl must be initialised first. This function initialises program, u_proj and u_view.
@@ -1746,9 +1739,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     initWebGLProgram();
 
     ui = $("canvas#gui").getContext("2d");
-
-    elections = await fetchElections();
-    currentElectionIndex = elections.length-1;
 
     // When the page loads, fit Australia on the screen. |Cleanup
     {
