@@ -1371,21 +1371,23 @@ function drawPanel() {
         const election = elections[currentElectionIndex];
 
         let isTitle = true; //|Incomplete: We will have a small size version when it's sitting above the title.
-        const textHeight = (isTitle) ? 25 : 10;
+        const textHeight = (isTitle) ? 25 : 12;
 
-        const buttonSize = textHeight;
-        const maxTextWidth = panelWidth - 2*buttonSize;
+        const minButtonSize = textHeight;
+        const maxTextWidth = panelWidth - 2*minButtonSize;
         const electionYear = '' + election.date.getFullYear();
 
-        let leftButtonX, leftButtonY, rightButtonX, rightButtonY;
+        let leftButtonRect, rightButtonRect;
 
         // Try drawing '<year> Federal Election' on one line. If there isn't room, just draw the year.
         {
             let text = electionYear + ' Federal Election';
-            let onlyYearDrawn = false;
+            if (!isTitle)  text = text.toUpperCase();
 
             ui.font = textHeight + 'px title';
             let textWidth = ui.measureText(text).width;
+
+            let onlyYearDrawn = false;
 
             if (textWidth > maxTextWidth) {
                 text = electionYear;
@@ -1398,13 +1400,9 @@ function drawPanel() {
             ui.fillStyle = 'black';
             ui.fillText(text, textX, panelY);
 
-            const unusedWidth = panelWidth - textWidth - 2*buttonSize;
-            const padding = unusedWidth/5; // Padding between text and arrow.
-
-            leftButtonX  = textX - buttonSize - padding;
-            leftButtonY  = panelY;
-            rightButtonX = textX + textWidth + padding;
-            rightButtonY = panelY;
+            const unusedWidth = panelWidth - textWidth;
+            leftButtonRect  = {x: panelX,            y: panelY, width: unusedWidth/2, height: minButtonSize};
+            rightButtonRect = {x: textX + textWidth, y: panelY, width: unusedWidth/2, height: minButtonSize};
 
             panelY += textHeight;
 
@@ -1421,14 +1419,14 @@ function drawPanel() {
                 panelY += textHeight;
 
                 // Also push the buttons down if there is room.
-                const unusedWidth = panelWidth - textWidth - 2*buttonSize;
-                if (unusedWidth > 0) {
-                    const padding = unusedWidth/8; // Padding between text and arrow.
+                const unusedWidth = panelWidth - textWidth;
+                if (unusedWidth > 2*minButtonSize) {
+                    leftButtonRect.width    = unusedWidth/2;
+                    leftButtonRect.height  += textHeight;
 
-                    leftButtonX   = textX - buttonSize - padding;
-                    leftButtonY  += textHeight/2;
-                    rightButtonX  = textX + textWidth + padding;
-                    rightButtonY += textHeight/2;
+                    rightButtonRect.x       = textX + textWidth;
+                    rightButtonRect.width   = unusedWidth/2;
+                    rightButtonRect.height += textHeight;
                 }
             }
         }
@@ -1438,29 +1436,20 @@ function drawPanel() {
             const normalColour   = "black";
             const disabledColour = "lightgrey";
 
-            const u = buttonSize;
+            const iconHeight = 0.5*minButtonSize;
+            const iconWidth  = iconHeight/2;
 
             // The left one.
             {
-                let x = leftButtonX;
-                let y = leftButtonY;
-
-                ui.beginPath();
-                ui.moveTo(x + 0.625*u, y + 0.25*u);
-                ui.lineTo(x + 0.375*u, y + 0.50*u);
-                ui.lineTo(x + 0.625*u, y + 0.75*u);
-
-                let colour = normalColour;
-                let width  = 0.1*u;
+                let colour    = normalColour;
+                let lineWidth = 0.2*iconHeight;
 
                 if (currentElectionIndex == 0) {
                     colour = disabledColour;
                 } else {
-                    //|Cleanup: Instead of creating the rect here, we should do it at the top (using a cutMargins() function or something) and base the drawing on it.
-                    const rect = {x: leftButtonX + 0.25*u, y: leftButtonY + 0.25*u, width: 0.5*u, height: 0.5*u};
-                    const [flags] = getPointerFlags(rect, Layer.PANEL);
+                    const [flags] = getPointerFlags(leftButtonRect, Layer.PANEL);
 
-                    if (flags.hover)  width = 0.2*u;
+                    if (flags.hover)  lineWidth = 0.4*iconHeight;
 
                     if (flags.pressed) {
                         currentElectionIndex -= 1;
@@ -1468,32 +1457,30 @@ function drawPanel() {
                     }
                 }
 
-                ui.lineWidth = width;
+                let x = leftButtonRect.x + leftButtonRect.width/2 - iconWidth/2;
+                let y = leftButtonRect.y + leftButtonRect.height/2 - iconHeight/2;
+
+                ui.beginPath();
+                ui.moveTo(x + iconWidth, y);
+                ui.lineTo(x,             y + iconHeight/2);
+                ui.lineTo(x + iconWidth, y + iconHeight);
+
+                ui.lineWidth = lineWidth;
                 ui.strokeStyle = colour;
                 ui.stroke();
             }
 
             // The right one.
             {
-                let x = rightButtonX;
-                let y = rightButtonY;
-
-                ui.beginPath();
-                ui.moveTo(x + 0.375*u, y + 0.25*u);
-                ui.lineTo(x + 0.625*u, y + 0.50*u);
-                ui.lineTo(x + 0.375*u, y + 0.75*u);
-
-                let colour = normalColour;
-                let width  = 0.1*u;
+                let colour    = normalColour;
+                let lineWidth = 0.2*iconHeight;
 
                 if (currentElectionIndex == elections.length-1) {
                     colour = disabledColour;
                 } else {
-                    //|Cleanup: Instead of creating the rect here, we should do it at the top (using a cutMargins() function or something) and base the drawing on it.
-                    const rect = {x: rightButtonX + 0.25*u, y: rightButtonY + 0.25*u, width: 0.5*u, height: 0.5*u};
-                    const [flags] = getPointerFlags(rect, Layer.PANEL);
+                    const [flags] = getPointerFlags(rightButtonRect, Layer.PANEL);
 
-                    if (flags.hover)  width = 0.2*u;
+                    if (flags.hover)  lineWidth = 0.4*iconHeight;
 
                     if (flags.pressed) {
                         currentElectionIndex += 1;
@@ -1501,7 +1488,15 @@ function drawPanel() {
                     }
                 }
 
-                ui.lineWidth = width;
+                let x = rightButtonRect.x + rightButtonRect.width/2 - iconWidth/2
+                let y = rightButtonRect.y + rightButtonRect.height/2 - iconHeight/2;
+
+                ui.beginPath();
+                ui.moveTo(x,             y);
+                ui.lineTo(x + iconWidth, y + iconHeight/2);
+                ui.lineTo(x,             y + iconHeight);
+
+                ui.lineWidth = lineWidth;
                 ui.strokeStyle = colour;
                 ui.stroke();
             }
