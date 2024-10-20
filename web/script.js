@@ -19,7 +19,9 @@
         @typedef {[Vec2, Vec2, Vec2, Vec2]} Box4
 
 
-        @typedef {{text: string, pos: [number, number]}} Label
+    |Cleanup: These are changing and should be called Districts instead of Labels.
+
+        @typedef {{name: string, centroid: Vec2, box: Box}} Label
 
 
         @typedef {{locked: boolean, x: number, y: number}} PointerLock
@@ -1076,8 +1078,7 @@ async function fetchVertices(election, box, transform) {
     const upp = 1/transform.scale;
     url += '&upp=' + upp;
 
-    const electionYear = '' + election.date.getFullYear(); //|Todo: Use the election ID.
-    url += '&year=' + electionYear;
+    url += '&year=' + election.date.getFullYear(); //|Todo: Use the election ID.
 
     const response = await fetch(url);
     const data = await response.arrayBuffer();
@@ -1088,10 +1089,9 @@ async function fetchVertices(election, box, transform) {
 
     // Fetch labels.
     {
-        const response = await fetch(`../bin/labels.json?year=${electionYear}`);
-        const json = await response.json();
+        const response = await fetch(`../bin/labels.json?election=${election.id}`);
 
-        labels = json.labels;
+        labels = await response.json();
     }
 }
 
@@ -1227,8 +1227,9 @@ function drawLabels() {
 
     // Draw the labels.
     for (const label of labels) {
-        const {width} = ui.measureText(label.text);
-        const screenPos = xform(map.currentTransform, {x: label.pos[0], y: label.pos[1]});
+        const labelText = label.name.toUpperCase();
+        const {width} = ui.measureText(labelText);
+        const screenPos = xform(map.currentTransform, label.centroid);
         const textX = screenPos.x - width/2;
         const textY = screenPos.y - height/2;
         const textX1 = textX + width; // textX1 and textY1 are the bottom-right corner of the text box.
@@ -1296,19 +1297,33 @@ function drawLabels() {
 
         let textColour    = 'black';
         let outlineColour = 'white';
-        let hoverOutline  = 'skyblue';
+        let hoverOutline  = 'grey';
 
         const [flags] = getPointerFlags(labelRect, Layer.MAP);
 
         if (flags.hover)  outlineColour = hoverOutline;
 
-        if (flags.tapped)  console.log(`Label tapped: ${label.text}.`) //|Incomplete: We're going to zoom to the appropriate district in this case.
+        if (flags.tapped) {
+            const duration = 750;
+
+            /** @type Box */
+            const mapBox = [{x: 0, y: 0}, {x: map.width, y: map.height}];
+            const newTransform = fitBox(label.box, mapBox);
+
+            map.animations.length = 0;
+            map.animations.push({
+                startTime: currentTime,
+                endTime:   currentTime + duration,
+                start:     copy(map.currentTransform),
+                end:       newTransform
+            });
+        }
 
         ui.strokeStyle = outlineColour;
         ui.lineWidth = 3;
-        ui.strokeText(label.text, textX, textY);
+        ui.strokeText(labelText, textX, textY);
         ui.fillStyle = textColour;
-        ui.fillText(label.text, textX, textY);
+        ui.fillText(labelText, textX, textY);
     }
 
     if (debugLabels) { // Visualise the usedSpace grid. |Debug

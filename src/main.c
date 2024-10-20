@@ -37,28 +37,6 @@ Vector3 get_colour_from_hash(u64 hash)
     return (Vector3){r, g, b};
 }
 
-Response serve_elections(Request *request, Memory_context *context) //|Deprecated
-{
-    Memory_context *ctx = context;
-
-    PGconn *db = connect_to_database(DATABASE_URL);
-
-    char *query = "select jsonb_agg(to_jsonb(t.*))::text from (select * from election) t";
-
-    Postgres_result *result = query_database(db, query, NULL, ctx);
-
-    assert(*Get(&result->columns, "jsonb_agg") == 0);
-    assert(result->rows.count == 1);
-    u8_array *json = &result->rows.data[0].data[0];
-
-    Response response = {200, .body = json->data, .size = json->count};
-
-    response.headers = (string_dict){.context = ctx};
-    *Set(&response.headers, "content-type") = "application/json";
-
-    return response;
-}
-
 Response serve_vertices(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
@@ -247,41 +225,47 @@ Response serve_labels(Request *request, Memory_context *context)
 
     string_array params = {.context = ctx};
 
-    // Turn the year from the query parameter into the election_id. |Copypasta from serve_vertices()
+    // Get the election ID from the request and add it to the SQL query parameters.
     {
-        char **year = Get(request->query, "year");
-        if (!*year) {
-            char_array *error = get_string(ctx, "Missing query parameter 'year'.\n");
+        char **election = Get(request->query, "election");
+        if (!*election) {
+            char_array *error = get_string(ctx, "Missing query parameter 'election'.\n");
             return (Response){400, .body = error->data, .size = error->count};
         }
+        //|Todo: Validation of the election ID?
 
-        if (!strcmp(*year, "2010"))       *Add(&params) = "15508";
-        else if (!strcmp(*year, "2013"))  *Add(&params) = "17496";
-        else if (!strcmp(*year, "2016"))  *Add(&params) = "20499";
-        else if (!strcmp(*year, "2019"))  *Add(&params) = "24310";
-        else if (!strcmp(*year, "2022"))  *Add(&params) = "27966";
-        else {
-            char_array *error = get_string(ctx, "Unexpected value for 'year': '%s'\n", *year);
-            return (Response){400, .body = error->data, .size = error->count};
-        }
+        *Add(&params) = *election;
     }
 
     char *query =
-      " select jsonb_build_object(                                                               "
-      "     'labels', jsonb_agg(                                                                 "
-      "         jsonb_build_object(                                                              "
-      "             'text', upper(name),                                                         "
-      "             'pos', jsonb_build_array(round(st_x(centroid)), round(-st_y(centroid)))      "
-      "           )                                                                              "
-      "       )                                                                                  "
-      "   )::text as json                                                                        "
-      " from (                                                                                   "
-      "     select name,                                                                         "
-      "       st_centroid(bounds) as centroid                                                    "
-      "     from district                                                                     "
-      "     where election_id = $1::int                                                          "
-      "     order by st_area(bounds) desc                                                        "
-      "   ) t;                                                                                   ";
+    " select jsonb_agg(                        "
+    "     jsonb_build_object(                  "
+    "       'name', name,                      "
+    "       'centroid', jsonb_build_object(    "
+    "         'x', round(st_x(centroid)),      "
+    "         'y', round(-st_y(centroid))      "
+    "       ),                                 "
+    "       'box', jsonb_build_array(          "
+    "         jsonb_build_object(              "
+    "           'x', st_xmin(box),             "
+    "           'y', -st_ymax(box)             "
+    "         ),                               "
+    "         jsonb_build_object(              "
+    "           'x', st_xmax(box),             "
+    "           'y', -st_ymin(box)             "
+    "         )                                "
+    "       )                                  "
+    "     )                                    "
+    "   )::text as json                        "
+    " from (                                   "
+    "     select name,                         "
+    "       st_centroid(bounds) as centroid,   "
+    "       box2d(bounds) as box               "
+    "     from district                        "
+    "     where election_id = $1::int          "
+    "     order by st_area(bounds) desc        "
+    "   ) t                                    "
+    ;
 
     Postgres_result *result = query_database(db, query, &params, ctx);
 
@@ -301,7 +285,7 @@ int main()
 {
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
     u16  const PORT    = 6008;
-    bool const VERBOSE = true;
+    bool const VERBOSE = false;
 
     Memory_context *top_context = new_context(NULL);
 
@@ -311,7 +295,6 @@ int main()
 
     add_route(server, GET, "/bin/vertices",    &serve_vertices);
     add_route(server, GET, "/bin/labels.json", &serve_labels);
-    add_route(server, GET, "/elections",       &serve_elections);
     add_route(server, GET, "/.*",              &serve_file_insecurely);
 
     start_server(server);
