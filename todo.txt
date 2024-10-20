@@ -1,5 +1,3 @@
-Come up with some temporary way of reloading the map when the portion on screen changes.
-
 On the front end, come up with a convincing distinction between "tap" and "drag", so map labels can be tapped.
 
 Improve labels.
@@ -20,14 +18,21 @@ When you tap on an electorate label:
         Show the electorate name as the main title, squashing the election title into one line above that.
         Add an X next to the electorate name (or something) to allow going back to the previous mode.
 
+Redo the maps and topology.
+    Cut out rivers from the coastline.
+    Make sure Franklin exists.
+
+Fix issues with fetching vertices.
+    Merge fetchVertices() with the stuff in the step() function.
+    Make it a queue. Instead of spamming new queries when one is pending, queue it and wait for the first one to complete before sending it. If there is a third call to fetchVertices() before the first has completed, the second should be cancelled and the third take its place at the front of the queue.
+
 Add an overall election result graph to the main panel that shows the number of seats won by each party.
 
 In polling booth mode, show a 2CP chart just below the election name.
 
 In polling booth mode, show a FP chart below the 2CP chart.
 
-Slightly expend the bounding box of the requested vertices (i.e. have some buffer).
-Re-request the vertices and labels in some kind of debounced way when the map is being panned and zoomed.
+Figure out what to do about our RAM slowly filling up with cached SQL queries.
 
 In the default view, below the overall results chart in the panel, add a list of all electorates and allow tapping on them to go into that electorate's view.
 

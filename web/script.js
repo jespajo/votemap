@@ -240,9 +240,13 @@ let u_view;
 /** @type Float32Array */
 let vertices = new Float32Array(0);
 /** @type boolean */
-let shouldFetchVertices = false;
-/** @type boolean */
 let updateVertices = false;
+/** @type number */
+let lastTimeVerticesFetched = 0;
+/** @type Box */
+let mapBoxWhenVerticesLastFetched;
+/** @type Election */
+let electionWhenVerticesLastFetched;
 
 //
 // UI-related globals.
@@ -1003,9 +1007,6 @@ function handleUserEventsOnMap() {
             });
         }
 
-        // Refetch vertices when the user presses 'r'. |Temporary
-        if (input.keysPressed['KeyR'])  shouldFetchVertices = true;
-
         // Check whether developer visualisations have been toggled:
         if (input.keysPressed['KeyT'])  debugTransform = !debugTransform;
         if (input.keysPressed['KeyL'])  debugLabels    = !debugLabels;
@@ -1014,24 +1015,26 @@ function handleUserEventsOnMap() {
     }
 }
 
-async function fetchVertices() {
-    shouldFetchVertices = false;
-
-    const corners  = getMapCorners(map.width, map.height, map.currentTransform);
-    const envelope = getEnvelope(corners);
+/**
+ * @type {(election: Election, box: Box, transform: Transform) => Promise<void>}
+ */
+async function fetchVertices(election, box, transform) {
+    lastTimeVerticesFetched         = currentTime;
+    mapBoxWhenVerticesLastFetched   = box;
+    electionWhenVerticesLastFetched = election;
 
     let url = '../bin/vertices';
     url += '?';
-    url += '&x0=' + envelope[0].x;
-    url += '&y0=' + envelope[0].y;
-    url += '&x1=' + envelope[1].x;
-    url += '&y1=' + envelope[1].y;
+    url += '&x0=' + box[0].x;
+    url += '&y0=' + box[0].y;
+    url += '&x1=' + box[1].x;
+    url += '&y1=' + box[1].y;
 
     // UPP: Map units per pixel. Increases as you zoom out.
-    const upp = 1/map.currentTransform.scale;
+    const upp = 1/transform.scale;
     url += '&upp=' + upp;
 
-    const electionYear = '' + elections[currentElectionIndex].date.getFullYear(); //|Todo: Use the election ID.
+    const electionYear = '' + election.date.getFullYear(); //|Todo: Use the election ID.
     url += '&year=' + electionYear;
 
     const response = await fetch(url);
@@ -1462,7 +1465,6 @@ function drawPanel() {
 
                     if (flags.pressed) {
                         currentElectionIndex -= 1;
-                        shouldFetchVertices = true;
 
                         prevElectionButtonLastPressed = currentTime;
                     }
@@ -1503,7 +1505,6 @@ function drawPanel() {
 
                     if (flags.pressed) {
                         currentElectionIndex += 1;
-                        shouldFetchVertices = true;
 
                         nextElectionButtonLastPressed = currentTime;
                     }
@@ -1740,7 +1741,36 @@ function step(time) {
         else if (ct.rotate >= Math.PI)  ct.rotate -= 2*Math.PI;
     }
 
-    if (shouldFetchVertices)  fetchVertices();
+    // If the election year or the map corners have changed, refetch vertices, but not more than twice a second.  |Cleanup: Just merge this with fetchVertices().
+    {
+        const rateLimit = 500;
+
+        const timeSinceVerticesFetched = currentTime - lastTimeVerticesFetched;
+        if (timeSinceVerticesFetched > rateLimit) {
+            const targetTransform = (map.animations.length) ? map.animations[0].end : map.currentTransform;
+            const targetBox       = getEnvelope(getMapCorners(map.width, map.height, targetTransform));
+            const election        = elections[currentElectionIndex];
+
+            let same = true;
+            if (election !== electionWhenVerticesLastFetched) {
+                same = false;
+            } else {
+                for (let i = 0; i < targetBox.length; i++) {
+                    const current = mapBoxWhenVerticesLastFetched[i];
+                    const target  = targetBox[i];
+
+                    if (current.x !== target.x || current.y !== target.y) {
+                        same = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!same) {
+                fetchVertices(election, targetBox, targetTransform);
+            }
+        }
+    }
 
     drawWebGL();
 
@@ -1778,8 +1808,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // Return to this state by pressing 1.
         savedTransforms[1] = copy(map.currentTransform);
-
-        shouldFetchVertices = true;
     }
 
     step();

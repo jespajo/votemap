@@ -37,6 +37,14 @@ The government doesn't provide them as a single shapefile.
 We can only import the shapefiles for the individual states that had redistributions---ACT, NSW and WA.
 We'll have to merge them with the 2013 shapes for the other states.
 
+Also import some river polygons.
+
+    # Get some info about the data:
+    ogrinfo maps/rivers/SurfaceHydrologyPolygonsRegional.gdb
+
+    # Import it.
+    ogr2ogr -s_srs EPSG:4283 -t_srs EPSG:3577 -f PostgreSQL PG:"host=localhost port=5432 dbname=gis user=postgres password=postgisclarity" maps/rivers/SurfaceHydrologyPolygonsRegional.gdb -nln gdb.hydropolys -progress --config PG_USE_COPY YES
+
 
 ## Import the XML data.
 
