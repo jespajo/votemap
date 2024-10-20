@@ -798,7 +798,9 @@ function getPointerFlags(rect, layer) {
     for (let i = 0; i < 2; i++) {
         const ptr = input.pointers[i];
 
-        if (!ptr.active)  continue;
+        // Skip checking pointer events if the pointer is inactive unless it has just been released.
+        // (On touchscreens, the pointer will be set to inavtive on the same frame it's released.)
+        if (!ptr.active && !ptr.released)  continue;
 
         if (!pointInRect(ptr, rect))  continue;
 
