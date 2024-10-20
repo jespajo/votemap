@@ -1,5 +1,3 @@
-On the front end, come up with a convincing distinction between "tap" and "drag", so map labels can be tapped.
-
 Improve labels.
     Merge serve_vertices() and serve_labels() on the backend so they make the same set of database queries.
     Make labels only exist in the data if the shapes they correspond to appear on the page.

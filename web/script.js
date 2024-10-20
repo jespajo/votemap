@@ -85,16 +85,30 @@ const input = {
      * pointers[0] will be the mouse, or the first finger to touch the screen. pointers[1] will be the second finger.
      * .down is true whenever the pointer is down.
      * .pressed is true only on the first frame it's down.
+     * .released is true only on the first frame it's up.
      * .x and .y are in screen coordinates.
-     * If .active is false, the rest should be ignored.
+     * We set .active to true on most pointer events and then set it to false on pointerout. This ensures that e.g. fingers touching the screen are inactive once they leave, as opposed to a mouse, which is still considered to be hovering.
      *
-     * @typedef {{id: number, x: number, y: number, active: boolean, down: boolean, pressed: boolean}} Pointer
+     * @typedef {{id: number, x: number, y: number, active: boolean, down: boolean, pressed: boolean, released: boolean}} Pointer
      *
      * @type {[Pointer, Pointer]}
      */
     pointers: [
-        {id: 0, x: 0, y: 0, active: false, down: false, pressed: false},
-        {id: 0, x: 0, y: 0, active: false, down: false, pressed: false},
+        {id: 0, x: 0, y: 0, active: false, down: false, pressed: false, released: false},
+        {id: 0, x: 0, y: 0, active: false, down: false, pressed: false, released: false},
+    ],
+
+    /**
+     * We keep track of the time and location of the last pointer press so that we can tell whether something was tapped.
+     * The index of the events matches the index in the pointers array.
+     *
+     * @typedef {{time: number, x: number, y: number}} PointerPressEvent
+     *
+     * @type {[PointerPressEvent, PointerPressEvent]}
+     */
+    pointersLastPress: [
+        {time: 0, x: 0, y: 0},
+        {time: 0, x: 0, y: 0},
     ],
 
     /**
@@ -680,13 +694,17 @@ function initInput() {
     window.addEventListener("pointerup", event => {
         for (let i = 0; i < 2; i++) {
             const ptr = input.pointers[i];
-    
+
             if (ptr.id !== event.pointerId)  continue;
 
             ptr.x = event.clientX;
             ptr.y = event.clientY;
             ptr.active = true;
-            ptr.down = false;
+
+            if (ptr.down) {
+                ptr.released = true;
+                ptr.down = false;
+            }
 
             return;
         }
@@ -745,22 +763,34 @@ function resetInput() {
     occlusions[0] = occlusions[1];
     occlusions[1] = [];
 
-    input.pointers[0].pressed = false;
-    input.pointers[1].pressed = false;
+    for (let i = 0; i < 2; i++) {
+        const ptr       = input.pointers[i];
+        const lastPress = input.pointersLastPress[i];
+
+        if (ptr.pressed) {
+            lastPress.time = currentTime;
+            lastPress.x    = ptr.x;
+            lastPress.y    = ptr.y;
+        }
+
+        ptr.pressed  = false;
+        ptr.released = false;
+    }
+
     input.scroll = 0;
     input.keysPressed = {};
 }
 
 /**
- * @typedef {{pressed: boolean, hover: boolean}} PointerFlags
+ * @typedef {{pressed: boolean, hover: boolean, tapped: boolean}} PointerFlags
  *
  * @type {(rect: Rect, layer: number) => [PointerFlags, PointerFlags]}
  */
 function getPointerFlags(rect, layer) {
     /** @type [PointerFlags, PointerFlags] */
     const result = [
-        {pressed: false, hover: false},
-        {pressed: false, hover: false}
+        {pressed: false, hover: false, tapped: false},
+        {pressed: false, hover: false, tapped: false}
     ];
 
     for (let i = 0; i < 2; i++) {
@@ -782,6 +812,18 @@ function getPointerFlags(rect, layer) {
         }
 
         if (!occluded) {
+            if (ptr.released) {
+                const lastPress = input.pointersLastPress[i];
+                const downTime  = currentTime - lastPress.time;
+
+                const maxTapTime = 1000;
+                const maxDrag    = 10;
+                if (downTime < maxTapTime) {
+                    const drag = Math.hypot(ptr.x-lastPress.x, ptr.y-lastPress.y);
+                    if (drag < maxDrag)  result[i].tapped = true;
+                }
+            }
+
             if (ptr.pressed)     result[i].pressed = true;
             else if (!ptr.down)  result[i].hover   = true;
         }
@@ -1250,10 +1292,22 @@ function drawLabels() {
             }
         }
 
-        ui.strokeStyle = 'white';
+        const labelRect = {x: textX, y: textY, width: textX1-textX, height: textY1-textY};
+
+        let textColour    = 'black';
+        let outlineColour = 'white';
+        let hoverOutline  = 'skyblue';
+
+        const [flags] = getPointerFlags(labelRect, Layer.MAP);
+
+        if (flags.hover)  outlineColour = hoverOutline;
+
+        if (flags.tapped)  console.log(`Label tapped: ${label.text}.`) //|Incomplete: We're going to zoom to the appropriate district in this case.
+
+        ui.strokeStyle = outlineColour;
         ui.lineWidth = 3;
         ui.strokeText(label.text, textX, textY);
-        ui.fillStyle = 'black';
+        ui.fillStyle = textColour;
         ui.fillText(label.text, textX, textY);
     }
 
