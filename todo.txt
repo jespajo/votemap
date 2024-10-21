@@ -1,5 +1,3 @@
-Remove all the nonsense about multiple flipping of the Y axis.
-
 Improve labels.
     Merge serve_vertices() and serve_labels() on the backend so they make the same set of database queries.
     Make labels only exist in the data if the shapes they correspond to appear on the page.
@@ -20,10 +18,6 @@ When you tap on an electorate label:
 Redo the maps and topology.
     Cut out rivers from the coastline.
     Make sure Franklin exists.
-
-Fix issues with fetching vertices.
-    Merge fetchVertices() with the stuff in the step() function.
-    Make it a queue. Instead of spamming new queries when one is pending, queue it and wait for the first one to complete before sending it. If there is a third call to fetchVertices() before the first has completed, the second should be cancelled and the third take its place at the front of the queue.
 
 Add an overall election result graph to the main panel that shows the number of seats won by each party.
 
