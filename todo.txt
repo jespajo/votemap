@@ -1,5 +1,3 @@
-Use election ID rather than year as query parameter.
-
 Remove all the nonsense about multiple flipping of the Y axis.
 
 Improve labels.

@@ -1080,7 +1080,7 @@ async function fetchVertices(election, box, transform) {
     const upp = 1/transform.scale;
     url += '&upp=' + upp;
 
-    url += '&year=' + election.date.getFullYear(); //|Todo: Use the election ID.
+    url += '&election=' + election.id;
 
     const response = await fetch(url);
     const data = await response.arrayBuffer();
@@ -1298,8 +1298,8 @@ function drawLabels() {
         const labelRect = {x: textX, y: textY, width: textX1-textX, height: textY1-textY};
 
         let textColour    = 'black';
-        let outlineColour = 'white';
-        let hoverOutline  = 'grey';
+        let outlineColour = 'lightgrey';
+        let hoverOutline  = 'white';
 
         const [flags] = getPointerFlags(labelRect, Layer.MAP);
 

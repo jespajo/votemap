@@ -83,30 +83,28 @@ Response serve_vertices(Request *request, Memory_context *context)
         *Add(&params) = get_string(ctx, "%f", -y1)->data;
     }
 
-    // Get the election boundaries to draw from the query.
+    // Get the election ID from the request and add it to the SQL query parameters.
     {
-        char **year = Get(request->query, "year");
-        if (!*year) {
-            char_array *error = get_string(ctx, "Missing query parameter 'year'.\n");
+        char **election = Get(request->query, "election");
+        if (!*election) {
+            char_array *error = get_string(ctx, "Missing query parameter 'election'.\n");
             return (Response){400, .body = error->data, .size = error->count};
         }
+        //|Todo: Validation of the election ID?
 
-        if (!strcmp(*year, "2010"))       *Add(&params) = "15508";
-        else if (!strcmp(*year, "2013"))  *Add(&params) = "17496";
-        else if (!strcmp(*year, "2016"))  *Add(&params) = "20499";
-        else if (!strcmp(*year, "2019"))  *Add(&params) = "24310";
-        else if (!strcmp(*year, "2022"))  *Add(&params) = "27966";
-        else {
-            char_array *error = get_string(ctx, "Unexpected value for 'year': '%s'\n", *year);
-            return (Response){400, .body = error->data, .size = error->count};
-        }
+        *Add(&params) = *election;
     }
 
     // Draw the election boundaries.
     {
         char *query =
         " select d.name, t.party_id, t.colour,                                                                              "
-        "   st_asbinary(st_simplify(d.bounds_faces, $1::float)) as polygon                                                  "
+        "   st_asbinary(st_makevalid(                                                                                       "
+        "       st_clipbybox2d(                                                                                             "
+        "         st_simplify(d.bounds_faces, $1::float),                                                                   "
+        "         st_setsrid(st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), 3577)            "
+        "       )                                                                                                           "
+        "     )) as polygon                                                                                                 "
         " from district d                                                                                                   "
         "   left join (                                                                                                     "
         "     select v.election_id, v.district_id, p.id as party_id, p.colour                                               "
