@@ -4,16 +4,16 @@
 #include "array.h"
 #include "vector.h"
 
-// In Path data, we guarantee:
-// - the y-axis increases downwards
-// - when we represent a closed shape, the first and last points are the same
+// In Path data, we assume:
+// - The Y-axis increases downwards.
+// - When we represent a closed shape, the first and last points are the same.
 typedef Array(Vector2)  Path;
 typedef Array(Path)     Path_array;
 
-// In Polygon data, we guarantee:
-// - the y-axis increases downwards
-// - the first ring is the outer ring given counter-clockwise
-// - subsequent rings are holes given clockwise
+// In Polygon data, we assume:
+// - The Y-axis increases downwards.
+// - The first ring is the outer ring, given counter-clockwise.
+// - Subsequent rings are holes given clockwise.
 typedef Array(Path)     Polygon;
 typedef Array(Polygon)  Polygon_array;
 
