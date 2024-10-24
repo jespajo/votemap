@@ -155,9 +155,6 @@ const occlusions = [[], []];
 // as-yet-unimplemented goal, anyway.
 let mobileMode = false;
 
-//|Temporary: this should go in the map state and also be an enum or something, not a boolean.
-let isFirstPreferences = true;
-
 /**
  * @typedef {{id: number, date: Date}} Election
  * @type Election[]
@@ -1625,59 +1622,6 @@ function drawPanel() {
         }
 
         ui.restore();
-    }
-
-    panelY += panelPadding;
-
-    // Draw the two-candidate preferred/first preferences toggle.
-    {
-        // Styles:
-        const toggleHeight      = 30;
-        const backgroundColours = ['#dddddd', '#ffffff']; // [unselected, selected]
-        const textColours       = ['#777777', '#000000'];
-        const fonts             = ['button-inactive', 'button-active']; //|Cleanup: Selected or active?
-        const borderColour      = '#000000';
-        const borderWidth       = 1;
-        const leftLabel         = "2CP"; //|Todo: Spell out the selected option in full.
-        const rightLabel        = "FP";  //|
-
-        // Computed styles:
-        const textMargin = Math.floor(toggleHeight/10);
-        const textHeight = toggleHeight - 2*textMargin;
-        const toggleRect = {x: panelX, y: panelY, width: panelWidth, height: toggleHeight};
-        const [leftRect, rightRect] = cutLeft(toggleRect, toggleRect.width/2);
-
-        // Change isFirstPreferences if the mouse is down over the unselected button.
-        {
-            const unselectedRect = (isFirstPreferences) ? leftRect : rightRect;
-
-            const pointerFlags = getPointerFlags(unselectedRect, Layer.PANEL);
-
-            if (pointerFlags[0].pressed)  isFirstPreferences = !isFirstPreferences;
-        }
-
-        // Draw the buttons.
-        for (let i = 0; i < 2; i++) {
-            const rect  = (i == 0) ? leftRect  : rightRect;
-            const label = (i == 0) ? leftLabel : rightLabel;
-
-            const selected = +(!i == !isFirstPreferences);
-
-            ui.fillStyle = backgroundColours[selected];
-            ui.fillRect(rect.x, rect.y, rect.width, rect.height);
-
-            ui.font      = textHeight + 'px ' + fonts[selected];
-            ui.fillStyle = textColours[selected];
-            const textWidth = ui.measureText(label).width;
-            ui.fillText(label, rect.x + rect.width/2 - textWidth/2, rect.y + textMargin);
-        }
-
-        // Draw a border.
-        ui.strokeStyle = borderColour;
-        ui.lineWidth   = borderWidth;
-        ui.strokeRect(toggleRect.x, toggleRect.y, toggleRect.width, toggleRect.height);
-
-        panelY += toggleRect.height;
     }
 
     panelY += panelPadding;
