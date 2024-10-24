@@ -88,7 +88,7 @@ void draw_path(Path *path, float width, Vector3 colour, Vertex_array *out)
     }
 }
 
-Vertex_array *copy_verts_in_the_box(Vertex_array *verts, float min_x, float min_y, float max_x, float max_y, Memory_context *context)
+Vertex_array *copy_verts_in_the_box(Vertex_array *verts, float min_x, float min_y, float max_x, float max_y, Memory_context *context) //|Deprecated
 // Create a copy of an array of triangle vertices, excluding any without a single point within the given box.
 // |Speed: It would be a bit quicker if it operated on triangles instead of verts.
 {

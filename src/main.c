@@ -122,17 +122,17 @@ Response serve_vertices(Request *request, Memory_context *context)
 
         Postgres_result *result = query_database(db, query, &params, ctx);
 
-        int polygons_column = *Get(&result->columns, "polygon");
+        int polygon_column  = *Get(&result->columns, "polygon");
         int name_column     = *Get(&result->columns, "name");
         int party_id_column = *Get(&result->columns, "party_id");
         int colour_column   = *Get(&result->columns, "colour");
-        if (polygons_column < 0)  Fatal("Couldn't find a \"polygon\" column in the results.");
+        if (polygon_column < 0)   Fatal("Couldn't find a \"polygon\" column in the results.");
         if (name_column < 0)      Fatal("Couldn't find a \"name\" column in the results.");
         if (party_id_column < 0)  Fatal("Couldn't find a \"party_id\" column in the results.");
         if (colour_column < 0)    Fatal("Couldn't find a \"colour\" column in the results.");
 
         for (s64 i = 0; i < result->rows.count; i++) {
-            u8_array *polygons_cell = &result->rows.data[i].data[polygons_column];
+            u8_array *polygons_cell = &result->rows.data[i].data[polygon_column];
             u8_array *name_cell     = &result->rows.data[i].data[name_column];
             u8_array *party_id_cell = &result->rows.data[i].data[party_id_column];
             u8_array *colour_cell   = &result->rows.data[i].data[colour_column];
@@ -147,7 +147,7 @@ Response serve_vertices(Request *request, Memory_context *context)
                 assert(end_data == &polygons_cell->data[polygons_cell->count]);
             }
 
-            char_array *name = copy_char_array_from_cell(name_cell, ctx);
+            char_array name = get_char_array_from_cell(name_cell);
 
             Vector3 colour;
             if (!party_id_cell->count) {
@@ -204,8 +204,6 @@ Response serve_vertices(Request *request, Memory_context *context)
             draw_path(&paths->data[i], line_width, colour, verts);
         }
     }
-
-    if (verts->count)  verts = copy_verts_in_the_box(verts, x0, y0, x1, y1, ctx);
 
     Response response = {200, .body = verts->data, .size = verts->count*sizeof(Vertex)};
 

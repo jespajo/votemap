@@ -271,9 +271,11 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
             char *data = PQgetvalue(query_result, i, j);
             int   size = PQgetlength(query_result, i, j);
 
+            array_reserve(cell, size+1);
+            cell->data[size] = '\0';
+
             if (size == 0)  continue;
 
-            array_reserve(cell, size);
             memcpy(cell->data, data, size);
             cell->count = size;
         }
@@ -378,7 +380,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
                 // So we won't initialise the cell with a context, since it doesn't own its data.
                 *Add(row) = (u8_array){.data = d, .count = cell_size};
 
-                d += cell_size;
+                d += cell_size+1;
             }
         }
 
@@ -444,6 +446,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
             add_s32(cache_file, (s32)cell->count);
 
             for (int k = 0; k < cell->count; k++)  *Add(cache_file) = cell->data[k];
+            *Add(cache_file) = '\0';
         }
     }
 
@@ -473,17 +476,16 @@ float get_float_from_cell(u8_array *cell)
     return f;
 }
 
-char_array *copy_char_array_from_cell(u8_array *cell, Memory_context *context)
-//|Todo: Don't make a copy. For this to work, we need to make sure the data is zero-terminated in the Postgres_result.
+char_array get_char_array_from_cell(u8_array *cell)
+// Don't copy the data. Just put the data pointer and count into a char_array.
 {
-    char_array *result = NewArray(result, context);
+    // Because we are using the cell's data as a string without making a copy, we're assuming it's already zero-terminated.
+    assert(cell->data[cell->count] == 0);
 
-    array_reserve(result, cell->count+1);
-
-    memcpy(result->data, cell->data, cell->count);
-    result->data[cell->count] = '\0';
-
-    result->count = cell->count;
+    // Don't give the returned char_array a context or limit because it doesn't own its data.
+    char_array result = {0};
+    result.data  = (char *)cell->data;
+    result.count = cell->count;
 
     return result;
 }
