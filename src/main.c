@@ -213,7 +213,7 @@ Response serve_vertices(Request *request, Memory_context *context)
     return response;
 }
 
-Response serve_labels(Request *request, Memory_context *context) //|Todo: Make this serve_districts.
+Response serve_districts(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
 
@@ -221,16 +221,12 @@ Response serve_labels(Request *request, Memory_context *context) //|Todo: Make t
 
     string_array params = {.context = ctx};
 
-    // Get the election ID from the request and add it to the SQL query parameters.
+    // Get the election ID from the request path and add it to the SQL query parameters.
     {
-        char **election = Get(request->query, "election");
-        if (!*election) {
-            char_array *error = get_string(ctx, "Missing query parameter 'election'.\n");
-            return (Response){400, .body = error->data, .size = error->count};
-        }
-        //|Todo: Validation of the election ID?
+        char *election = request->captures.data[0];
+        assert(election);
 
-        *Add(&params) = *election;
+        *Add(&params) = election;
     }
 
     char *query =
@@ -290,9 +286,9 @@ int main()
 
     Server *server = create_server(ADDR, PORT, VERBOSE, top_context);
 
-    add_route(server, GET, "/bin/vertices",    &serve_vertices);
-    add_route(server, GET, "/bin/labels.json", &serve_labels);
-    add_route(server, GET, "/.*",              &serve_file_insecurely);
+    add_route(server, GET, "/vertices",                          &serve_vertices);
+    add_route(server, GET, "/elections/(\\d+)/districts.json",   &serve_districts);
+    add_route(server, GET, "/.*",                                &serve_file_insecurely);
 
     start_server(server);
 

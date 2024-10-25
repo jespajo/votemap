@@ -1138,7 +1138,7 @@ async function maybeFetchVertices() {
                 // We don't have all the tiles we need.
                 isVerticesRequestPending = true;
 
-                let url = '../bin/vertices';
+                let url = '/vertices';
                 url += '?';
                 url += '&x0=' + x;
                 url += '&y0=' + y;
@@ -1193,7 +1193,7 @@ async function maybeFetchData() {
     if (!districts[election.id]) {
         districts[election.id] = {}; // This makes sure that we only fetch the districts for each election once.
 
-        const response = await fetch(`../bin/labels.json?election=${election.id}`);
+        const response = await fetch(`/elections/${election.id}/districts.json`);
         const data     = await response.json();
 
         Object.assign(districts[election.id], data);
