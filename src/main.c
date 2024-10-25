@@ -213,7 +213,7 @@ Response serve_vertices(Request *request, Memory_context *context)
     return response;
 }
 
-Response serve_labels(Request *request, Memory_context *context)
+Response serve_labels(Request *request, Memory_context *context) //|Todo: Make this serve_districts.
 {
     Memory_context *ctx = context;
 
@@ -234,8 +234,8 @@ Response serve_labels(Request *request, Memory_context *context)
     }
 
     char *query =
-    " select jsonb_agg(                        "
-    "     jsonb_build_object(                  "
+    " select jsonb_object_agg(                 "
+    "     id, jsonb_build_object(              "
     "       'name', name,                      "
     "       'centroid', jsonb_build_object(    "
     "         'x', round(st_x(centroid)),      "
@@ -254,7 +254,8 @@ Response serve_labels(Request *request, Memory_context *context)
     "     )                                    "
     "   )::text as json                        "
     " from (                                   "
-    "     select name,                         "
+    "     select id,                           "
+    "       name,                              "
     "       st_centroid(bounds) as centroid,   "
     "       box2d(bounds) as box               "
     "     from district                        "

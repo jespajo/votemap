@@ -19,9 +19,9 @@
         @typedef {[Vec2, Vec2, Vec2, Vec2]} Box4
 
 
-    |Cleanup: These are changing and should be called Districts instead of Labels.
+        @typedef {{id: number, date: Date}} Election
 
-        @typedef {{name: string, centroid: Vec2, box: Box}} Label
+        @typedef {{name: string, centroid: Vec2, box: Box}} District
 
 
         @typedef {{locked: boolean, x: number, y: number}} PointerLock
@@ -166,7 +166,6 @@ const occlusions = [[], []];
 let mobileMode = false;
 
 /**
- * @typedef {{id: number, date: Date}} Election
  * @type Election[]
  */
 let elections = [
@@ -178,6 +177,9 @@ let elections = [
 ];
 /** @type number */
 let currentElectionIndex = elections.length-1;
+
+/** @type {{[key: number]: {[key: number]: District}}} */
+const districts = {}; //|Todo: Put these in a big store object with tileStore.
 
 const map = {
     //
@@ -287,8 +289,6 @@ let isVerticesRequestPending = false;
 
 /** @type CanvasRenderingContext2D */
 let ui;
-/** @type Label[] */
-let labels = [];
 
 //
 // Toggle developer visualisations.
@@ -1184,12 +1184,19 @@ async function maybeFetchVertices() {
     updateVertices = true;
 
     currentTileset = subset;
+}
 
-    // Fetch labels. |Cleanup: This needs to move elsewhere now.
-    {
+async function maybeFetchData() {
+    const election = elections[currentElectionIndex];
+
+    // Fetch districts.
+    if (!districts[election.id]) {
+        districts[election.id] = {}; // This makes sure that we only fetch the districts for each election once.
+
         const response = await fetch(`../bin/labels.json?election=${election.id}`);
+        const data     = await response.json();
 
-        labels = await response.json();
+        Object.assign(districts[election.id], data);
     }
 }
 
@@ -1323,11 +1330,18 @@ function drawLabels() {
         };
     }
 
+    const election = elections[currentElectionIndex];
+
+    //
     // Draw the labels.
-    for (const label of labels) {
-        const labelText = label.name.toUpperCase();
+    //
+    for (const districtID of Object.keys(districts[election.id])) {
+        /** @type District */
+        const district = districts[election.id][districtID];
+
+        const labelText = district.name.toUpperCase();
         const {width} = ui.measureText(labelText);
-        const screenPos = xform(map.currentTransform, label.centroid);
+        const screenPos = xform(map.currentTransform, district.centroid);
         const textX = screenPos.x - width/2;
         const textY = screenPos.y - height/2;
         const textX1 = textX + width; // textX1 and textY1 are the bottom-right corner of the text box.
@@ -1406,7 +1420,7 @@ function drawLabels() {
 
             /** @type Box */
             const mapBox = [{x: 0, y: 0}, {x: map.width, y: map.height}];
-            const newTransform = fitBox(label.box, mapBox);
+            const newTransform = fitBox(district.box, mapBox);
 
             map.animations.length = 0;
             map.animations.push({
@@ -1845,7 +1859,6 @@ function step(time) {
 
 
     handleUserEventsOnMap();
-
     applyAnimationsToMap();
 
     // Enforce the range of the map's rotation.
@@ -1856,9 +1869,9 @@ function step(time) {
     }
 
     maybeFetchVertices();
+    maybeFetchData();
 
     drawWebGL();
-
     drawUI();
 
     resetInput();
