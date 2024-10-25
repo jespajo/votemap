@@ -22,10 +22,18 @@ enum WKB_Geometry_Type {
 
 static u64 hash_query(char *query, string_array *params)
 {
+//|Copypasta from map.c.
+// The below work as long as 1 < BITS < the number of bits in UINT. Otherwise it's undefined behaviour.
+#define RotateLeft(UINT, BITS)   (((UINT) << (BITS)) | ((UINT) >> (8*sizeof(UINT) - (BITS))))
+
     u64 hash = hash_string(query);
 
     s64 num_params = (params) ? params->count : 0;
-    for (s64 i = 0; i < num_params; i++)  hash ^= hash_string(params->data[i]);
+    for (s64 i = 0; i < num_params; i++) {
+        u64 param_hash = hash_string(params->data[i]);
+
+        hash ^= RotateLeft(param_hash, i % 32 + 2);
+    }
 
     return hash;
 }
@@ -212,7 +220,7 @@ Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_co
 
     Path_array *paths = NewArray(paths, context);
 
-    if (!pg_result->rows.count)  printf("A query for paths returned no results.");
+    if (!pg_result->rows.count)  printf("A query for paths returned no results.\n");
 
     for (s64 i = 0; i < pg_result->rows.count; i++) {
         u8_array2 *row = &pg_result->rows.data[i];

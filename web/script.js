@@ -33,6 +33,16 @@
                end:       Transform,
                scroll?:   true
            }} MapAnimation
+
+  A tileset is an image that you want to show on the map at a particular resolution. For example, the election boundaries for 2016,
+  at a resolution of 32 metres to a pixel, is one tileset. The Tileset object is keyed by strings of the form "x,y".
+  These are the x and y values at the top-left corner of each tile, with a comma in between.
+
+        @typedef {{[key: string]: Float32Array}} Tileset
+
+  A dynamic tileset is an object where each key is a resolution and the values are tilesets with the same image at different resolutions.
+
+        @typedef {{[key: number]: Tileset}} DynamicTileset
  */
 
 const VERTEX_SHADER_TEXT = `
@@ -255,12 +265,21 @@ let vertices = new Float32Array(0);
 /** @type boolean */
 let updateVertices = false;
 
+/**
+ * For now, we only want to have five dynamic tilesets: one for each election. So the tileStore object is keyed by the election ID.
+ *
+ * @type {{[key: number]: DynamicTileset}}
+ */
+const tileStore = {};
+/**
+ * currentTileset is a subset of an tileset object within the tileStore, with only those keys needed to cover the screen currently.
+ *
+ * @type Tileset
+ */
+let currentTileset = {};
 /** @type boolean */
 let isVerticesRequestPending = false;
-/** @type Election */
-let electionWhenVerticesLastRequested;
-/** @type Box */
-let mapBoxWhenVerticesLastRequested;
+
 
 //
 // UI-related globals.
@@ -313,6 +332,21 @@ const debugSlerpInfo = {};
 
 const $ = document.querySelector.bind(document);
 const $$ = document.querySelectorAll.bind(document);
+
+/**
+ * <3 JavaScript
+ * @type {(a: any, b: any) => boolean}
+ */
+function equals(a, b) {
+    if (a === b)  return true;
+    if (typeof a !== typeof b)  return false;
+    if (typeof a !== 'object')  return false;
+    if (Object.keys(a).length !== Object.keys(b).length)  return false;
+    for (const key of Object.keys(a)) {
+        if (!equals(a[key], b[key]))  return false;
+    }
+    return true;
+}
 
 /**
  * @type {(transform: Transform, vec2: Vec2) => Vec2}
@@ -1062,57 +1096,101 @@ function handleUserEventsOnMap() {
 async function maybeFetchVertices() {
     if (isVerticesRequestPending)  return;
 
-    const targetTransform = (map.animations.length) ? map.animations[0].end : map.currentTransform;
-    const targetBox       = getEnvelope(getMapCorners(map.width, map.height, targetTransform));
-    const election        = elections[currentElectionIndex];
+    const election = elections[currentElectionIndex];
 
-    let same = true;
-    if (election !== electionWhenVerticesLastRequested) {
-        same = false;
-    } else {
-        for (let i = 0; i < targetBox.length; i++) {
-            const current = mapBoxWhenVerticesLastRequested[i];
-            const target  = targetBox[i];
-            if (current.x !== target.x || current.y !== target.y) {
-                same = false;
-                break;
-            }
-        }
-    }
-    if (same)  return;
+    if (!tileStore[election.id])  tileStore[election.id] = {};
+    const dynamicTileset = tileStore[election.id];
 
-    isVerticesRequestPending          = true;
-    mapBoxWhenVerticesLastRequested   = targetBox;
-    electionWhenVerticesLastRequested = election;
-
-    let url = '../bin/vertices';
-    url += '?';
-    url += '&x0=' + targetBox[0].x;
-    url += '&y0=' + targetBox[0].y;
-    url += '&x1=' + targetBox[1].x;
-    url += '&y1=' + targetBox[1].y;
+    let scaleExp = Math.log2(map.currentTransform.scale);
+    scaleExp = Math.round(scaleExp); //|Todo: Allow rounding to a finer gradient than whole numbers.
 
     // UPP: Map units per pixel. Increases as you zoom out.
-    const upp = 1/targetTransform.scale;
-    url += '&upp=' + upp;
+    const upp = Math.pow(2, -scaleExp);
 
-    url += '&election=' + election.id;
+    if (!dynamicTileset[upp])  dynamicTileset[upp] = {};
+    const tileset = dynamicTileset[upp];
 
-    const response = await fetch(url);
-    const data = await response.arrayBuffer();
+    const pixelsPerTile = 512;
+    const tileSize = pixelsPerTile*upp;
 
-    vertices = new Float32Array(data);
+    /** @type Tileset */
+    const subset = {};
+    {
+        const [min, max] = getEnvelope(getMapCorners(map.width, map.height, map.currentTransform));
 
+        const minX = tileSize*Math.floor(min.x/tileSize);
+        const minY = tileSize*Math.floor(min.y/tileSize);
+        const maxX = tileSize*Math.ceil(max.x/tileSize);
+        const maxY = tileSize*Math.ceil(max.y/tileSize);
+
+        // The while loop below is equivalent to a nested for loop of the form:
+        //  for (let x = minX; x <= maxX; x += tileSize) {
+        //      for (let y = minY; y <= maxY; y += tileSize) {
+        //      }
+        //  }
+        // We made it unnested so we could break out of it. Then we ended up returning instead of breaking out... |Cleanup.
+        let x = minX;
+        let y = minY;
+        while (x <= maxX) {
+            const key = x + ',' + y;
+
+            if (!tileset[key]) {
+                // We don't have all the tiles we need.
+                isVerticesRequestPending = true;
+
+                let url = '../bin/vertices';
+                url += '?';
+                url += '&x0=' + x;
+                url += '&y0=' + y;
+                url += '&x1=' + (x + tileSize);
+                url += '&y1=' + (y + tileSize);
+                url += '&upp=' + upp;
+                url += '&election=' + election.id;
+
+                const response = await fetch(url);
+                const data = await response.arrayBuffer();
+
+                tileset[key] = new Float32Array(data);
+
+                isVerticesRequestPending = false;
+
+                return;
+            }
+
+            subset[key] = tileset[key];
+
+            y += tileSize;
+            if (y <= maxY)  continue;
+            y = minY;
+            x += tileSize;
+        }
+    }
+
+    // We have all the tiles we need.
+
+    if (equals(subset, currentTileset))  return;
+
+    let totalNumFloats = 0;
+    for (const key of Object.keys(subset))  totalNumFloats += subset[key].length;
+
+    vertices = new Float32Array(totalNumFloats);
+    {
+        let i = 0;
+        for (const key of Object.keys(subset)) {
+            vertices.set(subset[key], i);
+            i += subset[key].length;
+        }
+    }
     updateVertices = true;
 
-    // Fetch labels.
+    currentTileset = subset;
+
+    // Fetch labels. |Cleanup: This needs to move elsewhere now.
     {
         const response = await fetch(`../bin/labels.json?election=${election.id}`);
 
         labels = await response.json();
     }
-
-    isVerticesRequestPending = false;
 }
 
 function applyAnimationsToMap() {
