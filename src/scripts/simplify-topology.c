@@ -13,11 +13,19 @@ typedef Map(s32, Edge)  Topology;
 
 struct Edge {
     //
-    // We get the terms "next left edge" and "next right edge" from Postgis. If you walked
+    // We get the terms "next left edge" and "next right edge" from PostGIS. If you walked
     // on the left side of the path, the next edge you'd come to would be the next left edge.
     // The next right edge is the one you'd come to if you were on the other side, facing
-    // the opposite direction. If on your walk you first come to the end of the next edge,
-    // not the start, the ref is negative, as in Postgis.
+    // the opposite direction. If, on your walk, you first come to the end of the next edge,
+    // rather than the start, the ref is negative.
+    //
+    //   \   /prev_left                                          next_left|
+    //    \ /                             edge->                          |
+    //     X--------------------------------------------------------------+-----
+    //    / \                                                             |
+    //   /   \next_right                                        prev_right|
+    //
+    // Edges store references to their next neighbours only.
     //
     s32     next_refs[2]; // Next left edge, next right edge.
 
@@ -55,7 +63,7 @@ void map_reserve_(void **keys, void **vals, s64 *count, s64 *limit, s64 new_limi
 
     // Resize the key/value arrays.
     {
-        *limit = round_up_pow2(new_limit+1);
+        *limit = round_up_pow2(new_limit+1);//|Cleanup: I don't think we should add 1. Callers should know they need to reserve one more than they need. They should do the rounding themselves as well.
 
         *keys = (u8 *)*keys - key_size;
         *vals = (u8 *)*vals - val_size;
@@ -175,33 +183,35 @@ char_array *get_topology_printed(Topology *topology, Memory_context *context)
 
             for (int side = 0; side < 2; side++) {
                 face.count = 0;
-                // To make sure we only add each face once, we'll only add a face when we come to its lowest edge ID.
-                bool lowest = false;
-                bool reverse = side;
-                Edge *e = edge;
-                while (true) {
-                    for (s64 i = 0; i < e->geom.count; i++) {
-                        s64 index = (!reverse)? i : e->geom.count-1-i;
-                        Vector2 point = e->geom.data[index];
-                        if (i || !face.count) {
-                            *Add(&face) = point;
-                        } else {
-                            assert(same_point(face.data[face.count-1], point));
-                        }
-                    }
 
-                    s32 next_id = e->next_refs[reverse];
-                    if (next_id < 0) {
-                        next_id = -next_id;
-                        reverse = true;
-                    } else {
-                        reverse = false;
+                // To make sure we only add each face once, we'll only add a face when we come to its lowest edge ID.
+                bool lowest = true;
+
+                for (s64 i = 0; i < edge->geom.count; i++) {
+                    Vector2 p = edge->geom.data[side ? edge->geom.count-1-i : i];
+                    *Add(&face) = p;
+                }
+
+                s32 next_ref = edge->next_refs[side];
+                while (true) {
+                    s32 next_id = abs(next_ref);
+                    if (next_id < edge_id) {
+                        lowest = false;
+                        break;
                     }
-                    if (next_id == edge_id)  lowest = true;
-                    if (next_id <= edge_id)  break;
 
                     assert(IsSet(topology, next_id));
-                    e = Get(topology, next_id);
+                    Edge *e = Get(topology, next_id);
+
+                    for (s64 i = 0; i < e->geom.count; i++) {
+                        Vector2 p = e->geom.data[next_ref < 0 ? e->geom.count-1-i : i];
+                        if (!i)  assert(same_point(p, face.data[face.count-1]));
+                        else     *Add(&face) = p;
+                    }
+
+                    if (e->next_refs[next_ref < 0] == (side ? -edge_id : edge_id))  break;
+
+                    next_ref = e->next_refs[next_ref < 0];
                 }
                 if (!lowest)  continue;
 
@@ -227,8 +237,8 @@ char_array *get_topology_printed(Topology *topology, Memory_context *context)
                 float x = face->data[j].v[0];
                 float y = face->data[j].v[1];
 
-                if (!j)  append_string(out, "%.1f %.1f", x, y);
-                else     append_string(out, ", %.1f %.1f", x, y);
+                if (!j)  append_string(out, "%.0f %.0f", x, y);
+                else     append_string(out, ", %.0f %.0f", x, y);
             }
             append_string(out, "))");
         }
@@ -324,23 +334,19 @@ void simplify_topology(Topology *topology, Memory_context *scratch)
 
         if (edge->outer)  continue;
 
+        // The first task is to follow the edges to construct the face on both sides of the current edge.
+        // As we do so, we'll collect a couple things:
+        // - The ID of the edge on this side just before the current edge. These will be positive if the current edge is their next left edge, or negative if the current edge is their next right edge.
+        s32   prev_refs[2];
+        // - And some statistics about the geometry of each face.
+        float area[2];
+        float perim[2];
+        float thickness[2];
+
         for (int side = 0; side < 2; side++) {
             face.count = 0;
 
-            //
-            // It's like this. The direction of the edge depends on which side we're considering.
-            //
-            //   \   /prev_left                                          next_left|
-            //    \ /                             edge->                          |
-            //     X--------------------------------------------------------------+-----
-            //    / \                                                             |
-            //   /   \next_right                                        prev_right|
-            //
-
-            // These will be positive if the current edge is their next left edge, or negative if the current edge is their next right edge.
-            s32 prev_refs[2] = {0};
-
-            // Construct the current side's face geometry.
+            // Construct the geometry of the current side's face.
             {
                 for (s64 i = 0; i < edge->geom.count; i++) {
                     Vector2 p = edge->geom.data[side ? edge->geom.count-1-i : i];
@@ -371,71 +377,63 @@ void simplify_topology(Topology *topology, Memory_context *scratch)
             }
             assert(face.count && same_point(face.data[0], face.data[face.count-1]));
 
-            // We have a face. Test whether we should remove it.
-
-            float area  = get_ring_area(face.data, face.count);
-            float perim = get_path_length(face.data, face.count);
-            float ratio = (4*PI*area)/(perim*perim); // A measure of thickness. A circle is 1. Everything else is less.
-
-            bool keep = false; //|Todo: Make these numbers configurable.
-            keep |= (area > 10000000000);
-            keep |= (area >   100000000 && ratio > 0.1);
-            keep |= (area >    20000000 && ratio > 0.125);
-            keep |= (area >     3000000 && ratio > 0.14);
-            keep |= (area >      431000 && ratio > 0.15);
-            keep |= (area >      300000 && ratio > 0.4);
-            keep |= (area >      125000 && ratio > 0.55);
-            if (keep)  continue;
-
-            // We are going to delete the edge.
-            // Make sure we recurse until we do a full loop without deleting any edges.
-            done = false;
-
-            // Circle around the other side's face to find the other edge that references this edge ID.
-            {
-                s32 next_ref = edge->next_refs[!side];
-                while (true) {
-                    s32 next_id = abs(next_ref);
-                    assert(IsSet(topology, next_id));
-                    Edge *e = Get(topology, next_id);
-
-                    if (e->next_refs[next_ref < 0] == (!side ? -edge_id : edge_id)) {
-                        prev_refs[!side] = next_ref;
-                        break;
-                    }
-
-                    next_ref = e->next_refs[next_ref < 0];
-                }
-
-                if (prev_refs[!side] < 0)  assert(abs(Get(topology, -prev_refs[!side])->next_refs[1]) == edge_id);
-                else                      assert(abs(Get(topology,  prev_refs[!side])->next_refs[0]) == edge_id);
-            }
-
-            // Update the references to the deleted edge's ID.
-            {
-                for (int side = 0; side < 2; side++) {
-                    s32 prev_id = abs(prev_refs[side]);
-                    if (prev_id == edge_id)  continue;
-
-                    assert(IsSet(topology, prev_id));
-                    Edge *prev = Get(topology, prev_id);
-
-                    s32 new_ref = (abs(edge->next_refs[!side]) == edge_id) ? edge->next_refs[side] : edge->next_refs[!side];
-
-                    prev->next_refs[prev_refs[side] < 0] = new_ref;
-                    printf("Updated (edge %d)->next_refs[%d] to %d.\n", prev_id, prev_refs[side] < 0, new_ref);
-                }
-            }
-
-            Delete(topology, edge_id);
-            printf("Deleted edge %d.\n", edge_id);
-
-            remove_dangling_edges(topology);
-
-            break;
+            area[side]  = get_ring_area(face.data, face.count);
+            perim[side] = get_path_length(face.data, face.count);
+            thickness[side] = (4*PI*area[side])/(perim[side]*perim[side]);
         }
+
+        // Test whether we should merge the faces by deleting the edge.
+        bool remove_edge = false;
+
+        for (int side = 0; side < 2; side++) {
+            bool keep_face = false;
+
+            // We'll only keep the face if it's a shape we like.
+            keep_face |= (area[side] > 1000000000);
+            keep_face |= (area[side] >   84000000 && thickness[side] > 0.049);
+            keep_face |= (area[side] >   52000000 && thickness[side] > 0.05);
+            keep_face |= (area[side] >   11000000 && thickness[side] > 0.06);
+            keep_face |= (area[side] >    5700000 && thickness[side] > 0.13);
+            keep_face |= (area[side] >    3200000 && thickness[side] > 0.14);
+            keep_face |= (area[side] >     430000 && thickness[side] > 0.15);
+            keep_face |= (area[side] >     300000 && thickness[side] > 0.53);
+
+            // We'll always remove the face if it's a sliver compared to its neighbour.
+            keep_face &= !(area[side] < 0.00002*area[!side]); // This narrowly avoids Lingiari eating Solomon.
+            keep_face &= !(area[side] < 0.001*area[!side] && thickness[side] < 0.15); // This targets the huge slivers in the border between O'Connor and Durack.
+
+            if (!keep_face) {
+                remove_edge = true;
+                break;
+            }
+        }
+
+        if (!remove_edge)  continue;
+
+        // We are going to delete the edge.
+        done = false;
+
+        // Update the references to the deleted edge's ID.
+        for (int side = 0; side < 2; side++) {
+            s32 prev_id = abs(prev_refs[side]);
+            if (prev_id == edge_id)  continue;
+
+            assert(IsSet(topology, prev_id));
+            Edge *prev = Get(topology, prev_id);
+
+            s32 new_ref = (abs(edge->next_refs[!side]) == edge_id) ? edge->next_refs[side] : edge->next_refs[!side];
+
+            prev->next_refs[prev_refs[side] < 0] = new_ref;
+            printf("Updated (edge %d)->next_refs[%d] to %d.\n", prev_id, prev_refs[side] < 0, new_ref);
+        }
+
+        Delete(topology, edge_id);
+        printf("Deleted edge %d.\n", edge_id);
+
+        remove_dangling_edges(topology);
     }
 
+    // Recurse until we do a full loop without deleting any edges.
     if (!done)  simplify_topology(topology, ctx);
 }
 
@@ -445,13 +443,11 @@ int main()
 
     PGconn *db = connect_to_database("postgres://postgres:postgisclarity@osm.tal/gis");
 
-    Topology *topo = load_topology(db, "jpj_topo", ctx);
+    Topology *topo = load_topology(db, "district_topo3", ctx);
 
     simplify_topology(topo, NULL);
 
     char_array *printed = get_topology_printed(topo, ctx);
-
-    printf("Faces:\n%s\n", printed->data);
 
     write_array_to_file(printed, "topo.txt");
 
