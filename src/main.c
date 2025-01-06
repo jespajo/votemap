@@ -113,11 +113,11 @@ Response serve_vertices(Request *request, Memory_context *context)
         "       inner join party p on (p.election_id = v.election_id and c.party_id = p.id)                                 "
         "     where v.count_type = '2CP' and v.elected                                                                      "
         "   ) t on (t.election_id = d.election_id and t.district_id = d.id)                                                 "
-        " where d.bounds && st_setsrid(st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), 3577)  "
+        " where d.bounds_clipped && st_setsrid(st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), 3577)  "
         "   and d.election_id = $6::int                                                                                     "
         // Order by the size of the face's bounding box. This is so that larger polygons don't cover smaller
         // ones, because we don't draw inner rings yet. |Todo
-        " order by st_area(box2d(d.bounds)) desc                                                                            "
+        " order by st_area(box2d(d.bounds_clipped)) desc                                                                            "
         ;
 
         Postgres_result *result = query_database(db, query, &params, ctx);
@@ -252,11 +252,11 @@ Response serve_districts(Request *request, Memory_context *context)
     " from (                                   "
     "     select id,                           "
     "       name,                              "
-    "       st_centroid(bounds) as centroid,   "
-    "       box2d(bounds) as box               "
+    "       st_centroid(bounds_clipped) as centroid,   "
+    "       box2d(bounds_clipped) as box               "
     "     from district                        "
     "     where election_id = $1::int          "
-    "     order by st_area(bounds) desc        "
+    "     order by st_area(bounds_clipped) desc        "
     "   ) t                                    "
     ;
 
