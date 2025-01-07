@@ -1,3 +1,16 @@
+Finish off "seats won" bar chart.
+    Add a label and dashed line showing the target value.
+    Make the bar labels appear on the right side of the bar if there isn't room in the bar itself.
+    Get it to fetch and use data from the backend.
+
+UI features:
+    In polling booth mode, show a 2CP chart just below the election name.
+    In polling booth mode, show a FP chart below the 2CP chart.
+
+Web server:
+    Add stress tests.
+    Make it multithreaded.
+
 Improve labels.
     Merge serve_vertices() and serve_labels() on the backend so they make the same set of database queries.
     Make labels only exist in the data if the shapes they correspond to appear on the page.
@@ -19,12 +32,6 @@ Redo the maps and topology.
     Cut out rivers from the coastline.
     Make sure Franklin exists.
 
-Add an overall election result graph to the main panel that shows the number of seats won by each party.
-
-In polling booth mode, show a 2CP chart just below the election name.
-
-In polling booth mode, show a FP chart below the 2CP chart.
-
 Figure out what to do about our RAM slowly filling up with cached SQL queries.
 
 In the default view, below the overall results chart in the panel, add a list of all electorates and allow tapping on them to go into that electorate's view.
@@ -37,8 +44,6 @@ Further improve labels.
     Update the label placer so that labels only occupy those tiles they actually touch when the map is rotated.
     Add some labels to roads and rivers.
 
-Web server: do fuzzing.
-
 Web server:
     Use getaddrinfo().
     Support IPv6.
@@ -46,7 +51,6 @@ Web server:
     Parse request bodies; support POST requests.
     Support Connection: Keep-Alive.
     Support Windows.
-    Make it multithreaded.
 
 Front end: draw map legend scale (e.g. show a line equal to 5km for reference).
 

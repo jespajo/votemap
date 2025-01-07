@@ -410,7 +410,7 @@ function interpolateTransform(start, end, t) {
     // - the angle inside the triangle at point C is equal to the rotation being applied in the animation, and
     // - the ratio of the lengths of the sides AC and BC is equal to the scale being applied in the animation.
     // You make it look smooth by ensuring that point C doesn't move for the duration of the animation.
-    // (This triangle gets drawn on the screen if debugSlerp is true.)
+    // (To see what's going on, this triangle gets drawn on the screen if debugSlerp is true.)
     //
     if ((start.scale == end.scale) && (start.rotate == end.rotate)) {
         // The interpolation does not change scale or rotation. We will skip most of the computations and return early.
@@ -436,7 +436,7 @@ function interpolateTransform(start, end, t) {
     const scaleRatio = end.scale/start.scale;
 
     let drot = end.rotate - start.rotate;
-    if (drot < -Math.PI)       drot += 2*Math.PI; // Take the shortest path.
+    if (drot < -Math.PI)       drot += 2*Math.PI; // Take the shortest arc.
     else if (drot > Math.PI)   drot -= 2*Math.PI;
 
     const rotate = lerp(start.rotate, start.rotate+drot, t);
@@ -651,6 +651,8 @@ async function loadFonts() {
         "title":                "../fonts/RadioCanada.500.90.woff2",
         "button-active":        "../fonts/RadioCanada.700.90.woff2",
         "button-inactive":      "../fonts/RadioCanada.300.90.woff2",
+        "chart-title":          "../fonts/RadioCanada.700.80.woff2",
+        "chart-label":          "../fonts/RadioCanada.500.90.woff2",
     };
 
     const promises = {};
@@ -1407,9 +1409,9 @@ function drawLabels() {
 
         const labelRect = {x: textX, y: textY, width: textX1-textX, height: textY1-textY};
 
-        let textColour    = 'black';
-        let outlineColour = 'lightgrey';
-        let hoverOutline  = 'white';
+        let textColour    = 'white';
+        let outlineColour = 'black';
+        let hoverOutline  = 'grey';
 
         const [flags] = getPointerFlags(labelRect, Layer.MAP);
 
@@ -1715,7 +1717,86 @@ function drawPanel() {
 
         ui.restore();
     }
+    panelY += panelPadding;
 
+    // Draw a horizontal bar chart showing the results for the election as a whole.
+    // |Todo: Factor this into a function that takes a config and rect and returns the chart height.
+    {
+        // Chart config:
+        const titleText = "Seats won";
+        const bars = [
+            {label: "ALP",   colour: "#c31f2f", value: 77},
+            {label: "LNP",   colour: "#19488f", value: 58},
+            {label: "Other", colour: "#808080", value: 16},
+        ];
+        const showTarget  = true;
+        const targetValue = 76;
+        const targetLabel = targetValue + " to win";
+
+        // Style constants:
+        const titleHeight    = 15;
+        const barHeight      = 17;
+        const gapHeight      =  3; // This is used both under the title and between bars.
+
+        const titleColour    = "black";
+        const barLabelColour = "white";
+
+        // Computed variables:
+        const barTextHeight  = Math.floor(0.75*barHeight);
+        const barTextPadding = Math.ceil((barHeight - barTextHeight)/2); // ceil() because this will be added to the y value at the top of the bar. So if there's an extra pixel it gets added to the top.
+
+        let maxValue = 0;
+        if (showTarget)  maxValue = targetValue;
+        for (const bar of bars) {
+            if (maxValue < bar.value)  maxValue = bar.value;
+        }
+        if (maxValue == 0)  throw new Error(); //|Temporary: Avoid divide-by-zero below.
+
+        //
+        // Draw!
+        //
+        let y = panelY;
+
+        ui.font = titleHeight + 'px chart-title';
+        ui.fillStyle = titleColour;
+        const titleWidth = ui.measureText(titleText).width;
+        const titleX = panelX + panelWidth/2 - titleWidth/2;
+        ui.fillText(titleText, titleX, y);
+
+        y += titleHeight + gapHeight;
+
+        for (let barIndex = 0; barIndex < bars.length; barIndex++) {
+            if (barIndex > 0)  y += gapHeight;
+
+            const bar = bars[barIndex];
+
+            // Draw the bar.
+            const barWidth = (bar.value/maxValue)*panelWidth;
+
+            ui.fillStyle = bar.colour;
+            ui.fillRect(panelX, y, barWidth, barHeight);
+
+            // Draw the two bar labels:
+            ui.font = barTextHeight + 'px chart-label';
+            ui.fillStyle = barLabelColour;
+
+            // 1. The name of the bar on the left.
+            ui.fillText(bar.label, panelX + barTextPadding, y + barTextPadding);
+
+            // 2. The value of the bar on the right.
+            //|Todo: Put it on the right side of the bar if there's not room.
+            const valueText = '' + bar.value;
+            const valueWidth = ui.measureText(valueText).width;
+            const valueX = panelX + barWidth - barTextPadding - valueWidth;
+            ui.fillText(valueText, valueX, y + barTextPadding);
+
+            y += barHeight;
+        }
+
+        //|Todo: Draw the dashed line and label for the target.
+
+        panelY = y;
+    }
     panelY += panelPadding;
 
     // For the next frame, set the panel's height to the used height.
@@ -1892,7 +1973,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     ui = $("canvas#gui").getContext("2d");
 
-    // When the page loads, fit Australia on the screen. |Cleanup
+    // When the page loads, fit Australia on the screen.
     {
         map.width  = document.body.clientWidth+1;
         map.height = document.body.clientHeight+1;
