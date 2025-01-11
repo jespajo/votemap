@@ -1,8 +1,9 @@
 Finish off "seats won" bar chart.
     Add a label and dashed line showing the target value.
-    Make the bar labels appear on the right side of the bar if there isn't room in the bar itself.
+    Factor it out into a function.
 
 UI features:
+    Add polling booth mode where we show the name of the polling booth as the main title.
     In polling booth mode, show a 2CP chart just below the election name.
     In polling booth mode, show a FP chart below the 2CP chart.
 

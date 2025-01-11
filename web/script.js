@@ -1807,18 +1807,36 @@ function drawPanel() {
             ui.fillRect(panelX, y, barWidth, barHeight);
 
             // Draw the two bar labels:
-            ui.font = barTextHeight + 'px chart-label';
-            ui.fillStyle = barLabelColour;
-
             // 1. The name of the bar on the left.
-            ui.fillText(bar.label, panelX + barTextPadding, y + barTextPadding);
+            ui.font = barTextHeight + 'px chart-label';
+            const labelWidth = ui.measureText(bar.label).width;
+            const labelFits = labelWidth <= barWidth - 2*barTextPadding;
+            if (labelFits) {
+                // Put the label on the bar.
+                ui.fillStyle = barLabelColour;
+                ui.fillText(bar.label, panelX + barTextPadding, y + barTextPadding);
+            } else {
+                // Put the label to the right of the bar.
+                ui.fillStyle = titleColour;
+                ui.fillText(bar.label, panelX + barWidth + barTextPadding, y + barTextPadding);
+            }
 
             // 2. The value of the bar on the right.
-            //|Todo: Put it on the right side of the bar if there's not room.
             const valueText = '' + bar.value;
             const valueWidth = ui.measureText(valueText).width;
-            const valueX = panelX + barWidth - barTextPadding - valueWidth;
-            ui.fillText(valueText, valueX, y + barTextPadding);
+            const valueFits = valueWidth <= barWidth - 4*barTextPadding - labelWidth;
+            if (valueFits) {
+                // Put the value on the bar.
+                ui.fillStyle = barLabelColour;
+                const valueX = panelX + barWidth - barTextPadding - valueWidth;
+                ui.fillText(valueText, valueX, y + barTextPadding);
+            } else {
+                // Put the value next to the bar.
+                let valueX = panelX + barWidth + barTextPadding;
+                if (!labelFits)  valueX += labelWidth + 2*barTextPadding;
+                ui.fillStyle = titleColour;
+                ui.fillText(valueText, valueX, y + barTextPadding);
+            }
 
             y += barHeight;
         }
