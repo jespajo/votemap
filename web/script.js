@@ -655,7 +655,7 @@ async function loadFonts() {
     const fonts = {
         "map-electorate":       "../fonts/RadioCanada.500.80.woff2",
         "title":                "../fonts/RadioCanada.500.90.woff2",
-        "title-bold":           "../fonts/RadioCanada.700.90.woff2",
+        "title-condensed":      "../fonts/RadioCanada.400.80.woff2",
         "button-active":        "../fonts/RadioCanada.700.90.woff2",
         "button-inactive":      "../fonts/RadioCanada.300.90.woff2",
         "chart-title":          "../fonts/RadioCanada.700.80.woff2",
@@ -1584,9 +1584,14 @@ function drawPanel() {
         // Try drawing '<year> Federal Election' on one line. If there isn't room, just draw the year.
         {
             let text = electionYear + ' Federal Election';
-            if (!isTitle)  text = text.toUpperCase();
 
-            ui.font = textHeight + 'px title';
+            if (isTitle) {
+                ui.font = textHeight + 'px title';
+            } else {
+                text = text.toUpperCase();
+                ui.font = textHeight + 'px button-inactive';
+            }
+
             let textWidth = ui.measureText(text).width;
 
             let onlyYearDrawn = false;
@@ -1607,7 +1612,7 @@ function drawPanel() {
 
                 // Make the text bold if the user is hovering over it.
                 if (flags.hover) {
-                    ui.font = textHeight + 'px title-bold';
+                    ui.font = textHeight + 'px button-active';
                     textWidth = ui.measureText(text).width;
                     textX = panelX + panelWidth/2 - textWidth/2;
                 }
@@ -1746,142 +1751,179 @@ function drawPanel() {
     }
     panelY += panelPadding;
 
-    // Draw a horizontal bar chart showing the results for the election as a whole.
-    // |Todo: Factor this into a function that takes a config and rect and returns the chart height.
-    {
-        // Get data:
-        const election = elections[currentElectionIndex];
-        if (!election.seatsWon) {
-            election.seatsWon = {alp: 0, lnp: 0, etc: 0};
+    if (currentDistrictID < 0) {
+        //
+        // Election mode (we're looking at an election as a whole, no particular electorate).
+        //
 
-            (async function(){ //|Cleanup: Overall this seems like it could be simpler. Maybe we should store the bars variable directly instead of having the intermediate seatsWon variable?
-                const response = await fetch(`/elections/${election.id}/seats-won.json`);
-                const data     = await response.json();
+        // Draw a horizontal bar chart showing the results for the election as a whole.
+        // |Todo: Factor this into a function that takes a config and rect and returns the chart height.
+        {
+            // Get data:
+            const election = elections[currentElectionIndex];
+            if (!election.seatsWon) {
+                election.seatsWon = {alp: 0, lnp: 0, etc: 0};
 
-                for (const party of data) {
-                    switch (party.shortCode) {
-                        case 'ALP':
-                            election.seatsWon.alp += party.count;
-                            break;
-                        case 'LP':
-                        case 'NP':
-                        case 'LNP':
-                            election.seatsWon.lnp += party.count;
-                            break;
-                        default:
-                            election.seatsWon.etc += party.count;
+                (async function(){ //|Cleanup: Overall this seems like it could be simpler. Maybe we should store the bars variable directly instead of having the intermediate seatsWon variable?
+                    const response = await fetch(`/elections/${election.id}/seats-won.json`);
+                    const data     = await response.json();
+
+                    for (const party of data) {
+                        switch (party.shortCode) {
+                            case 'ALP':
+                                election.seatsWon.alp += party.count;
+                                break;
+                            case 'LP':
+                            case 'NP':
+                            case 'LNP':
+                                election.seatsWon.lnp += party.count;
+                                break;
+                            default:
+                                election.seatsWon.etc += party.count;
+                        }
                     }
+                })();
+            }
+
+            // Chart config:
+            const titleText = "Seats won";
+            const bars = [
+                {label: "ALP",   colour: "#c31f2f", value: election.seatsWon.alp},
+                {label: "LNP",   colour: "#19488f", value: election.seatsWon.lnp},
+                {label: "Other", colour: "#808080", value: election.seatsWon.etc},
+            ];
+            const showTarget  = true;
+            const targetValue = 76;
+            const targetLabel = targetValue + " to win";
+
+            // Style constants:
+            const titleHeight    = 15;
+            const barHeight      = 17;
+            const gapHeight      =  3; // This is used both under the title and between bars.
+
+            const titleColour    = "black";
+            const barLabelColour = "white";
+            const targetColour   = "grey";
+
+            // Computed variables:
+            const barTextHeight  = Math.floor(0.75*barHeight);
+            const barTextPadding = Math.ceil((barHeight - barTextHeight)/2); // ceil() because this will be added to the y value at the top of the bar. So if there's an extra pixel it gets added to the top.
+
+            let maxValue = 0;
+            if (showTarget)  maxValue = targetValue;
+            for (const bar of bars) {
+                if (maxValue < bar.value)  maxValue = bar.value;
+            }
+            if (maxValue == 0)  maxValue = 1; // Avoid dividing by zero.
+
+            //
+            // Draw!
+            //
+            let y = panelY;
+
+            // Draw the dashed line for the target. |Todo: Label the dashed line.
+            if (showTarget) {
+                ui.beginPath();
+                ui.setLineDash([3, 2]);
+                const targetX = panelX + (targetValue/maxValue)*panelWidth;
+                ui.moveTo(targetX, panelY);
+                const bottomY = panelY + titleHeight + bars.length*(gapHeight + barHeight);
+                ui.lineTo(targetX, bottomY);
+                ui.strokeStyle = targetColour;
+                ui.lineWidth = 1;
+                ui.stroke();
+            }
+
+            // Draw the title.
+            ui.font = titleHeight + 'px chart-title';
+            ui.fillStyle = titleColour;
+            const titleWidth = ui.measureText(titleText).width;
+            const titleX = panelX + panelWidth/2 - titleWidth/2;
+            ui.fillText(titleText, titleX, y);
+
+            y += titleHeight + gapHeight;
+
+            for (let barIndex = 0; barIndex < bars.length; barIndex++) {
+                if (barIndex > 0)  y += gapHeight;
+
+                const bar = bars[barIndex];
+
+                // Draw the bar.
+                const barWidth = (bar.value/maxValue)*panelWidth;
+
+                ui.fillStyle = bar.colour;
+                ui.fillRect(panelX, y, barWidth, barHeight);
+
+                // Draw the two bar labels:
+                // 1. The name of the bar on the left.
+                ui.font = barTextHeight + 'px chart-label';
+                const labelWidth = ui.measureText(bar.label).width;
+                const labelFits = labelWidth <= barWidth - 2*barTextPadding;
+                if (labelFits) {
+                    // Put the label on the bar.
+                    ui.fillStyle = barLabelColour;
+                    ui.fillText(bar.label, panelX + barTextPadding, y + barTextPadding);
+                } else {
+                    // Put the label to the right of the bar.
+                    ui.fillStyle = titleColour;
+                    ui.fillText(bar.label, panelX + barWidth + barTextPadding, y + barTextPadding);
                 }
-            })();
-        }
 
-        // Chart config:
-        const titleText = "Seats won";
-        const bars = [
-            {label: "ALP",   colour: "#c31f2f", value: election.seatsWon.alp},
-            {label: "LNP",   colour: "#19488f", value: election.seatsWon.lnp},
-            {label: "Other", colour: "#808080", value: election.seatsWon.etc},
-        ];
-        const showTarget  = true;
-        const targetValue = 76;
-        const targetLabel = targetValue + " to win";
+                // 2. The value of the bar on the right.
+                const valueText = '' + bar.value;
+                const valueWidth = ui.measureText(valueText).width;
+                const valueFits = valueWidth <= barWidth - 4*barTextPadding - labelWidth;
+                if (valueFits) {
+                    // Put the value on the bar.
+                    ui.fillStyle = barLabelColour;
+                    const valueX = panelX + barWidth - barTextPadding - valueWidth;
+                    ui.fillText(valueText, valueX, y + barTextPadding);
+                } else {
+                    // Put the value next to the bar.
+                    let valueX = panelX + barWidth + barTextPadding;
+                    if (!labelFits)  valueX += labelWidth + 2*barTextPadding;
+                    ui.fillStyle = titleColour;
+                    ui.fillText(valueText, valueX, y + barTextPadding);
+                }
 
-        // Style constants:
-        const titleHeight    = 15;
-        const barHeight      = 17;
-        const gapHeight      =  3; // This is used both under the title and between bars.
-
-        const titleColour    = "black";
-        const barLabelColour = "white";
-        const targetColour   = "grey";
-
-        // Computed variables:
-        const barTextHeight  = Math.floor(0.75*barHeight);
-        const barTextPadding = Math.ceil((barHeight - barTextHeight)/2); // ceil() because this will be added to the y value at the top of the bar. So if there's an extra pixel it gets added to the top.
-
-        let maxValue = 0;
-        if (showTarget)  maxValue = targetValue;
-        for (const bar of bars) {
-            if (maxValue < bar.value)  maxValue = bar.value;
-        }
-        if (maxValue == 0)  maxValue = 1; // Avoid dividing by zero.
-
-        //
-        // Draw!
-        //
-        let y = panelY;
-
-        // Draw the dashed line for the target. |Todo: Label the dashed line.
-        if (showTarget) {
-            ui.beginPath();
-            ui.setLineDash([3, 2]);
-            const targetX = panelX + (targetValue/maxValue)*panelWidth;
-            ui.moveTo(targetX, panelY);
-            const bottomY = panelY + titleHeight + bars.length*(gapHeight + barHeight);
-            ui.lineTo(targetX, bottomY);
-            ui.strokeStyle = targetColour;
-            ui.lineWidth = 1;
-            ui.stroke();
-        }
-
-        // Draw the title.
-        ui.font = titleHeight + 'px chart-title';
-        ui.fillStyle = titleColour;
-        const titleWidth = ui.measureText(titleText).width;
-        const titleX = panelX + panelWidth/2 - titleWidth/2;
-        ui.fillText(titleText, titleX, y);
-
-        y += titleHeight + gapHeight;
-
-        for (let barIndex = 0; barIndex < bars.length; barIndex++) {
-            if (barIndex > 0)  y += gapHeight;
-
-            const bar = bars[barIndex];
-
-            // Draw the bar.
-            const barWidth = (bar.value/maxValue)*panelWidth;
-
-            ui.fillStyle = bar.colour;
-            ui.fillRect(panelX, y, barWidth, barHeight);
-
-            // Draw the two bar labels:
-            // 1. The name of the bar on the left.
-            ui.font = barTextHeight + 'px chart-label';
-            const labelWidth = ui.measureText(bar.label).width;
-            const labelFits = labelWidth <= barWidth - 2*barTextPadding;
-            if (labelFits) {
-                // Put the label on the bar.
-                ui.fillStyle = barLabelColour;
-                ui.fillText(bar.label, panelX + barTextPadding, y + barTextPadding);
-            } else {
-                // Put the label to the right of the bar.
-                ui.fillStyle = titleColour;
-                ui.fillText(bar.label, panelX + barWidth + barTextPadding, y + barTextPadding);
+                y += barHeight;
             }
 
-            // 2. The value of the bar on the right.
-            const valueText = '' + bar.value;
-            const valueWidth = ui.measureText(valueText).width;
-            const valueFits = valueWidth <= barWidth - 4*barTextPadding - labelWidth;
-            if (valueFits) {
-                // Put the value on the bar.
-                ui.fillStyle = barLabelColour;
-                const valueX = panelX + barWidth - barTextPadding - valueWidth;
-                ui.fillText(valueText, valueX, y + barTextPadding);
-            } else {
-                // Put the value next to the bar.
-                let valueX = panelX + barWidth + barTextPadding;
-                if (!labelFits)  valueX += labelWidth + 2*barTextPadding;
-                ui.fillStyle = titleColour;
-                ui.fillText(valueText, valueX, y + barTextPadding);
-            }
-
-            y += barHeight;
+            panelY = y;
         }
+        panelY += panelPadding;
+    } else {
+        //
+        // District mode (we're focused on one particular electorate).
+        //
 
-        panelY = y;
+        const election = elections[currentElectionIndex];
+        if (!election.districts || !Object.keys(election.districts).length) {
+            // The districts for the current election haven't loaded yet. Pass.
+        } else if (!election.districts[currentDistrictID]) {
+            // The districts for the current election have loaded, but the previously-selected district
+            // isn't in the currently-selected election. Revert to election mode.
+            currentDistrictID = -1;
+        } else {
+            const district = election.districts[currentDistrictID];
+
+            // Draw the district name.
+            const text = district.name.toUpperCase();
+            const textHeight = 30;
+            ui.font = textHeight + 'px title';
+            let textWidth = ui.measureText(text).width;
+            if (textWidth > panelWidth) {
+                ui.font = textHeight + 'px title-condensed';
+                textWidth = ui.measureText(text).width;
+            }
+            const textX = panelX + panelWidth/2 - textWidth/2;
+            ui.fillStyle = 'black';
+            ui.fillText(text, textX, panelY);
+
+            panelY += textHeight;
+        }
+        panelY += panelPadding;
     }
-    panelY += panelPadding;
 
     // For the next frame, set the panel's height to the used height.
     panelRect.height = panelY - panelRect.y;
