@@ -1770,6 +1770,7 @@ function drawPanel() {
 
         const titleColour    = "black";
         const barLabelColour = "white";
+        const targetColour   = "grey";
 
         // Computed variables:
         const barTextHeight  = Math.floor(0.75*barHeight);
@@ -1780,13 +1781,27 @@ function drawPanel() {
         for (const bar of bars) {
             if (maxValue < bar.value)  maxValue = bar.value;
         }
-        if (maxValue == 0)  throw new Error(); //|Temporary: Avoid divide-by-zero below.
+        if (maxValue == 0)  maxValue = 1; // Avoid dividing by zero.
 
         //
         // Draw!
         //
         let y = panelY;
 
+        // Draw the dashed line for the target. |Todo: Label the dashed line.
+        if (showTarget) {
+            ui.beginPath();
+            ui.setLineDash([3, 2]);
+            const targetX = panelX + (targetValue/maxValue)*panelWidth;
+            ui.moveTo(targetX, panelY);
+            const bottomY = panelY + titleHeight + bars.length*(gapHeight + barHeight);
+            ui.lineTo(targetX, bottomY);
+            ui.strokeStyle = targetColour;
+            ui.lineWidth = 1;
+            ui.stroke();
+        }
+
+        // Draw the title.
         ui.font = titleHeight + 'px chart-title';
         ui.fillStyle = titleColour;
         const titleWidth = ui.measureText(titleText).width;
@@ -1840,8 +1855,6 @@ function drawPanel() {
 
             y += barHeight;
         }
-
-        //|Todo: Draw the dashed line and label for the target.
 
         panelY = y;
     }
