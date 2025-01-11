@@ -161,7 +161,7 @@ Parsed_JSON parse_json(char *source, s64 length, Memory_context *context)
     }
 
     if (remainder[0] == '{') {
-        parsed.json.type         = JSON_OBJECT;
+        parsed.json.type   = JSON_OBJECT;
         parsed.json.object = NewDict(parsed.json.object, context);
 
         remainder = trim_left(remainder+1, WHITESPACE);

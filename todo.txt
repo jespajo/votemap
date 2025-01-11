@@ -1,7 +1,6 @@
 Finish off "seats won" bar chart.
     Add a label and dashed line showing the target value.
     Make the bar labels appear on the right side of the bar if there isn't room in the bar itself.
-    Get it to fetch and use data from the backend.
 
 UI features:
     In polling booth mode, show a 2CP chart just below the election name.
@@ -31,6 +30,12 @@ When you tap on an electorate label:
 Redo the maps and topology.
     Cut out rivers from the coastline.
     Make sure Franklin exists.
+
+Database schema changes:
+    Add party_id columns to the votes tables, to allow joining with the parties without needing the candidate table middle man.
+    Add updated_at columns to the votes tables.
+
+Why does clicking on Lingiari specifically result in showing a much larger area than expected?
 
 Figure out what to do about our RAM slowly filling up with cached SQL queries.
 

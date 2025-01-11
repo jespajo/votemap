@@ -274,6 +274,50 @@ Response serve_districts(Request *request, Memory_context *context)
     return response;
 }
 
+Response serve_seats_won(Request *request, Memory_context *context)
+// Serve a summary of the number of seats won by each party for a particular election, for drawing the "Seats won" chart.
+{
+    Memory_context *ctx = context;
+
+    PGconn *db = connect_to_database(DATABASE_URL);
+
+    char *query =
+    " select jsonb_agg(to_jsonb(t.*))::text as json                    "
+    " from (                                                           "
+    "     select p.short_code as \"shortCode\",                        "
+    "       count(*)                                                   "
+    "     from contest_vote v                                          "
+    "     join candidate c                                             "
+    "       on c.election_id = v.election_id and c.id = v.candidate_id "
+    "     left join party p                                            "
+    "       on p.election_id = v.election_id and p.id = c.party_id     "
+    "     where v.count_type = '2CP' and v.elected                     "
+    "       and v.election_id = $1::int                                "
+    "     group by p.short_code                                        "
+    "   ) t                                                            "
+    ;
+
+    string_array params = {.context = ctx};
+    {
+        char *election = request->captures.data[0];  assert(election);
+        *Add(&params) = election;
+    }
+
+    Postgres_result *result = query_database(db, query, &params, ctx);
+
+    assert(*Get(&result->columns, "json") == 0);
+    assert(result->rows.count == 1); //|Bug: There may be 0 rows if the election ID in the request path does not exist. Currently in this case there's a segfault.
+
+    u8_array *json = &result->rows.data[0].data[0];
+
+    Response response = {200, .body = json->data, .size = json->count};
+
+    response.headers = (string_dict){.context = ctx};
+    *Set(&response.headers, "content-type") = "application/json";
+
+    return response;
+}
+
 int main()
 {
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
@@ -288,6 +332,7 @@ int main()
 
     add_route(server, GET, "/vertices",                          &serve_vertices);
     add_route(server, GET, "/elections/(\\d+)/districts.json",   &serve_districts);
+    add_route(server, GET, "/elections/(\\d+)/seats-won.json",   &serve_seats_won);
     add_route(server, GET, "/.*",                                &serve_file_insecurely);
 
     start_server(server);

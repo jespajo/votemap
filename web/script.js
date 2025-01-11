@@ -19,9 +19,14 @@
         @typedef {[Vec2, Vec2, Vec2, Vec2]} Box4
 
 
-        @typedef {{id: number, date: Date}} Election
-
         @typedef {{name: string, centroid: Vec2, box: Box}} District
+
+        @typedef {{
+                id:             number,
+                date:           Date,
+                districts?:     {[key: number]: District},
+                seatsWon?:      {alp: number, lnp: number, etc: number}
+            }} Election
 
 
         @typedef {{locked: boolean, x: number, y: number}} PointerLock
@@ -168,7 +173,7 @@ let mobileMode = false;
 /**
  * @type Election[]
  */
-let elections = [
+const elections = [
     {id: 15508, date: new Date("2010-08-21")},
     {id: 17496, date: new Date("2013-09-07")},
     {id: 20499, date: new Date("2016-07-02")},
@@ -177,9 +182,6 @@ let elections = [
 ];
 /** @type number */
 let currentElectionIndex = elections.length-1;
-
-/** @type {{[key: number]: {[key: number]: District}}} */
-const districts = {}; //|Todo: Put these in a big store object with tileStore.
 
 const map = {
     //
@@ -231,24 +233,6 @@ const map = {
 /** @type {{[key: string]: Transform }} */
 const savedTransforms = {};
 
-//|Cleanup: Merge these into a panel object.
-/** @type Rect */
-const panelRect = {
-    x:      map.width/2, //|Cleanup: These are just nonsense values. We set them in the main loop.
-    y:      map.height/2,
-    width:  0.4*map.width,
-    height: 400
-};
-/** @type boolean */
-let panelIsBeingDragged = false;
-/** @type number */
-let panelDragStartY = 0; // If the panel is being dragged, this is the Y value of the pointer when the drag was last done.
-
-//|Cleanup: Put these into a button state object.
-/** @type number */
-let prevElectionButtonLastPressed;
-/** @type number */
-let nextElectionButtonLastPressed;
 
 //
 // WebGL-related globals.
@@ -289,6 +273,25 @@ let isVerticesRequestPending = false;
 
 /** @type CanvasRenderingContext2D */
 let ui;
+
+//|Cleanup: Merge these into a panel object.
+/** @type Rect */
+const panelRect = {
+    x:      map.width/2, //|Cleanup: These are just nonsense values. We set them in the main loop.
+    y:      map.height/2,
+    width:  0.4*map.width,
+    height: 400
+};
+/** @type boolean */
+let panelIsBeingDragged = false;
+/** @type number */
+let panelDragStartY = 0; // If the panel is being dragged, this is the Y value of the pointer when the drag was last done.
+
+//|Cleanup: Put these into a button state object.
+/** @type number */
+let prevElectionButtonLastPressed;
+/** @type number */
+let nextElectionButtonLastPressed;
 
 //
 // Toggle developer visualisations.
@@ -1191,14 +1194,13 @@ async function maybeFetchVertices() {
 async function maybeFetchData() {
     const election = elections[currentElectionIndex];
 
-    // Fetch districts.
-    if (!districts[election.id]) {
-        districts[election.id] = {}; // This makes sure that we only fetch the districts for each election once.
+    if (!election.districts) {
+        election.districts = {};  // This makes this function idempotent.
 
         const response = await fetch(`/elections/${election.id}/districts.json`);
         const data     = await response.json();
 
-        Object.assign(districts[election.id], data);
+        Object.assign(election.districts, data);
     }
 }
 
@@ -1334,12 +1336,14 @@ function drawLabels() {
 
     const election = elections[currentElectionIndex];
 
+    const districts = election.districts || {};
+
     //
     // Draw the labels.
     //
-    for (const districtID of Object.keys(districts[election.id])) {
+    for (const districtID of Object.keys(districts)) {
         /** @type District */
-        const district = districts[election.id][districtID];
+        const district = districts[districtID];
 
         const labelText = district.name.toUpperCase();
         const {width} = ui.measureText(labelText);
@@ -1722,12 +1726,38 @@ function drawPanel() {
     // Draw a horizontal bar chart showing the results for the election as a whole.
     // |Todo: Factor this into a function that takes a config and rect and returns the chart height.
     {
+        // Get data:
+        const election = elections[currentElectionIndex];
+        if (!election.seatsWon) {
+            election.seatsWon = {alp: 0, lnp: 0, etc: 0};
+
+            (async function(){ //|Cleanup: Overall this seems like it could be simpler. Maybe we should store the bars variable directly instead of having the intermediate seatsWon variable?
+                const response = await fetch(`/elections/${election.id}/seats-won.json`);
+                const data     = await response.json();
+
+                for (const party of data) {
+                    switch (party.shortCode) {
+                        case 'ALP':
+                            election.seatsWon.alp += party.count;
+                            break;
+                        case 'LP':
+                        case 'NP':
+                        case 'LNP':
+                            election.seatsWon.lnp += party.count;
+                            break;
+                        default:
+                            election.seatsWon.etc += party.count;
+                    }
+                }
+            })();
+        }
+
         // Chart config:
         const titleText = "Seats won";
         const bars = [
-            {label: "ALP",   colour: "#c31f2f", value: 77},
-            {label: "LNP",   colour: "#19488f", value: 58},
-            {label: "Other", colour: "#808080", value: 16},
+            {label: "ALP",   colour: "#c31f2f", value: election.seatsWon.alp},
+            {label: "LNP",   colour: "#19488f", value: election.seatsWon.lnp},
+            {label: "Other", colour: "#808080", value: election.seatsWon.etc},
         ];
         const showTarget  = true;
         const targetValue = 76;

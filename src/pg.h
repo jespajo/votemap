@@ -11,7 +11,7 @@
 // There is also a hash table that you can use to get the indexes of columns.
 // The hash table returns -1 if the column does not exist.
 //
-//      Postgres_result *result;
+//      Postgres_result *result = query_database(db, query, params, ctx);
 //
 //      int column_index = *Get(result->columns, "my_column_name");
 //
