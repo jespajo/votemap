@@ -183,6 +183,9 @@ const elections = [
 /** @type number */
 let currentElectionIndex = elections.length-1;
 
+/** @type number */
+let currentDistrictID = -1; // There's no district selected if it's -1.
+
 const map = {
     //
     // Map constants:
@@ -652,6 +655,7 @@ async function loadFonts() {
     const fonts = {
         "map-electorate":       "../fonts/RadioCanada.500.80.woff2",
         "title":                "../fonts/RadioCanada.500.90.woff2",
+        "title-bold":           "../fonts/RadioCanada.700.90.woff2",
         "button-active":        "../fonts/RadioCanada.700.90.woff2",
         "button-inactive":      "../fonts/RadioCanada.300.90.woff2",
         "chart-title":          "../fonts/RadioCanada.700.80.woff2",
@@ -1422,6 +1426,8 @@ function drawLabels() {
         if (flags.hover)  outlineColour = hoverOutline;
 
         if (flags.tapped) {
+            currentDistrictID = +districtID; //|Jank: The districtID is already a number but we cast to appease tsc.
+
             const duration = 750;
 
             /** @type Box */
@@ -1566,8 +1572,8 @@ function drawPanel() {
 
         const election = elections[currentElectionIndex];
 
-        let isTitle = true; //|Incomplete: We will have a small size version when it's sitting above the title.
-        const textHeight = (isTitle) ? 25 : 12;
+        let isTitle = (currentDistrictID < 0);
+        const textHeight = (isTitle) ? 30 : 15;
 
         const minButtonSize = textHeight;
         const maxTextWidth = panelWidth - 2*minButtonSize;
@@ -1591,8 +1597,25 @@ function drawPanel() {
                 onlyYearDrawn = true;
             }
 
-            const textX = panelX + panelWidth/2 - textWidth/2;
+            let textX = panelX + panelWidth/2 - textWidth/2;
 
+            // If we're focused on a particular district, you can click on the election title to return to the default mode.
+            if (currentDistrictID > 0) {
+                const titleRect = {x:textX, y:panelY, width:textWidth, height:textHeight};
+
+                const [flags] = getPointerFlags(titleRect, Layer.PANEL);
+
+                // Make the text bold if the user is hovering over it.
+                if (flags.hover) {
+                    ui.font = textHeight + 'px title-bold';
+                    textWidth = ui.measureText(text).width;
+                    textX = panelX + panelWidth/2 - textWidth/2;
+                }
+
+                if (flags.tapped)  currentDistrictID = -1;
+            }
+
+            // Draw the text.
             ui.fillStyle = 'black';
             ui.fillText(text, textX, panelY);
 

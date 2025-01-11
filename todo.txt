@@ -3,8 +3,8 @@ Finish off "seats won" bar chart.
     Factor it out into a function.
 
 UI features:
-    Add polling booth mode where we show the name of the polling booth as the main title.
-    In polling booth mode, show a 2CP chart just below the election name.
+    Add polling booth mode where we show the name of the electorate as the main title.
+    In polling booth mode, show a 2CP chart just below the electorate name.
     In polling booth mode, show a FP chart below the 2CP chart.
 
 Web server:
