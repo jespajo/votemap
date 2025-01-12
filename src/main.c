@@ -318,6 +318,55 @@ Response serve_seats_won(Request *request, Memory_context *context)
     return response;
 }
 
+Response serve_contest_votes(Request *request, Memory_context *context)
+{
+    Memory_context *ctx = context;
+
+    PGconn *db = connect_to_database(DATABASE_URL);
+
+    char *query =
+    " select jsonb_agg(to_jsonb(t.*))::text as json                     "
+    " from (                                                            "
+    "     select c.first_name                 as \"firstName\",         "
+    "       c.last_name                       as \"lastName\",          "
+    "       coalesce(p.name, 'Independent')    as \"partyName\",        "
+    "       coalesce(p.short_code, 'IND')     as \"partyCode\",         "
+    "       coalesce('#'||lpad(to_hex(p.colour),6,'0'),                 "
+    "           '#808080')                    as \"colour\",            "
+    "       v.total                           as \"numVotes\"           "
+    "     from contest_vote v                                           "
+    "     join candidate c                                              "
+    "       on c.election_id = v.election_id and c.id = v.candidate_id  "
+    "     left join party p                                             "
+    "       on p.election_id = c.election_id and p.id = c.party_id      "
+    "     where v.election_id = $1::int and v.district_id = $2::int     "
+    "       and v.count_type = '2CP'                                    "
+    "   ) t                                                             "
+    ;
+
+    string_array params = {.context = ctx};
+    {
+        char *election = request->captures.data[0];  assert(election);
+        *Add(&params) = election;
+
+        char *district = request->captures.data[1];  assert(district);
+        *Add(&params) = district;
+    }
+
+    Postgres_result *result = query_database(db, query, &params, ctx);
+
+    assert(*Get(&result->columns, "json") == 0);
+    assert(result->rows.count == 1); //|Bug: There may be 0 rows if the election ID in the request path does not exist. Currently in this case there's a segfault.
+    u8_array *json = &result->rows.data[0].data[0];
+
+    Response response = {200, .body = json->data, .size = json->count};
+
+    response.headers = (string_dict){.context = ctx};
+    *Set(&response.headers, "content-type") = "application/json";
+
+    return response;
+}
+
 int main()
 {
     u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
@@ -330,10 +379,11 @@ int main()
 
     Server *server = create_server(ADDR, PORT, VERBOSE, top_context);
 
-    add_route(server, GET, "/vertices",                          &serve_vertices);
-    add_route(server, GET, "/elections/(\\d+)/districts.json",   &serve_districts);
-    add_route(server, GET, "/elections/(\\d+)/seats-won.json",   &serve_seats_won);
-    add_route(server, GET, "/.*",                                &serve_file_insecurely);
+    add_route(server, GET, "/vertices",                                     &serve_vertices);
+    add_route(server, GET, "/elections/(\\d+)/districts.json",              &serve_districts);
+    add_route(server, GET, "/elections/(\\d+)/seats-won.json",              &serve_seats_won);
+    add_route(server, GET, "/elections/(\\d+)/contests/(\\d+)/votes.json",  &serve_contest_votes);
+    add_route(server, GET, "/.*",                                           &serve_file_insecurely);
 
     start_server(server);
 

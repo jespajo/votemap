@@ -1,10 +1,6 @@
-Finish off "seats won" bar chart.
-    Add a label and dashed line showing the target value.
-    Factor it out into a function.
-
-UI features:
-    In polling booth mode, show a 2CP chart just below the electorate name.
-    In polling booth mode, show a FP chart below the 2CP chart.
+Factor out "seats won" bar chart into a function.
+In polling booth mode, show a FP chart below the 2CP chart.
+Add a label to the dashed line in the "seats won" chart.
 
 Web server:
     Add stress tests.

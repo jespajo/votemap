@@ -19,13 +19,27 @@
         @typedef {[Vec2, Vec2, Vec2, Vec2]} Box4
 
 
-        @typedef {{name: string, centroid: Vec2, box: Box}} District
+        @typedef {{
+                firstName:      string,
+                lastName:       string,
+                partyName:      string,
+                partyCode:      string,
+                colour:         string,
+                numVotes:       number,
+            }} VoteCount
+
+        @typedef {{
+                name:           string,
+                centroid:       Vec2,
+                box:            Box,
+                votes?:         {tcp: VoteCount[]},
+            }} District
 
         @typedef {{
                 id:             number,
                 date:           Date,
                 districts?:     {[key: number]: District},
-                seatsWon?:      {alp: number, lnp: number, etc: number}
+                seatsWon?:      {alp: number, lnp: number, etc: number},
             }} Election
 
 
@@ -1927,11 +1941,23 @@ function drawPanel() {
 
             // Draw the two-candidate-preferred chart.
             {
-                // Data:
-                const candidates = [
-                    {firstName: "Peter", lastName: "KHALIL",  partyName: "Labor",  partyCode: "ALP", colour: "#c31f2f", numVotes: 53415},
-                    {firstName: "Sarah", lastName: "JEFFORD", partyName: "Greens", partyCode: "GRN", colour: "#008c44", numVotes: 37783},
-                ];
+                // Get data:
+                if (!district.votes) {
+                    district.votes = {
+                        tcp: [
+                            {firstName: "", lastName: "",  partyName: "",  partyCode: "", colour: "#808080", numVotes: 1},
+                            {firstName: "", lastName: "",  partyName: "",  partyCode: "", colour: "#808080", numVotes: 1},
+                        ]
+                    };
+
+                    (async function(){
+                        const response = await fetch(`/elections/${election.id}/contests/${currentDistrictID}/votes.json`);
+                        const data     = await response.json();
+
+                        district.votes.tcp = data;
+                    })();
+                }
+                const tcp = district.votes.tcp;
 
                 // Chart config:
                 const titleText = "Preference count";
@@ -1947,7 +1973,7 @@ function drawPanel() {
                 const targetColour   = "grey";
 
                 // Computed variables:
-                const totalVotes = candidates[0].numVotes + candidates[1].numVotes;
+                const totalVotes = tcp[0].numVotes + tcp[1].numVotes;
 
                 //
                 // Draw.
@@ -1969,7 +1995,7 @@ function drawPanel() {
                     ui.setLineDash([3, 2]);
                     const targetX = panelX + panelWidth/2;
                     ui.moveTo(targetX, panelY);
-                    const bottomY = panelY + titleHeight + 3*gapHeight + namesHeight + barHeight;
+                    const bottomY = panelY + 2*gapHeight + namesHeight + barHeight;
                     ui.lineTo(targetX, bottomY);
                     ui.strokeStyle = targetColour;
                     ui.lineWidth = 1;
@@ -1982,7 +2008,7 @@ function drawPanel() {
                     ui.fillStyle = titleColour;
 
                     // Check whether we can fit the full names of both candidates.
-                    const fullNames    = candidates.map(c => c.firstName + ' ' + c.lastName);
+                    const fullNames    = tcp.map(c => c.firstName + ' ' + c.lastName);
                     const nameWidths   = fullNames.map(n => ui.measureText(n).width);
                     const fullNamesFit = panelWidth > (nameWidths[0] + nameWidths[1] + 2*gapHeight);
 
@@ -1990,23 +2016,23 @@ function drawPanel() {
                         ui.fillText(fullNames[0], panelX, panelY);
                         ui.fillText(fullNames[1], panelX + panelWidth - nameWidths[1], panelY);
                     } else {
-                        ui.fillText(candidates[0].lastName, panelX, panelY);
+                        ui.fillText(tcp[0].lastName, panelX, panelY);
                         // Draw the right name.
-                        const rightNameWidth = ui.measureText(candidates[1].lastName).width;
-                        ui.fillText(candidates[1].lastName, panelX + panelWidth - rightNameWidth, panelY);
+                        const rightNameWidth = ui.measureText(tcp[1].lastName).width;
+                        ui.fillText(tcp[1].lastName, panelX + panelWidth - rightNameWidth, panelY);
                     }
                 }
                 panelY += namesHeight + 1;
 
                 // Draw the bars.
                 {
-                    const leftWidth = (candidates[0].numVotes/totalVotes)*panelWidth;
+                    const leftWidth = (tcp[0].numVotes/totalVotes)*panelWidth;
                     const rects = cutLeft({x:panelX, y:panelY, width:panelWidth, height:barHeight}, leftWidth);
 
                     for (let i = 0; i < 2; i++) {
                         const {x, y, width, height} = rects[i];
 
-                        ui.fillStyle = candidates[i].colour;
+                        ui.fillStyle = tcp[i].colour;
                         ui.fillRect(x, y, width, height);
                     }
                 }
