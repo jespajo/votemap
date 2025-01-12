@@ -1651,9 +1651,7 @@ function drawPanel() {
                     panelDragStartY += dy;
                 }
             } else if (mobileMode) {
-                //|Todo: cutTop
-                const dragRect  = copy(panelRect);
-                dragRect.height = 50;
+                const dragRect = copy(panelRect);
 
                 const flags = getPointerFlags(dragRect, Layer.PANEL);
                 if (flags[0].pressed) {
@@ -1800,7 +1798,7 @@ function drawPanel() {
 
                     if (flags.hover)  lineWidth = 0.4*iconHeight;
 
-                    if (flags.pressed) {
+                    if (flags.tapped) {
                         currentElectionIndex -= 1;
 
                         prevElectionButtonLastPressed = currentTime;
@@ -1840,7 +1838,7 @@ function drawPanel() {
 
                     if (flags.hover)  lineWidth = 0.4*iconHeight;
 
-                    if (flags.pressed) {
+                    if (flags.tapped) {
                         currentElectionIndex += 1;
 
                         nextElectionButtonLastPressed = currentTime;
@@ -1981,7 +1979,7 @@ function drawPanel() {
                 const tcp = district.votes.tcp;
 
                 // Chart config:
-                const titleText = "Preference count";
+                const titleText = "Two-candidate preferred";
 
                 // Style constants:
                 const titleHeight    = 15;
@@ -2072,7 +2070,7 @@ function drawPanel() {
 
                     const chartRect = {x:panelX, y:panelY, width:panelWidth, height:0};
 
-                    drawBarChart(chartRect, "First preference", bars);
+                    drawBarChart(chartRect, "First preferences", bars);
 
                     panelY = chartRect.y + chartRect.height;
                 }
