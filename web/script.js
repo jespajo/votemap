@@ -26,13 +26,14 @@
                 partyCode:      string,
                 colour:         string,
                 numVotes:       number,
+                ballotPosition: number,
             }} VoteCount
 
         @typedef {{
                 name:           string,
                 centroid:       Vec2,
                 box:            Box,
-                votes?:         {tcp: VoteCount[]},
+                votes?:         {tcp: [VoteCount, VoteCount], fp: VoteCount[]},
             }} District
 
         @typedef {{
@@ -1518,9 +1519,9 @@ function drawLabels() {
  *
  * This function puts the actual chart height in rect.height.
  *
- * @type {(rect: Rect, title: string, bars: BarChartData[], config: BarChartConfig) => void}
+ * @type {(rect: Rect, title: string, bars: BarChartData[], config?: BarChartConfig) => void}
  */
-function drawBarChart(rect, title, bars, config) {
+function drawBarChart(rect, title, bars, config={}) {
     const {targetValue} = config;
 
     // We can make these configurable later if we need to.
@@ -1957,24 +1958,26 @@ function drawPanel() {
             }
             panelY += panelPadding;
 
+            // Make sure we have the data for the two-candidate-preferred and first-preferences charts.
+            if (!district.votes) {
+                district.votes = {
+                    tcp: [
+                        {firstName: "", lastName: "",  partyName: "",  partyCode: "", colour: "#808080", numVotes: 1, ballotPosition: 1},
+                        {firstName: "", lastName: "",  partyName: "",  partyCode: "", colour: "#808080", numVotes: 1, ballotPosition: 2},
+                    ],
+                    fp: []
+                };
+
+                (async function(){
+                    const response = await fetch(`/elections/${election.id}/contests/${currentDistrictID}/votes.json`);
+                    const data     = await response.json();
+
+                    district.votes = data;
+                })();
+            }
+
             // Draw the two-candidate-preferred chart.
             {
-                // Get data:
-                if (!district.votes) {
-                    district.votes = {
-                        tcp: [
-                            {firstName: "", lastName: "",  partyName: "",  partyCode: "", colour: "#808080", numVotes: 1},
-                            {firstName: "", lastName: "",  partyName: "",  partyCode: "", colour: "#808080", numVotes: 1},
-                        ]
-                    };
-
-                    (async function(){
-                        const response = await fetch(`/elections/${election.id}/contests/${currentDistrictID}/votes.json`);
-                        const data     = await response.json();
-
-                        district.votes.tcp = data;
-                    })();
-                }
                 const tcp = district.votes.tcp;
 
                 // Chart config:
@@ -2055,6 +2058,24 @@ function drawPanel() {
                     }
                 }
                 panelY += barHeight + gapHeight;
+            }
+            panelY += panelPadding;
+
+            // Draw the first-preferences chart.
+            {
+                const fp = district.votes.fp;
+
+                if (fp.length) {
+                    const bars = fp.map(c => {
+                        return {label: c.partyCode, colour: c.colour, value: c.numVotes};
+                    });
+
+                    const chartRect = {x:panelX, y:panelY, width:panelWidth, height:0};
+
+                    drawBarChart(chartRect, "First preference", bars);
+
+                    panelY = chartRect.y + chartRect.height;
+                }
             }
         }
         panelY += panelPadding;

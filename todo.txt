@@ -7,6 +7,7 @@ Front end:
 Two-candidate-preferred chart:
     Add party names.
     Add total votes and percentages.
+    Make sure the incumbent always appears on the left.
 
 Web server:
     Add stress tests.
