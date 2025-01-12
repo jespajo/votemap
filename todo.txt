@@ -1,40 +1,33 @@
-Front end:
-    Add a label to the dashed line in the "seats won" chart.
-    Add animations to the panel's movement.
+To complete V2:
+    In district mode, highlight the chosen district on the map.
     Animate the panel to show an appropriate amount of detail when the app mode changes.
+        Make it appear all the way left in desktop mode.
+        Change the map's "active size" so that when it centers things, it centers them in the area not covered by the panel.
+    Generally make the charts look nicer.
+        Spread out more.
+        For each party colour, have three shades of consistent lightness.
+        Add party names.
+        Add total votes and percentages.
+        Make sure the incumbent always appears on the left of the 2CP chart.
+        Add a label to the dashed line in the "seats won" chart.
+    Improve labels.
+        Add a couple of different styles to labels.json.
+        Add cities and suburbs to the labels (depending on the zoom level).
+    Add some roads and rivers.
+    Add the polling booths.
+    Move to votemap-prod container with NGINX load-balancing.
 
-Two-candidate-preferred chart:
-    Add party names.
-    Add total votes and percentages.
-    Make sure the incumbent always appears on the left.
+---
 
 Web server:
     Add stress tests.
     Make it multithreaded.
-
-Improve labels.
-    Merge serve_vertices() and serve_labels() on the backend so they make the same set of database queries.
-    Make labels only exist in the data if the shapes they correspond to appear on the page.
-    Add a couple of different styles to labels.json.
-    Add cities and suburbs to the labels (depending on the zoom level).
-
-When you tap on an electorate label:
-    Map updates:
-        Change to a flat-colour view of the map.
-        Highlight the electorate bounds.
-        Make the chosen electorate label bigger.
-        Make the polling booths appear as circles.
-        When you tap on one of the polling booths, it shows some details about it, including the particular result being shown.
-    Panel updates:
-        Show the electorate name as the main title, squashing the election title into one line above that.
-        Add an X next to the electorate name (or something) to allow going back to the previous mode.
 
 Redo the maps and topology.
     Cut out rivers from the coastline.
     Make sure Franklin exists.
 
 Database schema changes:
-    Add party_id columns to the votes tables, to allow joining with the parties without needing the candidate table middle man.
     Add updated_at columns to the votes tables.
 
 Why does clicking on Lingiari specifically result in showing a much larger area than expected?

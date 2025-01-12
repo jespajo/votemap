@@ -2066,7 +2066,7 @@ function drawPanel() {
                 if (fp.length) {
                     const bars = fp.map(c => {
                         return {label: c.partyCode, colour: c.colour, value: c.numVotes};
-                    });
+                    }).sort((a, b) => b.value - a.value);
 
                     const chartRect = {x:panelX, y:panelY, width:panelWidth, height:0};
 
