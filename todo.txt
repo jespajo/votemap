@@ -1,6 +1,12 @@
-Factor out "seats won" bar chart into a function.
-In polling booth mode, show a FP chart below the 2CP chart.
-Add a label to the dashed line in the "seats won" chart.
+Front end:
+    In polling booth mode, show a FP chart below the 2CP chart.
+    Add a label to the dashed line in the "seats won" chart.
+    Add animations to the panel's movement.
+    Animate the panel to show an appropriate amount of detail when the app mode changes.
+
+Two-candidate-preferred chart:
+    Add party names.
+    Add total votes and percentages.
 
 Web server:
     Add stress tests.
