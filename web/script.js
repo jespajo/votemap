@@ -1793,7 +1793,7 @@ function drawPanel() {
                 {label: "Other", colour: "#808080", value: election.seatsWon.etc},
             ];
             const showTarget  = true;
-            const targetValue = 76;
+            const targetValue = 76; //|Todo: Get from the number of districts in the election divided by two.
             const targetLabel = targetValue + " to win";
 
             // Style constants:
@@ -1901,26 +1901,117 @@ function drawPanel() {
         if (!election.districts || !Object.keys(election.districts).length) {
             // The districts for the current election haven't loaded yet. Pass.
         } else if (!election.districts[currentDistrictID]) {
-            // The districts for the current election have loaded, but the previously-selected district
+            // The districts for the current election have loaded, but the previously-selected district ID
             // isn't in the currently-selected election. Revert to election mode.
             currentDistrictID = -1;
         } else {
             const district = election.districts[currentDistrictID];
 
             // Draw the district name.
-            const text = district.name.toUpperCase();
-            const textHeight = 30;
-            ui.font = textHeight + 'px title';
-            let textWidth = ui.measureText(text).width;
-            if (textWidth > panelWidth) {
-                ui.font = textHeight + 'px title-condensed';
-                textWidth = ui.measureText(text).width;
-            }
-            const textX = panelX + panelWidth/2 - textWidth/2;
-            ui.fillStyle = 'black';
-            ui.fillText(text, textX, panelY);
+            {
+                const text = district.name.toUpperCase();
+                const textHeight = 30;
+                ui.font = textHeight + 'px title';
+                let textWidth = ui.measureText(text).width;
+                if (textWidth > panelWidth) {
+                    ui.font = textHeight + 'px title-condensed';
+                    textWidth = ui.measureText(text).width;
+                }
+                const textX = panelX + panelWidth/2 - textWidth/2;
+                ui.fillStyle = 'black';
+                ui.fillText(text, textX, panelY);
 
-            panelY += textHeight;
+                panelY += textHeight;
+            }
+            panelY += panelPadding;
+
+            // Draw the two-candidate-preferred chart.
+            {
+                // Data:
+                const candidates = [
+                    {firstName: "Peter", lastName: "KHALIL",  partyName: "Labor",  partyCode: "ALP", colour: "#c31f2f", numVotes: 53415},
+                    {firstName: "Sarah", lastName: "JEFFORD", partyName: "Greens", partyCode: "GRN", colour: "#008c44", numVotes: 37783},
+                ];
+
+                // Chart config:
+                const titleText = "Preference count";
+
+                // Style constants:
+                const titleHeight    = 15;
+                const namesHeight    = 13;
+                const barHeight      = 17;
+                const gapHeight      =  5;
+
+                const titleColour    = "black";
+                const barLabelColour = "white";
+                const targetColour   = "grey";
+
+                // Computed variables:
+                const totalVotes = candidates[0].numVotes + candidates[1].numVotes;
+
+                //
+                // Draw.
+                //
+
+                // Draw the title:
+                {
+                    ui.font = titleHeight + 'px chart-title';
+                    const titleWidth = ui.measureText(titleText).width;
+                    const titleX = panelX + panelWidth/2 - titleWidth/2;
+                    ui.fillStyle = titleColour;
+                    ui.fillText(titleText, titleX, panelY);
+                }
+                panelY += titleHeight + gapHeight;
+
+                // Draw the dashed line at the 50% mark:
+                {
+                    ui.beginPath();
+                    ui.setLineDash([3, 2]);
+                    const targetX = panelX + panelWidth/2;
+                    ui.moveTo(targetX, panelY);
+                    const bottomY = panelY + titleHeight + 3*gapHeight + namesHeight + barHeight;
+                    ui.lineTo(targetX, bottomY);
+                    ui.strokeStyle = targetColour;
+                    ui.lineWidth = 1;
+                    ui.stroke();
+                }
+
+                // Draw the candidates' names.
+                {
+                    ui.font = namesHeight + 'px chart-label';
+                    ui.fillStyle = titleColour;
+
+                    // Check whether we can fit the full names of both candidates.
+                    const fullNames    = candidates.map(c => c.firstName + ' ' + c.lastName);
+                    const nameWidths   = fullNames.map(n => ui.measureText(n).width);
+                    const fullNamesFit = panelWidth > (nameWidths[0] + nameWidths[1] + 2*gapHeight);
+
+                    if (fullNamesFit) {
+                        ui.fillText(fullNames[0], panelX, panelY);
+                        ui.fillText(fullNames[1], panelX + panelWidth - nameWidths[1], panelY);
+                    } else {
+                        ui.fillText(candidates[0].lastName, panelX, panelY);
+                        // Draw the right name.
+                        const rightNameWidth = ui.measureText(candidates[1].lastName).width;
+                        ui.fillText(candidates[1].lastName, panelX + panelWidth - rightNameWidth, panelY);
+                    }
+                }
+                panelY += namesHeight + 1;
+
+                // Draw the bars.
+                {
+                    const leftWidth = (candidates[0].numVotes/totalVotes)*panelWidth;
+                    const rects = cutLeft({x:panelX, y:panelY, width:panelWidth, height:barHeight}, leftWidth);
+
+                    for (let i = 0; i < 2; i++) {
+                        const {x, y, width, height} = rects[i];
+
+                        ui.fillStyle = candidates[i].colour;
+                        ui.fillRect(x, y, width, height);
+                    }
+                }
+                panelY += barHeight + gapHeight;
+            }
         }
         panelY += panelPadding;
     }

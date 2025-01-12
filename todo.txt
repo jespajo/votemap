@@ -36,6 +36,10 @@ Database schema changes:
     Add updated_at columns to the votes tables.
 
 Why does clicking on Lingiari specifically result in showing a much larger area than expected?
+Why does the label for Sydney appear outside the mainland's coastline?
+
+|Bug: There are a couple of cases where the AEC changed the IDs of electorates for no apparent reason. For example, Corangamite has ID 207 until the 2022 election, when it gets ID 328. Since we use the AEC's IDs, the result is what looks like a bug on our end: if you're looking at the results for Corangamite in 2022 and then go back to the 2019 election, the app goes into whole-of-election mode, as though Corangamite didn't exist before 2022. We should fix this. A hacky fix might be fine.
+There are also cases where an electorate changes ID between elections but it makes more sense because the electorate changed its name, e.g. Denison becoming Clark in 2019. This wouldn't necessarily be seen as a bug because the user could understand why Denison != Clark. But we might want to fix this too.
 
 Figure out what to do about our RAM slowly filling up with cached SQL queries.
 
