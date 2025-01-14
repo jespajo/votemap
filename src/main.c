@@ -220,6 +220,8 @@ Response serve_vertices(Request *request, Memory_context *context)
             u8_array *id_cell   = &result->rows.data[row].data[id_column];
             u8_array *path_cell = &result->rows.data[row].data[path_column];
 
+            if (path_cell->count == 0)  continue;
+
             u8 *end_data = NULL;
             parse_paths(path_cell->data, &paths, &end_data);
             assert(end_data == path_cell->data + path_cell->count);

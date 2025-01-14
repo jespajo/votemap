@@ -148,6 +148,7 @@ void parse_paths(u8 *data, Path_array *result, u8 **end_data)
 // data is a pointer to EWKB geometries. end_data is like the strtod() argument: if it's not NULL, it is the address
 // where this function will save a pointer to the byte after the last byte of data parsed.
 {
+    assert(data);
     Memory_context *ctx = result->context;
     u8 *d = data;
 
