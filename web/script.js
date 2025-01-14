@@ -1135,7 +1135,7 @@ async function maybeFetchVertices() {
     if (!dynamicTileset[upp])  dynamicTileset[upp] = {};
     const tileset = dynamicTileset[upp];
 
-    const pixelsPerTile = 512;
+    const pixelsPerTile = 256;
     const tileSize = pixelsPerTile*upp;
 
     /** @type Tileset */
@@ -1160,12 +1160,8 @@ async function maybeFetchVertices() {
             const key = x + ',' + y;
 
             if (!tileset[key]) {
-                // We don't have all the tiles we need.
-                isVerticesRequestPending = true;
+                let url = '/vertices?';
 
-                let url = '/vertices';
-
-                url += '?';
                 url += '&x0=' + x;
                 url += '&y0=' + y;
                 url += '&x1=' + (x + tileSize);
@@ -1173,15 +1169,50 @@ async function maybeFetchVertices() {
                 url += '&upp=' + upp;
                 url += '&election=' + election.id;
 
-                if (currentDistrictID > 0)  url += '&district=' + currentDistrictID;
+                //
+                // If the user is focusing on a particular district, we want to highlight that district on the map. But that
+                // doesn't mean we need to load the entire map from scratch! The only tiles we need to change are the ones that
+                // show the highlighted district---the rest can keep showing the generic map.
+                //
+                // Now suppose the user has a particular district focused, but the actual tile we're currently fetching belongs
+                // to the generic map---that's the tile's "canonical tileset". In this case, we make a note of the canonical tileset
+                // so we can also save our fetched tile there for future use.
+                //
+                let canonicalTileset = tileset;
+                if (currentDistrictID > 0) {
+                    /** @type Box */
+                    const tileBox     = [{x, y}, {x:x+tileSize, y:y+tileSize}];
+                    const districtBox = election.districts[currentDistrictID].box;
+
+                    if (boxesTouch(tileBox, districtBox)) {
+                        // The current tile intersects with the bounding box of the highlighted district.
+                        url += '&district=' + currentDistrictID;
+                    } else {
+                        // The current tile does not intersect with the highlighted district. Look for a generic tile.
+                        if (!tileStore[election.id][-1])  tileStore[election.id][-1] = {};
+                        const canonicalDynamicTileset = tileStore[election.id][-1];
+
+                        if (!canonicalDynamicTileset[upp])  canonicalDynamicTileset[upp] = {};
+                        canonicalTileset = canonicalDynamicTileset[upp];
+
+                        if (canonicalTileset[key]) {
+                            // We have previously loaded the generic tile, so it's ready to use.
+                            tileset[key] = canonicalTileset[key];
+                            return;
+                        }
+                    }
+                }
+
+                // We need to fetch this tile.
+                isVerticesRequestPending = true;
 
                 const response = await fetch(url);
                 const data = await response.arrayBuffer();
 
                 tileset[key] = new Float32Array(data);
+                canonicalTileset[key] = tileset[key];
 
                 isVerticesRequestPending = false;
-
                 return;
             }
 
