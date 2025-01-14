@@ -144,32 +144,6 @@ void parse_polygons(u8 *data, Polygon_array *result, u8 **end_data)
     if (end_data)  *end_data = d;
 }
 
-Polygon_array *query_polygons(PGconn *db, char *query, string_array *params, Memory_context *context) //|Deprecated
-{
-    Postgres_result *pg_result = query_database(db, query, params, context);
-
-    int column_index = *Get(&pg_result->columns, "polygon");
-    if (column_index < 0)  return QueryError("Couldn't find a \"polygon\" column in the results.");
-
-    u8_array3 *rows = &pg_result->rows;
-    if (!rows->count)  return QueryError("A query for polygons returned no results.");
-
-    Polygon_array *polygons = NewArray(polygons, context);
-
-    for (s64 i = 0; i < rows->count; i++) {
-        u8_array2 *row = &rows->data[i];
-        u8_array *cell = &row->data[column_index];
-        if (!cell->count)  continue;
-
-        u8 *end_data = NULL;
-        parse_polygons(cell->data, polygons, &end_data);
-
-        assert(end_data == &cell->data[cell->count]);
-    }
-
-    return polygons;
-}
-
 void parse_paths(u8 *data, Path_array *result, u8 **end_data)
 // data is a pointer to EWKB geometries. end_data is like the strtod() argument: if it's not NULL, it is the address
 // where this function will save a pointer to the byte after the last byte of data parsed.
@@ -228,31 +202,6 @@ void parse_paths(u8 *data, Path_array *result, u8 **end_data)
     }
 
     if (end_data)  *end_data = d;
-}
-
-Path_array *query_paths(PGconn *db, char *query, string_array *params, Memory_context *context)
-{
-    Postgres_result *pg_result = query_database(db, query, params, context);
-
-    int column_index = *Get(&pg_result->columns, "path");
-    if (column_index < 0)  return QueryError("Couldn't find a \"path\" column in the results.");
-
-    Path_array *paths = NewArray(paths, context);
-
-    if (!pg_result->rows.count)  printf("A query for paths returned no results.\n");
-
-    for (s64 i = 0; i < pg_result->rows.count; i++) {
-        u8_array2 *row = &pg_result->rows.data[i];
-        u8_array *cell = &row->data[column_index];
-        if (!cell->count)  continue;
-
-        u8 *end_data = NULL;
-        parse_paths(cell->data, paths, &end_data);
-
-        assert(end_data == &cell->data[cell->count]);
-    }
-
-    return paths;
 }
 
 static Postgres_result *query_database_uncached(PGconn *db, char *query, string_array *params, Memory_context *context)

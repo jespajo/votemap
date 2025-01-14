@@ -45,9 +45,7 @@ Response serve_vertices(Request *request, Memory_context *context)
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    //
     // Parse the floats in the query string.
-    //
     float upp, x0, y0, x1, y1;
     {
         char  *keys[] = {"upp", "x0", "y0", "x1", "y1"};
@@ -69,6 +67,19 @@ Response serve_vertices(Request *request, Memory_context *context)
             // We parsed the whole string. We're ignoring ERANGE errors. We should do something about NAN and (-)INFINITY. In fact setting upp to INFINITY causes a segmentation fault. |Bug!
 
             *(nums[i]) = num;
+        }
+    }
+
+    // Parse the focused district ID, if there is one.
+    int focused_district_id = -1;
+    {
+        char *district = *Get(request->query, "district");
+        if (district) {
+            long parsed = strtol(district, NULL, 10);
+            if (!(0 < parsed && parsed < INT32_MAX)) {
+                return (Response){400, .body = "Could not parse 'district' query parameter.\n"};
+            }
+            focused_district_id = parsed;
         }
     }
 
@@ -180,16 +191,16 @@ Response serve_vertices(Request *request, Memory_context *context)
     // Draw the boundary lines. |Speed: Other than the coastline, boundaries are shared by two districts, and as a result we draw them twice.
     {
         char *query =
-        " select st_asbinary(st_collectionextract(st_makevalid(                                             "
+        " select id, st_asbinary(st_collectionextract(st_makevalid(                                         "
         "     st_clipbybox2d(                                                                               "
         "       st_simplify(geom, $1::float),                                                               "
         "       st_makeenvelope($2::float, $3::float, $4::float, $5::float, 3577)                           "
         "     )                                                                                             "
         "   ), 2)) as path                                                                                  "
         " from (                                                                                            "
-        "     select st_collect(st_exteriorring(geom)) as geom                                              "
+        "     select id, st_collect(st_exteriorring(geom)) as geom                                          "
         "     from (                                                                                        "
-        "         select *, (st_dump(bounds_clipped)).geom as geom                                          "
+        "         select id, (st_dump(bounds_clipped)).geom as geom                                         "
         "         from district                                                                             "
         "         where election_id = $6::int                                                               "
         "           and bounds_clipped && st_makeenvelope($2::float, $3::float, $4::float, $5::float, 3577) "
@@ -198,13 +209,34 @@ Response serve_vertices(Request *request, Memory_context *context)
         "   ) t                                                                                             "
         ;
 
-        Path_array *paths = query_paths(db, query, &params, ctx);
+        Postgres_result *result = query_database(db, query, &params, ctx);
 
-        for (s64 i = 0; i < paths->count; i++) {
+        int id_column   = *Get(&result->columns, "id");    assert(id_column >= 0);
+        int path_column = *Get(&result->columns, "path");  assert(path_column >= 0);
+
+        Path_array paths = {.context = ctx};
+
+        for (s64 row = 0; row < result->rows.count; row++) {
+            u8_array *id_cell   = &result->rows.data[row].data[id_column];
+            u8_array *path_cell = &result->rows.data[row].data[path_column];
+
+            u8 *end_data = NULL;
+            parse_paths(path_cell->data, &paths, &end_data);
+            assert(end_data == path_cell->data + path_cell->count);
+
             Vector3 colour = {0.8, 0.8, 0.8};
-            float line_width = 1.5*upp;
 
-            draw_path(&paths->data[i], line_width, colour, verts);
+            float line_width = 1.5*upp;
+            if (focused_district_id > 0) {
+                u32 id = get_u32_from_cell(id_cell);
+                if (id == focused_district_id)  line_width = 4*upp;
+            }
+
+            for (s64 i = 0; i < paths.count; i++) {
+                draw_path(&paths.data[i], line_width, colour, verts);
+            }
+
+            paths.count = 0; // So we can reuse the array for the next loop.
         }
     }
 

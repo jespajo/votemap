@@ -270,9 +270,9 @@ let vertices = new Float32Array(0);
 let updateVertices = false;
 
 /**
- * For now, we only want to have five dynamic tilesets: one for each election. So the tileStore object is keyed by the election ID.
+ * The tileStore is keyed by election ID, and then by the ID of the focused district (or -1 if no district is focused).
  *
- * @type {{[key: number]: DynamicTileset}}
+ * @type {{[key: number]: {[key: number]: DynamicTileset}}}
  */
 const tileStore = {};
 /**
@@ -1123,7 +1123,8 @@ async function maybeFetchVertices() {
     const election = elections[currentElectionIndex];
 
     if (!tileStore[election.id])  tileStore[election.id] = {};
-    const dynamicTileset = tileStore[election.id];
+    if (!tileStore[election.id][currentDistrictID])  tileStore[election.id][currentDistrictID] = {};
+    const dynamicTileset = tileStore[election.id][currentDistrictID];
 
     let scaleExp = Math.log2(map.currentTransform.scale);
     scaleExp = Math.round(scaleExp); //|Todo: Allow rounding to a finer gradient than whole numbers.
@@ -1163,6 +1164,7 @@ async function maybeFetchVertices() {
                 isVerticesRequestPending = true;
 
                 let url = '/vertices';
+
                 url += '?';
                 url += '&x0=' + x;
                 url += '&y0=' + y;
@@ -1170,6 +1172,8 @@ async function maybeFetchVertices() {
                 url += '&y1=' + (y + tileSize);
                 url += '&upp=' + upp;
                 url += '&election=' + election.id;
+
+                if (currentDistrictID > 0)  url += '&district=' + currentDistrictID;
 
                 const response = await fetch(url);
                 const data = await response.arrayBuffer();
