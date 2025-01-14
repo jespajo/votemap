@@ -97,27 +97,25 @@ Response serve_vertices(Request *request, Memory_context *context)
 
     // Draw the electorate districts as polygons.
     {
+        // Order by the size of the face's bounding box. This is so that larger polygons don't cover smaller ones,
+        // because we don't draw inner rings yet.
         char *query =
-        " select d.name, t.party_id, t.colour,                                                                                          "
-        "   st_asbinary(st_makevalid(                                                                                                   "
-        "       st_clipbybox2d(                                                                                                         "
-        "         st_simplify(d.bounds_faces, $1::float),                                                                               "
-        "         st_makeenvelope($2::float, $3::float, $4::float, $5::float, 3577)                                                     "
-        "       )                                                                                                                       "
-        "     )) as polygon                                                                                                             "
-        " from district d                                                                                                               "
-        "   left join (                                                                                                                 "
-        "     select v.election_id, v.district_id, c.party_id as party_id, p.colour                                                     "
-        "     from contest_vote v                                                                                                       "
-        "       join candidate c on (c.election_id = v.election_id and c.district_id = v.district_id and v.candidate_id = c.id)         "
-        "       left join party p on (p.election_id = v.election_id and c.party_id = p.id)                                              "
-        "     where v.count_type = '2CP' and v.elected                                                                                  "
-        "   ) t on (t.election_id = d.election_id and t.district_id = d.id)                                                             "
-        " where d.bounds_clipped && st_makeenvelope($2::float, $3::float, $4::float, $5::float, 3577)                                   "
-        "   and d.election_id = $6::int                                                                                                 "
-        // Order by the size of the face's bounding box. This is so that larger polygons don't cover smaller
-        // ones, because we don't draw inner rings yet. |Todo
-        " order by st_area(box2d(d.bounds_clipped)) desc                                                                                "
+        "  select d.name, t.party_id, t.colour,                                                                                                        "
+        "    st_asbinary(st_collectionextract(st_makevalid(                                                                                            "
+        "          st_snaptogrid(st_clipbybox2d(d.bounds_clipped, st_makeenvelope($2::float, $3::float, $4::float, $5::float, 3577)), $1::float        "
+        "        )                                                                                                                                     "
+        "      ), 3)) as polygon                                                                                                                       "
+        "  from district d                                                                                                                             "
+        "    left join (                                                                                                                               "
+        "      select v.election_id, v.district_id, c.party_id as party_id, p.colour                                                                   "
+        "      from contest_vote v                                                                                                                     "
+        "        join candidate c on (c.election_id = v.election_id and c.district_id = v.district_id and v.candidate_id = c.id)                       "
+        "        left join party p on (p.election_id = v.election_id and c.party_id = p.id)                                                            "
+        "      where v.count_type = '2CP' and v.elected                                                                                                "
+        "    ) t on (t.election_id = d.election_id and t.district_id = d.id)                                                                           "
+        "  where d.bounds_clipped && st_makeenvelope($2::float, $3::float, $4::float, $5::float, 3577)                                                 "
+        "    and d.election_id = $6::int                                                                                                               "
+        " order by st_area(box2d(d.bounds_clipped)) desc                                                                                               "
         ;
 
         Postgres_result *result = query_database(db, query, &params, ctx);
@@ -179,20 +177,25 @@ Response serve_vertices(Request *request, Memory_context *context)
         }
     }
 
-    // Draw the topology lines.
+    // Draw the boundary lines. |Speed: Other than the coastline, boundaries are shared by two districts, and as a result we draw them twice.
     {
         char *query =
-        " select st_asbinary(st_simplify(geom, $1::float)) as path                          "
-        " from district_topo.edge                                                           "
-        " where edge_id in (                                                                "
-        "     select unnest(edge_ids)                                                       "
-        "     from district d                                                               "
-        "     where election_id = $6::int                                                   "
-        "   )                                                                               "
-        "   and geom && st_setsrid(                                                         "
-        "     st_makebox2d(st_point($2::float, $3::float), st_point($4::float, $5::float)), "
-        "     3577                                                                          "
-        "   )                                                                               "
+        " select st_asbinary(st_collectionextract(st_makevalid(                                             "
+        "     st_clipbybox2d(                                                                               "
+        "       st_simplify(geom, $1::float),                                                               "
+        "       st_makeenvelope($2::float, $3::float, $4::float, $5::float, 3577)                           "
+        "     )                                                                                             "
+        "   ), 2)) as path                                                                                  "
+        " from (                                                                                            "
+        "     select st_collect(st_exteriorring(geom)) as geom                                              "
+        "     from (                                                                                        "
+        "         select *, (st_dump(bounds_clipped)).geom as geom                                          "
+        "         from district                                                                             "
+        "         where election_id = $6::int                                                               "
+        "           and bounds_clipped && st_makeenvelope($2::float, $3::float, $4::float, $5::float, 3577) "
+        "       ) t                                                                                         "
+        "     group by id                                                                                   "
+        "   ) t                                                                                             "
         ;
 
         Path_array *paths = query_paths(db, query, &params, ctx);

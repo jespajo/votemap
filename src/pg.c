@@ -177,8 +177,9 @@ void parse_paths(u8 *data, Path_array *result, u8 **end_data)
     Memory_context *ctx = result->context;
     u8 *d = data;
 
-    {
-        Path path = {.context = ctx};
+    s64 num_geometries = 1;
+    while (num_geometries > 0) {
+        num_geometries -= 1;
 
         u8 byte_order = *d;
         d += sizeof(u8);
@@ -186,26 +187,44 @@ void parse_paths(u8 *data, Path_array *result, u8 **end_data)
 
         u32 wkb_type;  memcpy(&wkb_type, d, sizeof(u32));
         d += sizeof(u32);
-        assert(wkb_type == WKB_LINESTRING); // |Todo: Be more flexible. Polygons can be parsed as paths. Only points can't.
 
-        u32 num_points;  memcpy(&num_points, d, sizeof(u32));
-        d += sizeof(u32);
+        switch (wkb_type) {
+            case WKB_GEOMETRYCOLLECTION:
+            case WKB_MULTILINESTRING:;
+                // We treat GeometryCollections and MultiLinestrings the same: we just add to the
+                // number of extra geometries to expect in the results.
+                u32 num_extra;  memcpy(&num_extra, d, sizeof(u32));
+                d += sizeof(u32);
 
-        while (num_points--) {
-            double x;  memcpy(&x, d, sizeof(double));
-            d += sizeof(double);
+                num_geometries += num_extra;
+                break;
+            case WKB_LINESTRING:;
+                u32 num_points;  memcpy(&num_points, d, sizeof(u32));
+                d += sizeof(u32);
 
-            double y;  memcpy(&y, d, sizeof(double));
-            d += sizeof(double);
+                if (num_points == 0)  break;
 
-            // Cast doubles to floats.
-            *Add(&path) = (Vector2){
-                (float)x,
-                -(float)y // Flip the y-axis.
-            };
+                Path path = {.context = ctx};
+
+                for (u32 point_index = 0; point_index < num_points; point_index += 1) {
+                    double x;  memcpy(&x, d, sizeof(double));
+                    d += sizeof(double);
+
+                    double y;  memcpy(&y, d, sizeof(double));
+                    d += sizeof(double);
+
+                    // Cast doubles to floats.
+                    *Add(&path) = (Vector2){
+                        (float)x,
+                        -(float)y // Flip the y-axis.
+                    };
+                }
+
+                *Add(result) = path;
+                break;
+            default:
+                Fatal("Unexpected wkb_type: %d.", wkb_type);
         }
-
-        *Add(result) = path;
     }
 
     if (end_data)  *end_data = d;
