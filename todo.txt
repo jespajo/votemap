@@ -1,5 +1,5 @@
 To complete V2:
-    In district mode, highlight the chosen district on the map.
+    Fix the bug where election.districts doesn't exist yet.
     Animate the panel to show an appropriate amount of detail when the app mode changes.
         Make it appear all the way left in desktop mode.
         Change the map's "active size" so that when it centers things, it centers them in the area not covered by the panel.

@@ -1194,7 +1194,7 @@ async function maybeFetchVertices() {
                 if (currentDistrictID > 0) {
                     /** @type Box */
                     const tileBox     = [{x, y}, {x:x+tileSize, y:y+tileSize}];
-                    const districtBox = election.districts[currentDistrictID].box;
+                    const districtBox = election.districts[currentDistrictID].box; //|Bug: Open the page, choose a district and start going back in time. This will cause a crash if election.districts does not exist.
 
                     if (!boxesTouch(tileBox, districtBox)) {
                         // The current tile does not show the highlighted district. Use a tile from the generic dark map.

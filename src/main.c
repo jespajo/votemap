@@ -167,7 +167,7 @@ Response serve_vertices(Request *request, Memory_context *context)
         // Order by the size of the face's bounding box. This is so that larger polygons don't cover smaller ones,
         // because we don't draw inner rings yet.
         char *query =
-        "  select d.name, t.party_id, t.colour,                                                                                                        "
+        "  select d.id as district_id, d.name, t.party_id, t.colour,                                                                                   "
         "    st_asbinary(st_collectionextract(st_makevalid(                                                                                            "
         "          st_snaptogrid(st_clipbybox2d(d.bounds_clipped, st_makeenvelope($2::float, $3::float, $4::float, $5::float, 3577)), $1::float        "
         "        )                                                                                                                                     "
@@ -187,31 +187,30 @@ Response serve_vertices(Request *request, Memory_context *context)
 
         Postgres_result *result = query_database(db, query, &params, ctx);
 
-        int polygon_column  = *Get(&result->columns, "polygon");
-        int name_column     = *Get(&result->columns, "name");
-        int party_id_column = *Get(&result->columns, "party_id");
-        int colour_column   = *Get(&result->columns, "colour");
-        if (polygon_column < 0)   Fatal("Couldn't find a \"polygon\" column in the results.");
-        if (name_column < 0)      Fatal("Couldn't find a \"name\" column in the results.");
-        if (party_id_column < 0)  Fatal("Couldn't find a \"party_id\" column in the results.");
-        if (colour_column < 0)    Fatal("Couldn't find a \"colour\" column in the results.");
+        int district_id_column = *Get(&result->columns, "district_id");  assert(district_id_column >= 0);
+        int polygon_column     = *Get(&result->columns, "polygon");      assert(polygon_column >= 0);
+        int name_column        = *Get(&result->columns, "name");         assert(name_column >= 0);
+        int party_id_column    = *Get(&result->columns, "party_id");     assert(party_id_column >= 0);
+        int colour_column      = *Get(&result->columns, "colour");       assert(colour_column >= 0);
 
         for (s64 i = 0; i < result->rows.count; i++) {
-            u8_array *polygons_cell = &result->rows.data[i].data[polygon_column];
-            u8_array *name_cell     = &result->rows.data[i].data[name_column];
-            u8_array *party_id_cell = &result->rows.data[i].data[party_id_column];
-            u8_array *colour_cell   = &result->rows.data[i].data[colour_column];
+            u8_array *district_id_cell = &result->rows.data[i].data[district_id_column];
+            u8_array *polygon_cell     = &result->rows.data[i].data[polygon_column];
+            u8_array *name_cell        = &result->rows.data[i].data[name_column];
+            u8_array *party_id_cell    = &result->rows.data[i].data[party_id_column];
+            u8_array *colour_cell      = &result->rows.data[i].data[colour_column];
 
-            if (!polygons_cell->count)  continue;
+            if (!polygon_cell->count)  continue;
 
             Polygon_array polygons = {.context = ctx};
             {
                 u8 *end_data = NULL;
-                parse_polygons(polygons_cell->data, &polygons, &end_data);
+                parse_polygons(polygon_cell->data, &polygons, &end_data);
 
-                assert(end_data == &polygons_cell->data[polygons_cell->count]);
+                assert(end_data == &polygon_cell->data[polygon_cell->count]);
             }
 
+            int district_id = (int)get_u32_from_cell(district_id_cell);
             char_array name = get_char_array_from_cell(name_cell);
 
             Vector3 colour;
@@ -239,6 +238,11 @@ Response serve_vertices(Request *request, Memory_context *context)
                     }
                 }
             }
+
+            bool dark = (tile.theme == DARK);
+            dark     |= (tile.theme == HIGHLIGHT_DISTRICT && tile.district_id != district_id);
+
+            if (dark)  colour = lerp_rgb(colour, (Vector3){0}, 0.5);
 
             for (s64 j = 0; j < polygons.count; j++)  draw_polygon(&polygons.data[j], colour, verts);
         }
