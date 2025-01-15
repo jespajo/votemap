@@ -1172,7 +1172,7 @@ async function maybeFetchVertices() {
         //      for (let y = minY; y <= maxY; y += tileSize) {
         //      }
         //  }
-        // We made it unnested so we could break out of it. Then we ended up returning instead of breaking out... |Cleanup.
+        // We made it unnested so we could break out of it. Then we ended up returning instead of breaking out... For now we're leaving it like this because we may want to break when we start fetching multiple tiles concurrently. |Cleanup
         let x = minX;
         let y = minY;
         while (x <= maxX) {
@@ -1189,12 +1189,17 @@ async function maybeFetchVertices() {
                 // so we can also save our fetched tile there for future use.
                 //
                 let canonicalImageID = imageID;
-                let canonicalTileset = tileset; //|Cleanup: It seems like we shouldn't need both of these. But we hold onto the canonical image ID because we use it in the URL as well.
+                let canonicalTileset = tileset; //|Cleanup: It seems like we shouldn't need to hold onto both the ID and the canonicalTileset object. But we keep the ID because we use it in the URL as well.
 
                 if (currentDistrictID > 0) {
+                    if (!election.districts || Object.keys(election.districts).length == 0) {
+                        // We need to wait for election.districts to be populated by other code. |Hack.
+                        return;
+                    }
+
                     /** @type Box */
                     const tileBox     = [{x, y}, {x:x+tileSize, y:y+tileSize}];
-                    const districtBox = election.districts[currentDistrictID].box; //|Bug: Open the page, choose a district and start going back in time. This will cause a crash if election.districts does not exist.
+                    const districtBox = election.districts[currentDistrictID].box;
 
                     if (!boxesTouch(tileBox, districtBox)) {
                         // The current tile does not show the highlighted district. Use a tile from the generic dark map.
