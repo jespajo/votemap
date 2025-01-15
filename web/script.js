@@ -270,13 +270,20 @@ let vertices = new Float32Array(0);
 let updateVertices = false;
 
 /**
- * The tileStore is keyed by election ID, and then by the ID of the focused district (or -1 if no district is focused).
+ * The map can show many different images. Every possible image has a unique ID. These IDs are the keys to the tileStore object. E.g.:
  *
- * @type {{[key: number]: {[key: number]: DynamicTileset}}}
+ *   Image ID       The map shows
+ *   --------       -------------
+ *   27966          The boundaries at the 2022 election.
+ *   27966-dark     The boundaries at the 2022 election, with darker colours.
+ *   27966-170      The boundaries at the 2022 election, with the district of Maranoa highlighted.
+ *
+ * @type {{[key: string]: DynamicTileset}}
  */
 const tileStore = {};
+
 /**
- * currentTileset is a subset of an tileset object within the tileStore, with only those keys needed to cover the screen currently.
+ * currentTileset is a subset of a tileset object within the tileStore, with only those keys needed to cover the screen currently.
  *
  * @type Tileset
  */
@@ -1117,20 +1124,32 @@ function handleUserEventsOnMap() {
     }
 }
 
+/**
+ * UPP: Map units per pixel. It's a measure of the map's resolution, but it increases as you zoom out (go "up").
+ * We round it to the nearest power of two to help with caching tiles.
+ *
+ * @type {(scale: number) => number}
+ */
+function getUpp(scale) {
+    const exp   = Math.log2(scale);
+    const round = Math.round(exp);
+    const upp   = Math.pow(2, -round);
+
+    return upp;
+}
+
 async function maybeFetchVertices() {
     if (isVerticesRequestPending)  return;
 
     const election = elections[currentElectionIndex];
 
-    if (!tileStore[election.id])  tileStore[election.id] = {};
-    if (!tileStore[election.id][currentDistrictID])  tileStore[election.id][currentDistrictID] = {};
-    const dynamicTileset = tileStore[election.id][currentDistrictID];
+    let imageID = '' + election.id;
+    if (currentDistrictID > 0)  imageID += '-' + currentDistrictID;
 
-    let scaleExp = Math.log2(map.currentTransform.scale);
-    scaleExp = Math.round(scaleExp); //|Todo: Allow rounding to a finer gradient than whole numbers.
+    if (!tileStore[imageID])  tileStore[imageID] = {};
+    const dynamicTileset = tileStore[imageID];
 
-    // UPP: Map units per pixel. Increases as you zoom out.
-    const upp = Math.pow(2, -scaleExp);
+    const upp = getUpp(map.currentTransform.scale);
 
     if (!dynamicTileset[upp])  dynamicTileset[upp] = {};
     const tileset = dynamicTileset[upp];
@@ -1160,43 +1179,35 @@ async function maybeFetchVertices() {
             const key = x + ',' + y;
 
             if (!tileset[key]) {
-                let url = '/vertices?';
-
-                url += '&x0=' + x;
-                url += '&y0=' + y;
-                url += '&x1=' + (x + tileSize);
-                url += '&y1=' + (y + tileSize);
-                url += '&upp=' + upp;
-                url += '&election=' + election.id;
-
                 //
                 // If the user is focusing on a particular district, we want to highlight that district on the map. But that
                 // doesn't mean we need to load the entire map from scratch! The only tiles we need to change are the ones that
                 // show the highlighted district---the rest can keep showing the generic map.
                 //
                 // Now suppose the user has a particular district focused, but the actual tile we're currently fetching belongs
-                // to the generic map---that's the tile's "canonical tileset". In this case, we make a note of the canonical tileset
+                // to the generic map---that's the tile's "canonical tileset". In this case we make a note of the canonical tileset
                 // so we can also save our fetched tile there for future use.
                 //
-                let canonicalTileset = tileset;
+                let canonicalImageID = imageID;
+                let canonicalTileset = tileset; //|Cleanup: It seems like we shouldn't need both of these. But we hold onto the canonical image ID because we use it in the URL as well.
+
                 if (currentDistrictID > 0) {
                     /** @type Box */
                     const tileBox     = [{x, y}, {x:x+tileSize, y:y+tileSize}];
                     const districtBox = election.districts[currentDistrictID].box;
 
-                    if (boxesTouch(tileBox, districtBox)) {
-                        // The current tile intersects with the bounding box of the highlighted district.
-                        url += '&district=' + currentDistrictID;
-                    } else {
-                        // The current tile does not intersect with the highlighted district. Look for a generic tile.
-                        if (!tileStore[election.id][-1])  tileStore[election.id][-1] = {};
-                        const canonicalDynamicTileset = tileStore[election.id][-1];
+                    if (!boxesTouch(tileBox, districtBox)) {
+                        // The current tile does not show the highlighted district. Use a tile from the generic dark map.
+                        canonicalImageID = election.id + '-dark';
+
+                        if (!tileStore[canonicalImageID])  tileStore[canonicalImageID] = {};
+                        const canonicalDynamicTileset = tileStore[canonicalImageID];
 
                         if (!canonicalDynamicTileset[upp])  canonicalDynamicTileset[upp] = {};
                         canonicalTileset = canonicalDynamicTileset[upp];
 
                         if (canonicalTileset[key]) {
-                            // We have previously loaded the generic tile, so it's ready to use.
+                            // We have previously loaded the canonical tile, so it's ready to use.
                             tileset[key] = canonicalTileset[key];
                             return;
                         }
@@ -1205,6 +1216,15 @@ async function maybeFetchVertices() {
 
                 // We need to fetch this tile.
                 isVerticesRequestPending = true;
+
+                let url = '/vertices/' + canonicalImageID;
+
+                url += '?';
+                url += '&x0=' + x;
+                url += '&y0=' + y;
+                url += '&x1=' + (x + tileSize);
+                url += '&y1=' + (y + tileSize);
+                url += '&upp=' + upp;
 
                 const response = await fetch(url);
                 const data = await response.arrayBuffer();

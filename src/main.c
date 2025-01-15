@@ -1,3 +1,5 @@
+#include <math.h> // isfinite()
+
 #include "draw.h"
 #include "http.h"
 #include "json.h"
@@ -37,73 +39,127 @@ Vector3 get_colour_from_hash(u64 hash)
     return (Vector3){r, g, b};
 }
 
-Response serve_vertices(Request *request, Memory_context *context)
+typedef struct Tile_info Tile_info;
+struct Tile_info {
+    bool    parse_success;
+    char   *fail_reason;
+
+    enum Tile_theme {
+        NORMAL = 1,
+        DARK,
+        HIGHLIGHT_DISTRICT,
+    }       theme;
+
+    int     election_id;
+    int     district_id; // If a district is highlighted.
+
+    float   upp;
+    float   x0;
+    float   y0;
+    float   x1;
+    float   y1;
+};
+
+Tile_info parse_tile_request(Request *request)
 {
-    Memory_context *ctx = context;
+    Tile_info result = {0};
 
-    PGconn *db = connect_to_database(DATABASE_URL);
+    // Valid paths:
+    //
+    //      vertices/27966
+    //      vertices/27966-dark
+    //      vertices/27966-170
 
-    Vertex_array *verts = NewArray(verts, ctx);
+    char *p = request->path.data;
+    // These should never fail because the route-matcher regex looked at the path before we got here.
+    assert(starts_with(p, "/vertices/"));
+    assert(request->path.count > lengthof("/vertices/"));
+    p += lengthof("/vertices/");
+
+    // Parse the election ID.
+    long n = strtol(p, &p, 10);
+    if (!(0 < n && n < INT32_MAX)) {
+        result.fail_reason = "Could not parse an election ID.\n";
+        return result;
+    }
+    result.election_id = n;
+
+    if (*p != '\0') {
+        // There is more in the path to parse.
+        if (*p != '-') {
+            result.fail_reason = "Unexpected character in path after the election ID.\n";
+            return result;
+        }
+        p += 1;
+
+        if (!memcmp(p, "dark", sizeof("dark"))) { // Note this also checks the '\0' at the end.
+            result.theme = DARK;
+        } else {
+            // Otherwise, we expect the ID of a highlighted district.
+            long n = strtol(p, &p, 10);
+            if (!(0 < n && n < INT32_MAX)) {
+                result.fail_reason = "Could not parse a district ID.\n";
+                return result;
+            }
+            if (*p != '\0') {
+                result.fail_reason = "Unexpected character in path after the district ID.\n";
+                return result;
+            }
+            result.theme = HIGHLIGHT_DISTRICT;
+            result.district_id = n;
+        }
+    } else {
+        result.theme = NORMAL;
+    }
 
     // Parse the floats in the query string.
-    float upp, x0, y0, x1, y1;
     {
         char  *keys[] = {"upp", "x0", "y0", "x1", "y1"};
-        float *nums[] = {&upp, &x0, &y0, &x1, &y1};
+        float *nums[] = {&result.upp, &result.x0, &result.y0, &result.x1, &result.y1};
 
         for (s64 i = 0; i < countof(keys); i++) {
             char *num_string = *Get(request->query, keys[i]);
             if (!num_string) {
-                char_array *error = get_string(ctx, "Missing query parameter: '%s'\n", keys[i]);
-                return (Response){400, .body = error->data, .size = error->count};
+                result.fail_reason = "The query string is missing at least one of the floats.\n";
+                return result;
             }
 
             char *end = NULL;
             float num = strtof(num_string, &end);
-            if (*num_string == '\0' || *end != '\0') {
-                char_array *error = get_string(ctx, "Unexpected value for '%s' query parameter: '%s'\n", keys[i], num_string);
-                return (Response){400, .body = error->data, .size = error->count};
+            if (*num_string == '\0' || *end != '\0' || !isfinite(num)) {
+                result.fail_reason = "Unexpected value for a float in the query string.\n";
+                return result;
             }
-            // We parsed the whole string. We're ignoring ERANGE errors. We should do something about NAN and (-)INFINITY. In fact setting upp to INFINITY causes a segmentation fault. |Bug!
 
             *(nums[i]) = num;
         }
     }
 
-    // Parse the focused district ID, if there is one.
-    int focused_district_id = -1;
-    {
-        char *district = *Get(request->query, "district");
-        if (district) {
-            long parsed = strtol(district, NULL, 10);
-            if (!(0 < parsed && parsed < INT32_MAX)) {
-                return (Response){400, .body = "Could not parse 'district' query parameter.\n"};
-            }
-            focused_district_id = parsed;
-        }
-    }
+    result.parse_success = true;
+    return result;
+}
+
+Response serve_vertices(Request *request, Memory_context *context)
+{
+    Memory_context *ctx = context;
+
+    Vertex_array *verts = NewArray(verts, ctx);
+
+    PGconn *db = connect_to_database(DATABASE_URL);
+
+    Tile_info tile = parse_tile_request(request);
+    if (!tile.parse_success)  return (Response){400, .body = tile.fail_reason};
 
     // Prepare the parameters to our SQL queries (they are the same for all queries below).
     // Negate the Y values to convert the map units of the browser to the database's coordinate reference system.
     string_array params = {.context = ctx};
     {
-        *Add(&params) = get_string(ctx, "%f", upp)->data;
-        *Add(&params) = get_string(ctx, "%f", x0)->data;
-        *Add(&params) = get_string(ctx, "%f", -y0)->data;
-        *Add(&params) = get_string(ctx, "%f", x1)->data;
-        *Add(&params) = get_string(ctx, "%f", -y1)->data;
-    }
-
-    // Get the election ID from the request and add it to the SQL query parameters.
-    {
-        char **election = Get(request->query, "election");
-        if (!*election) {
-            char_array *error = get_string(ctx, "Missing query parameter 'election'.\n");
-            return (Response){400, .body = error->data, .size = error->count};
-        }
-        //|Todo: Validation of the election ID?
-
-        *Add(&params) = *election;
+        *Add(&params) = get_string(ctx, "%f", tile.upp)->data;
+        *Add(&params) = get_string(ctx, "%f", tile.x0)->data;
+        *Add(&params) = get_string(ctx, "%f", -tile.y0)->data;
+        *Add(&params) = get_string(ctx, "%f", tile.x1)->data;
+        *Add(&params) = get_string(ctx, "%f", -tile.y1)->data;
+        *Add(&params) = get_string(ctx, "%d", tile.election_id)->data;
     }
 
     // Draw the electorate districts as polygons.
@@ -228,10 +284,10 @@ Response serve_vertices(Request *request, Memory_context *context)
 
             Vector3 colour = {0.8, 0.8, 0.8};
 
-            float line_width = 1.5*upp;
-            if (focused_district_id > 0) {
+            float line_width = 1.5*tile.upp;
+            if (tile.theme == HIGHLIGHT_DISTRICT) {
                 u32 id = get_u32_from_cell(id_cell);
-                if (id == focused_district_id)  line_width = 4*upp;
+                if (id == tile.district_id)  line_width = 4*tile.upp;
             }
 
             for (s64 i = 0; i < paths.count; i++) {
@@ -424,7 +480,7 @@ int main()
 
     Server *server = create_server(ADDR, PORT, VERBOSE, top_context);
 
-    add_route(server, GET, "/vertices",                                     &serve_vertices);
+    add_route(server, GET, "/vertices/(.+)",                                &serve_vertices);
     add_route(server, GET, "/elections/(\\d+)/districts.json",              &serve_districts);
     add_route(server, GET, "/elections/(\\d+)/seats-won.json",              &serve_seats_won);
     add_route(server, GET, "/elections/(\\d+)/contests/(\\d+)/votes.json",  &serve_contest_votes);
