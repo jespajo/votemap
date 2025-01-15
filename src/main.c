@@ -472,17 +472,25 @@ Response serve_contest_votes(Request *request, Memory_context *context)
     return response;
 }
 
-int main()
+int main(int argc, char **argv)
 {
-    u32  const ADDR    = 0xac1180e0; // 172.17.128.224 |Todo: Use getaddrinfo().
-    u16  const PORT    = 6008;
-    bool const VERBOSE = false;
+    u32  address = 0;       // 0.0.0.0  |Todo: Make this configurable with getaddrinfo().
+    u32  port    = 6008;
+    bool verbose = false;
+
+    // If there is a command-line argument, take it as a port.
+    if (argc > 1) {
+        char *end = NULL;
+        port = strtol(argv[1], &end, 10);
+        assert(end > argv[1]);
+        assert(0 <= port && port <= UINT16_MAX);
+    }
 
     Memory_context *top_context = new_context(NULL);
 
     PGconn *database = connect_to_database(DATABASE_URL);
 
-    Server *server = create_server(ADDR, PORT, VERBOSE, top_context);
+    Server *server = create_server(address, port, verbose, top_context);
 
     add_route(server, GET, "/vertices/(.+)",                                &serve_vertices);
     add_route(server, GET, "/elections/(\\d+)/districts.json",              &serve_districts);

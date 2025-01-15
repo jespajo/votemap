@@ -23,10 +23,6 @@ Web server:
     Add stress tests.
     Make it multithreaded.
 
-Redo the maps and topology.
-    Cut out rivers from the coastline.
-    Make sure Franklin exists.
-
 Database schema changes:
     Add updated_at columns to the votes tables.
 

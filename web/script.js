@@ -1420,7 +1420,7 @@ function drawLabels() {
     //
     // Draw the labels.
     //
-    for (const districtID of Object.keys(districts)) {
+    for (const districtID of Object.keys(districts)) { //|Fixme: We used to have districts in an array where they were sorted by size, which meant we'd try to draw the biggest ones first. Now they're in an object, they're in no particular order. That means there's no simple way to stop trying to place labels after a certain number of failures.
         /** @type District */
         const district = districts[districtID];
 
