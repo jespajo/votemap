@@ -288,8 +288,8 @@ const tileStore = {};
  * @type Tileset
  */
 let currentTileset = {};
-/** @type boolean */
-let isVerticesRequestPending = false;
+/** @type number */
+let numPendingVertRequests = 0;
 
 
 //
@@ -1139,9 +1139,24 @@ function getUpp(scale) {
 }
 
 async function maybeFetchVertices() {
-    if (isVerticesRequestPending)  return;
+    // What we currently do, every frame, is figure out the tiles that should be visible on screen. If we're
+    // missing any of those tiles, we request them, but we never have more than maxPendingVertRequests requests
+    // going at a time. If we didn't impose this limit, when a user zoomed, they would request all the tiles needed
+    // for every frame of the zoom. Once all the pending requests have returned, we check whether the set of tiles
+    // we came up with is the same as the set of tiles already on the screen: `equals(visibleSubset, currentTileset)`.
+    // If the sets differ, we concatenate the new tiles in a buffer to send to the GPU.
+    const maxPendingVertRequests = 4;
+    if (numPendingVertRequests >= maxPendingVertRequests)  return;
 
     const election = elections[currentElectionIndex];
+
+    if (currentDistrictID > 0) {
+        if (!election.districts || Object.keys(election.districts).length == 0) {
+            // We need to wait for other code to populate election.districts.
+            // Otherwise it's an error when we try to get districtBox below. |Hack.
+            return;
+        }
+    }
 
     let imageID = '' + election.id;
     if (currentDistrictID > 0)  imageID += '-' + currentDistrictID;
@@ -1158,7 +1173,7 @@ async function maybeFetchVertices() {
     const tileSize = pixelsPerTile*upp;
 
     /** @type Tileset */
-    const subset = {};
+    const visibleSubset = {};
     {
         const [min, max] = getEnvelope(getMapCorners(map.width, map.height, map.currentTransform));
 
@@ -1167,18 +1182,15 @@ async function maybeFetchVertices() {
         const maxX = tileSize*Math.ceil(max.x/tileSize);
         const maxY = tileSize*Math.ceil(max.y/tileSize);
 
-        // The while loop below is equivalent to a nested for loop of the form:
-        //  for (let x = minX; x <= maxX; x += tileSize) {
-        //      for (let y = minY; y <= maxY; y += tileSize) {
-        //      }
-        //  }
-        // We made it unnested so we could break out of it. Then we ended up returning instead of breaking out... For now we're leaving it like this because we may want to break when we start fetching multiple tiles concurrently. |Cleanup
-        let x = minX;
-        let y = minY;
-        while (x <= maxX) {
-            const key = x + ',' + y;
+        for (let x = minX; x <= maxX; x += tileSize) {
+            for (let y = minY; y <= maxY; y += tileSize) {
+                const tileXY = x + ',' + y;
 
-            if (!tileset[key]) {
+                if (tileset[tileXY]) {
+                    visibleSubset[tileXY] = tileset[tileXY];
+                    continue;
+                }
+
                 //
                 // If the user is focusing on a particular district, we want to highlight that district on the map. But that
                 // doesn't mean we need to load the entire map from scratch! The only tiles we need to change are the ones that
@@ -1189,14 +1201,9 @@ async function maybeFetchVertices() {
                 // so we can also save our fetched tile there for future use.
                 //
                 let canonicalImageID = imageID;
-                let canonicalTileset = tileset; //|Cleanup: It seems like we shouldn't need to hold onto both the ID and the canonicalTileset object. But we keep the ID because we use it in the URL as well.
+                let canonicalTileset = tileset; // It seems like we shouldn't need to hold onto both the ID and the canonicalTileset object. But we keep the ID because we use it in the URL as well.
 
                 if (currentDistrictID > 0) {
-                    if (!election.districts || Object.keys(election.districts).length == 0) {
-                        // We need to wait for election.districts to be populated by other code. |Hack.
-                        return;
-                    }
-
                     /** @type Box */
                     const tileBox     = [{x, y}, {x:x+tileSize, y:y+tileSize}];
                     const districtBox = election.districts[currentDistrictID].box;
@@ -1211,17 +1218,16 @@ async function maybeFetchVertices() {
                         if (!canonicalDynamicTileset[upp])  canonicalDynamicTileset[upp] = {};
                         canonicalTileset = canonicalDynamicTileset[upp];
 
-                        if (canonicalTileset[key]) {
+                        if (canonicalTileset[tileXY]) {
                             // We have previously loaded the canonical tile, so it's ready to use.
-                            tileset[key] = canonicalTileset[key];
-                            return;
+                            tileset[tileXY] = canonicalTileset[tileXY];
+                            visibleSubset[tileXY] = tileset[tileXY];
+                            continue;
                         }
                     }
                 }
 
                 // We need to fetch this tile.
-                isVerticesRequestPending = true;
-
                 let url = '/vertices/' + canonicalImageID;
 
                 url += '?';
@@ -1231,43 +1237,45 @@ async function maybeFetchVertices() {
                 url += '&y1=' + (y + tileSize);
                 url += '&upp=' + upp;
 
-                const response = await fetch(url);
-                const data = await response.arrayBuffer();
+                numPendingVertRequests  += 1;
+                tileset[tileXY]          = new Float32Array(0); // Put these empty Float32Arrays as sentinels so we don't request this same tile again.
+                canonicalTileset[tileXY] = new Float32Array(0);
 
-                tileset[key] = new Float32Array(data);
-                canonicalTileset[key] = tileset[key];
+                fetch(url)
+                .then(response => response.arrayBuffer())
+                .then(data => {
+                    tileset[tileXY]          = new Float32Array(data);
+                    canonicalTileset[tileXY] = tileset[tileXY];
+                    numPendingVertRequests  -= 1;
+                });
 
-                isVerticesRequestPending = false;
-                return;
+                if (numPendingVertRequests >= maxPendingVertRequests)  return;
             }
-
-            subset[key] = tileset[key];
-
-            y += tileSize;
-            if (y <= maxY)  continue;
-            y = minY;
-            x += tileSize;
         }
     }
 
+    if (numPendingVertRequests > 0)  return;
+
     // We have all the tiles we need.
 
-    if (equals(subset, currentTileset))  return;
+    if (equals(visibleSubset, currentTileset))  return;
 
-    let totalNumFloats = 0;
-    for (const key of Object.keys(subset))  totalNumFloats += subset[key].length;
-
-    vertices = new Float32Array(totalNumFloats);
+    // Concatenate the vertex buffers.
     {
+        let totalNumFloats = 0;
+        for (const key of Object.keys(visibleSubset))  totalNumFloats += visibleSubset[key].length;
+
+        vertices = new Float32Array(totalNumFloats);
+
         let i = 0;
-        for (const key of Object.keys(subset)) {
-            vertices.set(subset[key], i);
-            i += subset[key].length;
+        for (const key of Object.keys(visibleSubset)) {
+            vertices.set(visibleSubset[key], i);
+            i += visibleSubset[key].length;
         }
     }
     updateVertices = true;
 
-    currentTileset = subset;
+    currentTileset = visibleSubset;
 }
 
 async function maybeFetchData() {
