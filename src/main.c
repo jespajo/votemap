@@ -496,7 +496,9 @@ int main(int argc, char **argv)
     add_route(server, GET, "/elections/(\\d+)/districts.json",              &serve_districts);
     add_route(server, GET, "/elections/(\\d+)/seats-won.json",              &serve_seats_won);
     add_route(server, GET, "/elections/(\\d+)/contests/(\\d+)/votes.json",  &serve_contest_votes);
+#ifndef NDEBUG
     add_route(server, GET, "/.*",                                           &serve_file_insecurely);
+#endif
 
     start_server(server);
 
