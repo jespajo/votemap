@@ -328,12 +328,10 @@ void start_server(Server *server)
     {
         reset_context(frame_ctx);
 
-        // Build an array of file descriptors to poll. The first two elements in the array never change:
-        // pollfds.data[0] is standard input and pollfds.data[1] is our main socket listening for
-        // connections. If there are any other elements in the array, they are open client connections.
+        // Build an array of file descriptors to poll. The first element in the array never changes:
+        // pollfds.data[0] is our main socket listening for connections. If there are any other elements
+        // in the array, they are open client connections.
         Array(struct pollfd) pollfds = {.context = frame_ctx};
-
-        *Add(&pollfds) = (struct pollfd){.fd = STDIN_FILENO, .events = POLLIN};
 
         *Add(&pollfds) = (struct pollfd){.fd = server->socket_no, .events = POLLIN};
 
@@ -387,24 +385,7 @@ void start_server(Server *server)
                 continue;
             }
 
-            if (pollfd->fd == STDIN_FILENO) {
-                // There's something to read on standard input.
-                char_array input = {.context = frame_ctx};
-                while (true) {
-                    int c = fgetc(stdin);
-                    if (c == EOF || c == '\n')  break;
-
-                    *Add(&input) = (char)c;
-                }
-
-                // Exit if the input was just the letter 'q'. Otherwise ignore it.
-                if (input.count == 1 && input.data[0] == 'q') {
-                    if (server->verbose)  printf("Shutting down.\n");
-
-                    server_should_stop = true;
-                    goto cleanup;
-                }
-            } else if (pollfd->fd == server->socket_no) {
+            if (pollfd->fd == server->socket_no) {
                 // A new connection has occurred.
                 struct sockaddr_in client_socket_addr; // This will be initialised by accept().
                 socklen_t client_socket_addr_size = sizeof(client_socket_addr);
