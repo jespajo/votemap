@@ -209,8 +209,8 @@ static bool parse_request(Client *client)
             } else {
                 // Otherwise, the request is bunk.
                 char_array message = {.context = ctx};
-                print_string(&message, "The request had an unexpected character at index %ld: ", d-data);
-                print_string(&message, is_alphanum(*d) ? "'%c'.\n" : "\\x%02x.\n", *d);
+                append_string(&message, "The request had an unexpected character at index %ld: ", d-data);
+                append_string(&message, is_alphanum(*d) ? "'%c'.\n" : "\\x%02x.\n", *d);
 
                 client->response = (Response){400, .body = message.data, message.count};
                 client->phase = SENDING_REPLY;
@@ -252,7 +252,7 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
         for (s64 j = 0; j < key_len; j++) {
             char c = key[j];
             if (is_alphanum(c) || Contains(ALLOWED, c))  *Add(result) = c;
-            else  print_string(result, "%%%02x", c);
+            else  append_string(result, "%%%02x", c);
         }
 
         char *val = query->vals[i];
@@ -265,7 +265,7 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
         for (s64 j = 0; j < val_len; j++) {
             char c = val[j];
             if (is_alphanum(c) || Contains(ALLOWED, c))  *Add(result) = c;
-            else  print_string(result, "%%%02x", c);
+            else  append_string(result, "%%%02x", c);
         }
     }
 
@@ -588,12 +588,12 @@ void start_server(Server *server)
             char_array *reply_header = &client->reply_header;
             *reply_header = (char_array){.context = client->context};
 
-            print_string(reply_header, "HTTP/1.0 %d\r\n", response->status);
+            append_string(reply_header, "HTTP/1.0 %d\r\n", response->status);
             {
                 string_dict *h = &response->headers;
-                for (s64 i = 0; i < h->count; i++)  print_string(reply_header, "%s: %s\r\n", h->keys[i], h->vals[i]);
+                for (s64 i = 0; i < h->count; i++)  append_string(reply_header, "%s: %s\r\n", h->keys[i], h->vals[i]);
             }
-            print_string(reply_header, "\r\n");
+            append_string(reply_header, "\r\n");
 
             client->phase = SENDING_REPLY;
             //|Todo: Can we jump straight to trying to write to the socket?
@@ -799,7 +799,7 @@ Response serve_file_slowly(Request *request, Memory_context *context)
             if (memcmp(file_name->data, "index.html", file_name->count))  continue;
 
             // The directory contains a file called index.html.
-            print_string(file_path, "/index.html");
+            append_string(file_path, "/index.html");
             is_directory = false;
             break;
         }

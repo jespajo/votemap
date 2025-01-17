@@ -459,7 +459,7 @@ static void print_address(char_array *out, void *address) //|Debug
 // Not for general use. Only prints the last 6 hexadecimal digits of the address.
 {
     u64 number = ((u64)address) & 0xffffff;
-    print_string(out, "0x%06x", number);
+    append_string(out, "0x%06x", number);
 }
 
 static void log_regex(Regex *regex) //|Debug
@@ -471,16 +471,16 @@ static void log_regex(Regex *regex) //|Debug
         Instruction *inst = &regex->data[i];
 
         print_address(&out, inst);
-        print_string(&out, ":  ");
+        append_string(&out, ":  ");
 
         switch (inst->opcode) {
             case CHAR:
-                print_string(&out, "%-14s", "CHAR");
-                print_string(&out, "'%c'", inst->c);
+                append_string(&out, "%-14s", "CHAR");
+                append_string(&out, "'%c'", inst->c);
                 break;
             case ASCII_CLASS:
               {
-                print_string(&out, "%-14s", "ASCII_CLASS");
+                append_string(&out, "%-14s", "ASCII_CLASS");
                 int j = 0;
                 bool prev_is_set = false;
                 while (j < 128) {
@@ -488,7 +488,7 @@ static void log_regex(Regex *regex) //|Debug
                     if (!prev_is_set) {
                         if (is_set)  *Add(&out) = isprint(j) ? (char)j : '.';
                     } else {
-                        if (!is_set)  print_string(&out, "-%c", isprint(j-1) ? (char)(j-1) : '.');
+                        if (!is_set)  append_string(&out, "-%c", isprint(j-1) ? (char)(j-1) : '.');
                     }
                     prev_is_set = is_set;
                     j += 1;
@@ -496,29 +496,29 @@ static void log_regex(Regex *regex) //|Debug
                 break;
               }
             case ANY:
-                print_string(&out, "%-14s", "ANY");
+                append_string(&out, "%-14s", "ANY");
                 break;
             case JUMP:
-                print_string(&out, "%-14s", "JUMP");
+                append_string(&out, "%-14s", "JUMP");
                 print_address(&out, inst->next[0]);
                 break;
             case SPLIT:
-                print_string(&out, "%-14s", "SPLIT");
+                append_string(&out, "%-14s", "SPLIT");
                 print_address(&out, inst->next[0]);
-                print_string(&out, ", ");
+                append_string(&out, ", ");
                 print_address(&out, inst->next[1]);
                 break;
             case SAVE:
-                print_string(&out, "%-14s", "SAVE");
-                print_string(&out, "%ld", inst->save_id);
+                append_string(&out, "%-14s", "SAVE");
+                append_string(&out, "%ld", inst->save_id);
                 break;
             case MATCH:
-                print_string(&out, "%-14s", "MATCH");
+                append_string(&out, "%-14s", "MATCH");
                 break;
             default:
                 assert(!"Unexpected opcode.");
         }
-        print_string(&out, "\n");
+        append_string(&out, "\n");
     }
 
     printf("%s", out.data);

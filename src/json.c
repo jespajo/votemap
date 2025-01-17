@@ -288,10 +288,10 @@ void print_json(JSON_value *json, char_array *out)
 
     switch (j->type) {
         case JSON_NULL:
-            print_string(out, "null");
+            append_string(out, "null");
             break;
         case JSON_BOOLEAN:
-            print_string(out, "%s", j->boolean ? "true" : "false");
+            append_string(out, "%s", j->boolean ? "true" : "false");
             break;
         case JSON_NUMBER:
             print_double(j->number, out);
@@ -304,7 +304,7 @@ void print_json(JSON_value *json, char_array *out)
         case JSON_ARRAY:
             *Add(out) = '[';
             for (s64 i = 0; i < j->array->count; i++) {
-                if (i)  print_string(out, ", ");
+                if (i)  append_string(out, ", ");
                 print_json(&j->array->data[i], out);
             }
             *Add(out) = ']';
@@ -312,13 +312,13 @@ void print_json(JSON_value *json, char_array *out)
         case JSON_OBJECT:
             *Add(out) = '{';
             for (s64 i = 0; i < j->object->count; i++) {
-                if (i)  print_string(out, ", ");
+                if (i)  append_string(out, ", ");
 
                 char *key = j->object->keys[i];
                 *Add(out) = '"';
                 print_bytes_escaped_for_json(key, strlen(key), out);
                 *Add(out) = '"';
-                print_string(out, ": ");
+                append_string(out, ": ");
 
                 JSON_value *value = &j->object->vals[i];
                 print_json(value, out);

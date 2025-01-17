@@ -42,7 +42,7 @@ char_array *get_string(Memory_context *context, char *format, ...)
     return string;
 }
 
-void print_string(char_array *out, char *format, ...)
+void append_string(char_array *out, char *format, ...)
 {
     va_list vargs;
     va_start(vargs, format);
@@ -54,7 +54,7 @@ void print_double(double number, char_array *out)
 // Remove trailing zero decimal places and if it's a whole number then remove the whole decimal part.
 {
     s64 old_count = out->count;
-    print_string(out, "%.15f", number);
+    append_string(out, "%.15f", number);
 
     // Find the index of the decimel place '.' character, or -1 if there was none.
     s64 decimel_index = -1;

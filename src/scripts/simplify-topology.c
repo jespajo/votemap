@@ -168,9 +168,6 @@ Topology *load_topology(PGconn *database, char *topology_name, Memory_context *c
     return topo;
 }
 
-//|Todo: Global search and replace.
-#define append_string print_string
-
 char_array *get_topology_printed(Topology *topology, Memory_context *context)
 {
     Path_array faces = {.context = context}; //|Leak
