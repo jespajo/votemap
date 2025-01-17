@@ -179,12 +179,6 @@ const Layer = {
  */
 const occlusions = [[], []];
 
-// The UI panel can be in desktop mode or mobile mode. In desktop mode, we calculate its position as a
-// function of the screen size each frame. In mobile mode (which for now we assume the phone is held in
-// portrait), it sits at the bottom of the screen and the user can slide it up and down. That's the
-// as-yet-unimplemented goal, anyway.
-let mobileMode = false;
-
 /**
  * @type Election[]
  */
@@ -299,24 +293,30 @@ let numPendingVertRequests = 0;
 /** @type CanvasRenderingContext2D */
 let ui;
 
-//|Cleanup: Merge these into a panel object.
-/** @type Rect */
-const panelRect = {
-    x:      map.width/2, //|Cleanup: These are just nonsense values. We set them in the main loop.
-    y:      map.height/2,
-    width:  0.4*map.width,
-    height: 400
-};
-/** @type boolean */
-let panelIsBeingDragged = false;
-/** @type number */
-let panelDragStartY = 0; // If the panel is being dragged, this is the Y value of the pointer when the drag was last done.
+// The UI panel can be in desktop mode or mobile mode. In desktop mode, we calculate its position as a function of the
+// screen size each frame. In mobile mode, it sits at the bottom of the screen and the user can slide it up and down.
+let mobileMode = false;
 
-//|Cleanup: Put these into a button state object.
-/** @type number */
-let prevElectionButtonLastPressed;
-/** @type number */
-let nextElectionButtonLastPressed;
+/**
+   @type {{
+        rect:               Rect,
+
+        isBeingDragged:     boolean,
+        dragStartY:         number,
+
+        changeElectionButtonLastPressed:  [number, number],
+   }}
+ */
+const panel = {
+    rect: {x: 0, y: 0, width: 0, height: 0},
+
+    isBeingDragged: false,
+    dragStartY:     0,      // If the panel is being dragged, this is the Y value of the pointer when the drag was last done.
+
+    // This is for animating the flash when the buttons are pressed. If we initialise them to 0, when the page first loads,
+    // the buttons flash as though pressed. So we initialise them to -5000 (which means "5 seconds before the page loaded").
+    changeElectionButtonLastPressed: [-5000, -5000], // Left button, right button.
+};
 
 //
 // Toggle developer visualisations.
@@ -1694,65 +1694,65 @@ function drawPanel() {
             // The user has just switched to mobile mode.
             mobileMode = true;
 
-            panelRect.x      = 0;
-            panelRect.y      = 0.75*document.body.clientHeight;
-            panelRect.height = document.body.clientHeight - panelRect.y;
+            panel.rect.x      = 0;
+            panel.rect.y      = 0.75*document.body.clientHeight;
+            panel.rect.height = document.body.clientHeight - panel.rect.y;
         } else {
             // Otherwise, if the user was already in mobile mode, the user controls the panel's dimensions.
-            panelRect.width = document.body.clientWidth;
+            panel.rect.width = document.body.clientWidth;
 
-            if (panelIsBeingDragged) {
+            if (panel.isBeingDragged) {
                 if (!input.pointers[0].down) {
-                    panelIsBeingDragged = false;
+                    panel.isBeingDragged = false;
                 } else {
                     const alwaysShow = 20; // Don't let the user drag the panel out of sight---always show at least this many pixels.
 
-                    const minY = document.body.clientHeight - panelRect.height;
+                    const minY = document.body.clientHeight - panel.rect.height;
                     const maxY = document.body.clientHeight - alwaysShow;
 
-                    let dy = input.pointers[0].y - panelDragStartY;
+                    let dy = input.pointers[0].y - panel.dragStartY;
 
-                    if (panelRect.y + dy < minY)       dy = minY - panelRect.y;
-                    else if (panelRect.y + dy > maxY)  dy = maxY - panelRect.y;
+                    if (panel.rect.y + dy < minY)       dy = minY - panel.rect.y;
+                    else if (panel.rect.y + dy > maxY)  dy = maxY - panel.rect.y;
 
-                    panelRect.y     += dy;
-                    panelDragStartY += dy;
+                    panel.rect.y     += dy;
+                    panel.dragStartY += dy;
                 }
             } else if (mobileMode) {
-                const dragRect = copy(panelRect);
+                const dragRect = copy(panel.rect);
 
                 const flags = getPointerFlags(dragRect, Layer.PANEL);
                 if (flags[0].pressed) {
-                    panelIsBeingDragged = true;
-                    panelDragStartY     = input.pointers[0].y;
+                    panel.isBeingDragged = true;
+                    panel.dragStartY     = input.pointers[0].y;
                 }
             }
 
             // Make sure we aren't leaving a gap at the bottom of the page.
-            const gap = document.body.clientHeight - (panelRect.y + panelRect.height);
-            if (gap > 0)  panelRect.y += gap;
+            const gap = document.body.clientHeight - (panel.rect.y + panel.rect.height);
+            if (gap > 0)  panel.rect.y += gap;
         }
     } else {
         mobileMode = false;
 
         const margin    = 10;
-        panelRect.x     = margin;
-        panelRect.y     = margin;
-        panelRect.width = 0.34*document.body.clientWidth;
+        panel.rect.x     = margin;
+        panel.rect.y     = margin;
+        panel.rect.width = 0.34*document.body.clientWidth;
         // The height gets set at the end of this scope, for the next frame.
     }
 
-    addOcclusion(Layer.PANEL, panelRect);
+    addOcclusion(Layer.PANEL, panel.rect);
 
     ui.fillStyle = 'rgba(255, 255, 255, 0.95)';
-    ui.fillRect(panelRect.x, panelRect.y, panelRect.width, panelRect.height);
+    ui.fillRect(panel.rect.x, panel.rect.y, panel.rect.width, panel.rect.height);
 
     const panelPadding = 10;
 
-    const panelX     = panelRect.x + panelPadding;
-    const panelWidth = panelRect.width - 2*panelPadding;
+    const panelX     = panel.rect.x + panelPadding;
+    const panelWidth = panel.rect.width - 2*panelPadding;
 
-    let panelY = panelRect.y + panelPadding;
+    let panelY = panel.rect.y + panelPadding;
 
     // Draw the election year switcher.
     {
@@ -1854,81 +1854,54 @@ function drawPanel() {
             const iconHeight = 0.5*minButtonSize;
             const iconWidth  = iconHeight/2;
 
-            // The left one.
-            {
+            for (let buttonIndex = 0; buttonIndex < 2; buttonIndex++) {
+                const buttonRect  = (buttonIndex == 0) ? leftButtonRect : rightButtonRect;
+                const lastPressed = panel.changeElectionButtonLastPressed;
+
                 let colour    = normalColour;
                 let lineWidth = 0.2*iconHeight;
 
-                if (currentElectionIndex == 0) {
+                let disabled = (buttonIndex == 0 && currentElectionIndex == 0);
+                disabled   ||= (buttonIndex  > 0 && currentElectionIndex == elections.length-1);
+
+                if (disabled) {
                     colour = disabledColour;
                 } else {
-                    const [flags] = getPointerFlags(leftButtonRect, Layer.PANEL);
+                    const [flags] = getPointerFlags(buttonRect, Layer.PANEL);
 
                     if (flags.hover)  lineWidth = 0.4*iconHeight;
 
                     if (flags.tapped) {
-                        currentElectionIndex -= 1;
+                        if (buttonIndex == 0)  currentElectionIndex -= 1;
+                        else                   currentElectionIndex += 1;
 
-                        prevElectionButtonLastPressed = currentTime;
+                        lastPressed[buttonIndex] = currentTime;
                     }
                 }
 
-                const timeSincePressed = currentTime - prevElectionButtonLastPressed;
+                const timeSincePressed = currentTime - lastPressed[buttonIndex];
                 if (timeSincePressed < animationDuration) {
                     const shade = lerp(animationStartShade, 255, timeSincePressed/animationDuration);
 
                     ui.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
-                    ui.fillRect(leftButtonRect.x, leftButtonRect.y, leftButtonRect.width, leftButtonRect.height);
+                    ui.fillRect(buttonRect.x, buttonRect.y, buttonRect.width, buttonRect.height);
                 }
 
-                let x = leftButtonRect.x + leftButtonRect.width/2 - iconWidth/2;
-                let y = leftButtonRect.y + leftButtonRect.height/2 - iconHeight/2;
+                let x = buttonRect.x + buttonRect.width/2 - iconWidth/2;
+                let y = buttonRect.y + buttonRect.height/2 - iconHeight/2;
 
                 ui.beginPath();
-                ui.moveTo(x + iconWidth, y);
-                ui.lineTo(x,             y + iconHeight/2);
-                ui.lineTo(x + iconWidth, y + iconHeight);
-
-                ui.lineWidth = lineWidth;
-                ui.strokeStyle = colour;
-                ui.stroke();
-            }
-
-            // The right one.
-            {
-                let colour    = normalColour;
-                let lineWidth = 0.2*iconHeight;
-
-                if (currentElectionIndex == elections.length-1) {
-                    colour = disabledColour;
+                if (buttonIndex == 0) {
+                    // Draw the left arrow (<).
+                    ui.moveTo(x + iconWidth, y);
+                    ui.lineTo(x,             y + iconHeight/2);
+                    ui.lineTo(x + iconWidth, y + iconHeight);
                 } else {
-                    const [flags] = getPointerFlags(rightButtonRect, Layer.PANEL);
-
-                    if (flags.hover)  lineWidth = 0.4*iconHeight;
-
-                    if (flags.tapped) {
-                        currentElectionIndex += 1;
-
-                        nextElectionButtonLastPressed = currentTime;
-                    }
+                    // Draw the right arrow (>).
+                    ui.moveTo(x,             y);
+                    ui.lineTo(x + iconWidth, y + iconHeight/2);
+                    ui.lineTo(x,             y + iconHeight);
                 }
-
-                const timeSincePressed = currentTime - nextElectionButtonLastPressed;
-                if (timeSincePressed < animationDuration) {
-                    const shade = lerp(animationStartShade, 255, timeSincePressed/animationDuration);
-
-                    ui.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
-                    ui.fillRect(rightButtonRect.x, rightButtonRect.y, rightButtonRect.width, rightButtonRect.height);
-                }
-
-                let x = rightButtonRect.x + rightButtonRect.width/2 - iconWidth/2
-                let y = rightButtonRect.y + rightButtonRect.height/2 - iconHeight/2;
-
-                ui.beginPath();
-                ui.moveTo(x,             y);
-                ui.lineTo(x + iconWidth, y + iconHeight/2);
-                ui.lineTo(x,             y + iconHeight);
-
                 ui.lineWidth = lineWidth;
                 ui.strokeStyle = colour;
                 ui.stroke();
@@ -2148,7 +2121,7 @@ function drawPanel() {
     }
 
     // For the next frame, set the panel's height to the used height.
-    panelRect.height = panelY - panelRect.y;
+    panel.rect.height = panelY - panel.rect.y;
 }
 
 function drawTransform() {
