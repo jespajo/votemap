@@ -3,6 +3,7 @@
 #define _POSIX_C_SOURCE 200112L
 
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -78,27 +79,11 @@ static void set_blocking(int file_no, bool blocking)
     if (!success)  Fatal("fcntl failed (%s).", get_error(errno));
 }
 
-static bool is_alphanum(char c)
+static u8 hex_to_byte(char c1, char c2)
+// Turn two hexadecimal digits into a byte of data. E.g. hex_to_byte('8', '0') -> 128 (0x80).
 {
-    if ('a' <= c && c <= 'z')  return true;
-    if ('A' <= c && c <= 'Z')  return true;
-    if ('0' <= c && c <= '9')  return true;
-
-    return false;
-}
-
-static bool is_hex(char c)
-// Check whether a character is an ASCII hexadecimal number.
-{
-    c |= 0x20; // OR-ing with 0x20 makes ASCII letters lowercase and doesn't affect ASCII numbers.
-
-    return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f');
-}
-
-static char hex_to_char(char c1, char c2)
-// Assumes you've already validated the characters with is_hex().
-{
-    assert(is_hex(c1) && is_hex(c2));
+    // Assume the caller has already validated the characters with isxdigit().
+    assert(isxdigit(c1) && isxdigit(c2));
 
     c1 |= 0x20; // OR-ing with 0x20 makes ASCII letters lowercase and doesn't affect ASCII numbers.
     c2 |= 0x20;
@@ -106,7 +91,7 @@ static char hex_to_char(char c1, char c2)
     u8 x1 = c1 <= '9' ? c1-'0' : c1-'a'+10;
     u8 x2 = c2 <= '9' ? c2-'0' : c2-'a'+10;
 
-    return (char)((x1 << 4) | x2);
+    return (u8)((x1 << 4) | x2);
 }
 
 static bool parse_request(Client *client)
@@ -157,14 +142,14 @@ static bool parse_request(Client *client)
         char_array value = {.context = ctx};
 
         while (d-data < size) {
-            if (is_alphanum(*d) || Contains(ALLOWED, *d)) {
+            if (isalnum(*d) || Contains(ALLOWED, *d)) {
                 *Add(target) = *d;
             } else if (*d == '%') {
                 if (d-data + 2 >= size)        break;
-                if (!is_hex(d[1]))             break;
-                if (!is_hex(d[2]))             break;
+                if (!isxdigit(d[1]))           break;
+                if (!isxdigit(d[2]))           break;
                 // It's a hex-encoded byte.
-                *Add(target) = hex_to_char(d[1], d[2]);
+                *Add(target) = (char)hex_to_byte(d[1], d[2]);
                 d += 2;
             } else if (*d == '?') {
                 if (target != path)            break;
@@ -210,7 +195,7 @@ static bool parse_request(Client *client)
                 // Otherwise, the request is bunk.
                 char_array message = {.context = ctx};
                 append_string(&message, "The request had an unexpected character at index %ld: ", d-data);
-                append_string(&message, is_alphanum(*d) ? "'%c'.\n" : "\\x%02x.\n", *d);
+                append_string(&message, isalnum(*d) ? "'%c'.\n" : "\\x%02x.\n", *d);
 
                 client->response = (Response){400, .body = message.data, message.count};
                 client->phase = SENDING_REPLY;
@@ -251,7 +236,7 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
 
         for (s64 j = 0; j < key_len; j++) {
             char c = key[j];
-            if (is_alphanum(c) || Contains(ALLOWED, c))  *Add(result) = c;
+            if (isalnum(c) || Contains(ALLOWED, c))  *Add(result) = c;
             else  append_string(result, "%%%02x", c);
         }
 
@@ -264,7 +249,7 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
 
         for (s64 j = 0; j < val_len; j++) {
             char c = val[j];
-            if (is_alphanum(c) || Contains(ALLOWED, c))  *Add(result) = c;
+            if (isalnum(c) || Contains(ALLOWED, c))  *Add(result) = c;
             else  append_string(result, "%%%02x", c);
         }
     }

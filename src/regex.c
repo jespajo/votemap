@@ -5,7 +5,7 @@
 //| Merge adjacent CHAR instructions into a STRING or LITERAL instruction.
 //| Convert NFAs to DFAs.
 
-#include <ctype.h> //|Todo: make our own isprint()
+#include <ctype.h> // isprint()
 
 #include "regex.h"
 #include "strings.h" // For WHITESPACE
