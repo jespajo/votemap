@@ -39,16 +39,22 @@ struct Client {
     s64                     num_bytes_sent; // The total number of bytes we've sent of our response. Includes both header and body.
 };
 
-static char *get_error(int errno_)
+typedef struct System_error  System_error;
+struct System_error {
+    int  code;
+    char string[256];
+};
+
+static System_error get_error()
 {
-    // We don't want to have to pass a buffer or Memory_context argument to functions that only need to allocate when
-    // they fail, just so they can print system error messages. So we use a static buffer, which is |Threadunsafe.
-    // Which completely defeats the purpose of using strerror_r() rather than strerror().
-    char static message[256] = {0};
+    System_error error = {.code = errno};
 
-    if (strerror_r(errno_, message, lengthof(message)))  Fatal("We couldn't get the system's error message!");
+    bool ok = !strerror_r(errno, error.string, sizeof(error.string));
+    if (!ok) {
+        snprintf(error.string, sizeof(error.string), "We couldn't get the system's error message.");
+    }
 
-    return message;
+    return error;
 }
 
 static s64 get_monotonic_time()
@@ -57,7 +63,7 @@ static s64 get_monotonic_time()
     struct timespec time;
     bool success = !clock_gettime(CLOCK_MONOTONIC, &time);
 
-    if (!success)  Fatal("clock_gettime failed (%s).", get_error(errno));
+    if (!success)  Fatal("clock_gettime failed (%s).", get_error().string);
 
     s64 milliseconds = 1000*time.tv_sec + time.tv_nsec/1.0e6;
 
@@ -69,14 +75,14 @@ static void set_blocking(int file_no, bool blocking)
 {
     int flags = fcntl(file_no, F_GETFL, 0);
 
-    if (flags == -1)  Fatal("fcntl failed (%s).", get_error(errno));
+    if (flags == -1)  Fatal("fcntl failed (%s).", get_error().string);
 
     if (blocking)  flags &= ~O_NONBLOCK;
     else           flags |= O_NONBLOCK;
 
     bool success = !fcntl(file_no, F_SETFL, flags);
 
-    if (!success)  Fatal("fcntl failed (%s).", get_error(errno));
+    if (!success)  Fatal("fcntl failed (%s).", get_error().string);
 }
 
 static u8 hex_to_byte(char c1, char c2)
@@ -272,12 +278,12 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     server->clients = NewMap(server->clients, context);
 
     server->socket_no = socket(AF_INET, SOCK_STREAM, 0);
-    if (server->socket_no < 0)  Fatal("Couldn't get a socket (%s).", get_error(errno));
+    if (server->socket_no < 0)  Fatal("Couldn't get a socket (%s).", get_error().string);
 
     // Set SO_REUSEADDR because we want to run this program frequently during development.
     // Otherwise the kernel holds onto our address/port combo after our program finishes.
     if (setsockopt(server->socket_no, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
-        Fatal("Couldn't set socket options (%s).", get_error(errno));
+        Fatal("Couldn't set socket options (%s).", get_error().string);
     }
 
     set_blocking(server->socket_no, false);
@@ -289,11 +295,11 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     };
 
     if (bind(server->socket_no, (struct sockaddr const *)&socket_addr, sizeof(socket_addr)) < 0) {
-        Fatal("Couldn't bind socket (%s).", get_error(errno));
+        Fatal("Couldn't bind socket (%s).", get_error().string);
     }
 
     int QUEUE_LENGTH = 32;
-    if (listen(server->socket_no, QUEUE_LENGTH) < 0)  Fatal("Couldn't listen on socket (%s).", get_error(errno));
+    if (listen(server->socket_no, QUEUE_LENGTH) < 0)  Fatal("Couldn't listen on socket (%s).", get_error().string);
 
     printf("Listening on http://%d.%d.%d.%d:%d...\n", address>>24, address>>16&0xff, address>>8&0xff, address&0xff, port);
 
@@ -345,7 +351,7 @@ void start_server(Server *server)
 
         int num_events = poll(pollfds.data, pollfds.count, timeout_ms);
 
-        if (num_events < 0)  Fatal("poll failed (%s).", get_error(errno));
+        if (num_events < 0)  Fatal("poll failed (%s).", get_error().string);
 
         s64 current_time = get_monotonic_time(); // We need to get this value after polling, but before jumping to cleanup.
 
@@ -376,7 +382,7 @@ void start_server(Server *server)
                 socklen_t client_socket_addr_size = sizeof(client_socket_addr);
 
                 int client_socket_no = accept(server->socket_no, (struct sockaddr *)&client_socket_addr, &client_socket_addr_size);
-                if (client_socket_no < 0)  Fatal("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", get_error(errno));
+                if (client_socket_no < 0)  Fatal("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", get_error().string);
 
                 set_blocking(client_socket_no, false);
 
@@ -432,7 +438,7 @@ void start_server(Server *server)
                             break;
                         } else {
                             // There was an actual error.
-                            Fatal("We failed to read from socket %d (%s).", client_socket_no, get_error(errno));
+                            Fatal("We failed to read from socket %d (%s).", client_socket_no, get_error().string);
                         }
                     } else if (recv_count == 0) {
                         // The client has disconnected.
@@ -485,7 +491,7 @@ void start_server(Server *server)
                     s64 send_count = send(client_socket_no, data_to_send, num_bytes_to_send, flags);
                     if (send_count < 0) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
-                        else  Fatal("send failed (%s).", get_error(errno));
+                        else  Fatal("send failed (%s).", get_error().string);
                     }
                     assert(send_count > 0);
 
@@ -602,7 +608,7 @@ cleanup:
             //|Todo: Finish sending pending replies first (if we're disconnecting everyone because server_should_stop is true).
 
             bool closed = !close(client_socket_no);
-            if (!closed)  Fatal("We couldn't close a client socket (%s).", get_error(errno));
+            if (!closed)  Fatal("We couldn't close a client socket (%s).", get_error().string);
 
             free_context(client->context);
             Delete(clients, client_socket_no);
@@ -611,7 +617,7 @@ cleanup:
         }
     }
 
-    if (close(server->socket_no) < 0)  Fatal("We couldn't close our own socket (%s).", get_error(errno));
+    if (close(server->socket_no) < 0)  Fatal("We couldn't close our own socket (%s).", get_error().string);
 }
 
 void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler)
@@ -701,7 +707,7 @@ char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_context
 
     DIR *dir = opendir(dir_path);
 
-    if (!dir)  Fatal("Couldn't open directory %s (%s).", dir_path, get_error(errno));
+    if (!dir)  Fatal("Couldn't open directory %s (%s).", dir_path, get_error().string);
 
     while (true) {
         struct dirent *dirent = readdir(dir);
@@ -765,7 +771,7 @@ Response serve_file_slowly(Request *request, Memory_context *context)
         if (file_no < 0)  return (Response){404, .body = "Couldn't find that file.\n"};
 
         struct stat file_info;
-        if (fstat(file_no, &file_info))  Fatal("stat failed (%s)", get_error(errno));
+        if (fstat(file_no, &file_info))  Fatal("stat failed (%s)", get_error().string);
 
         is_directory = S_ISDIR(file_info.st_mode);
         if (is_directory) {
