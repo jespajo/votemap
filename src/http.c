@@ -61,9 +61,10 @@ static s64 get_monotonic_time()
 // In milliseconds.
 {
     struct timespec time;
-    bool success = !clock_gettime(CLOCK_MONOTONIC, &time);
-
-    if (!success)  Fatal("clock_gettime failed (%s).", get_error().string);
+    bool ok = !clock_gettime(CLOCK_MONOTONIC, &time);
+    if (!ok) {
+        Fatal("clock_gettime failed (%s).", get_error().string);
+    }
 
     s64 milliseconds = 1000*time.tv_sec + time.tv_nsec/1.0e6;
 
@@ -74,15 +75,17 @@ static void set_blocking(int file_no, bool blocking)
 // file_no is an open file descriptor.
 {
     int flags = fcntl(file_no, F_GETFL, 0);
-
-    if (flags == -1)  Fatal("fcntl failed (%s).", get_error().string);
+    if (flags == -1) {
+        Fatal("fcntl failed (%s).", get_error().string);
+    }
 
     if (blocking)  flags &= ~O_NONBLOCK;
-    else           flags |= O_NONBLOCK;
+    else           flags |=  O_NONBLOCK;
 
-    bool success = !fcntl(file_no, F_SETFL, flags);
-
-    if (!success)  Fatal("fcntl failed (%s).", get_error().string);
+    bool ok = !fcntl(file_no, F_SETFL, flags);
+    if (!ok) {
+        Fatal("fcntl failed (%s).", get_error().string);
+    }
 }
 
 static u8 hex_to_byte(char c1, char c2)
@@ -278,11 +281,14 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     server->clients = NewMap(server->clients, context);
 
     server->socket_no = socket(AF_INET, SOCK_STREAM, 0);
-    if (server->socket_no < 0)  Fatal("Couldn't get a socket (%s).", get_error().string);
+    if (server->socket_no < 0) {
+        Fatal("Couldn't get a socket (%s).", get_error().string);
+    }
 
     // Set SO_REUSEADDR because we want to run this program frequently during development.
     // Otherwise the kernel holds onto our address/port combo after our program finishes.
-    if (setsockopt(server->socket_no, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
+    int r = setsockopt(server->socket_no, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
+    if (r < 0) {
         Fatal("Couldn't set socket options (%s).", get_error().string);
     }
 
@@ -294,12 +300,16 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
         .sin_addr     = {htonl(server->address)},
     };
 
-    if (bind(server->socket_no, (struct sockaddr const *)&socket_addr, sizeof(socket_addr)) < 0) {
+    r = bind(server->socket_no, (struct sockaddr const *)&socket_addr, sizeof(socket_addr));
+    if (r < 0) {
         Fatal("Couldn't bind socket (%s).", get_error().string);
     }
 
     int QUEUE_LENGTH = 32;
-    if (listen(server->socket_no, QUEUE_LENGTH) < 0)  Fatal("Couldn't listen on socket (%s).", get_error().string);
+    r = listen(server->socket_no, QUEUE_LENGTH);
+    if (r < 0) {
+        Fatal("Couldn't listen on socket (%s).", get_error().string);
+    }
 
     printf("Listening on http://%d.%d.%d.%d:%d...\n", address>>24, address>>16&0xff, address>>8&0xff, address&0xff, port);
 
@@ -350,14 +360,14 @@ void start_server(Server *server)
         int timeout_ms = (pollfds.count-2 > 0) ? 1000 : -1;
 
         int num_events = poll(pollfds.data, pollfds.count, timeout_ms);
-
-        if (num_events < 0)  Fatal("poll failed (%s).", get_error().string);
+        if (num_events < 0) {
+            Fatal("poll failed (%s).", get_error().string);
+        }
 
         s64 current_time = get_monotonic_time(); // We need to get this value after polling, but before jumping to cleanup.
 
         // If poll() timed out without any events occurring, skip trying to process requests.
         if (!num_events)  goto cleanup;
-        assert(num_events > 0);
 
         for (s64 pollfd_index = 0; pollfd_index < pollfds.count; pollfd_index += 1) {
             struct pollfd *pollfd = &pollfds.data[pollfd_index];
@@ -382,7 +392,9 @@ void start_server(Server *server)
                 socklen_t client_socket_addr_size = sizeof(client_socket_addr);
 
                 int client_socket_no = accept(server->socket_no, (struct sockaddr *)&client_socket_addr, &client_socket_addr_size);
-                if (client_socket_no < 0)  Fatal("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", get_error().string);
+                if (client_socket_no < 0) {
+                    Fatal("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", get_error().string);
+                }
 
                 set_blocking(client_socket_no, false);
 
@@ -542,13 +554,10 @@ void start_server(Server *server)
                 Request_handler *handler = NULL;
                 for (s64 i = 0; i < routes->count; i++) {
                     Route *route = &routes->data[i];
-
                     if (request->method != route->method)  continue;
 
                     request->captures = (Captures){.context = client->context};
-
                     bool match = match_regex(request->path.data, request->path.count, route->path_regex, &request->captures);
-
                     if (match) {
                         handler = route->handler;
                         break;
@@ -582,7 +591,9 @@ void start_server(Server *server)
             append_string(reply_header, "HTTP/1.0 %d\r\n", response->status);
             {
                 string_dict *h = &response->headers;
-                for (s64 i = 0; i < h->count; i++)  append_string(reply_header, "%s: %s\r\n", h->keys[i], h->vals[i]);
+                for (s64 i = 0; i < h->count; i++) {
+                    append_string(reply_header, "%s: %s\r\n", h->keys[i], h->vals[i]);
+                }
             }
             append_string(reply_header, "\r\n");
 
@@ -608,7 +619,9 @@ cleanup:
             //|Todo: Finish sending pending replies first (if we're disconnecting everyone because server_should_stop is true).
 
             bool closed = !close(client_socket_no);
-            if (!closed)  Fatal("We couldn't close a client socket (%s).", get_error().string);
+            if (!closed) {
+                Fatal("We couldn't close a client socket (%s).", get_error().string);
+            }
 
             free_context(client->context);
             Delete(clients, client_socket_no);
@@ -617,7 +630,10 @@ cleanup:
         }
     }
 
-    if (close(server->socket_no) < 0)  Fatal("We couldn't close our own socket (%s).", get_error().string);
+    bool closed = !close(server->socket_no);
+    if (!closed) {
+        Fatal("We couldn't close our own socket (%s).", get_error().string);
+    }
 }
 
 void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler)
@@ -641,8 +657,9 @@ Response serve_file_insecurely(Request *request, Memory_context *context)
     }
 
     u8_array *file = load_binary_file(path, context);
-
-    if (!file)  return (Response){404, .body = "We couldn't find that file.\n"};
+    if (!file) {
+        return (Response){404, .body = "We couldn't find that file.\n"};
+    }
 
     char *file_extension = NULL;
 
@@ -706,8 +723,9 @@ char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_context
     char_array2 *paths = NewArray(paths, context);
 
     DIR *dir = opendir(dir_path);
-
-    if (!dir)  Fatal("Couldn't open directory %s (%s).", dir_path, get_error().string);
+    if (!dir) {
+        Fatal("Couldn't open directory %s (%s).", dir_path, get_error().string);
+    }
 
     while (true) {
         struct dirent *dirent = readdir(dir);
@@ -767,11 +785,15 @@ Response serve_file_slowly(Request *request, Memory_context *context)
         file_path = get_string(ctx, "%s/%s", dir->path, seg->data);
 
         s32 file_no = open(file_path->data, O_RDONLY);
-
-        if (file_no < 0)  return (Response){404, .body = "Couldn't find that file.\n"};
+        if (file_no < 0) {
+            return (Response){404, .body = "Couldn't find that file.\n"};
+        }
 
         struct stat file_info;
-        if (fstat(file_no, &file_info))  Fatal("stat failed (%s)", get_error().string);
+        bool ok = !fstat(file_no, &file_info);
+        if (!ok) {
+            Fatal("stat failed (%s)", get_error().string);
+        }
 
         is_directory = S_ISDIR(file_info.st_mode);
         if (is_directory) {
