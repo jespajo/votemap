@@ -27,5 +27,7 @@ float clockwise_value(Vector2 *points, s64 num_points);
 bool points_are_clockwise(Vector2 *points, s64 num_points);
 bool points_are_anticlockwise(Vector2 *points, s64 num_points);
 Triangle_array *triangulate_polygon(Polygon *polygon, Memory_context *context);
+void parse_wkb_polygons(u8 *data, Polygon_array *result, u8 **end_data);
+void parse_wkb_paths(u8 *data, Path_array *result, u8 **end_data);
 
 #endif // SHAPES_H_INCLUDED

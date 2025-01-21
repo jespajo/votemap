@@ -205,7 +205,7 @@ Response serve_vertices(Request *request, Memory_context *context)
             Polygon_array polygons = {.context = ctx};
             {
                 u8 *end_data = NULL;
-                parse_polygons(polygon_cell->data, &polygons, &end_data);
+                parse_wkb_polygons(polygon_cell->data, &polygons, &end_data);
 
                 assert(end_data == &polygon_cell->data[polygon_cell->count]);
             }
@@ -283,7 +283,7 @@ Response serve_vertices(Request *request, Memory_context *context)
             if (path_cell->count == 0)  continue;
 
             u8 *end_data = NULL;
-            parse_paths(path_cell->data, &paths, &end_data);
+            parse_wkb_paths(path_cell->data, &paths, &end_data);
             assert(end_data == path_cell->data + path_cell->count);
 
             Vector3 colour = {0.8, 0.8, 0.8};
