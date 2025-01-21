@@ -1,5 +1,5 @@
 Web server. Before multithreading.
-    Make a new Postgres connection for each request.
+    Add SIGINT handler to test graceful shutdown.
     Embed maps/dicts in structs rather than have pointers.
 
 Multithreaded web server. How it will work.

@@ -2,7 +2,6 @@
 
 #include "draw.h"
 #include "http.h"
-#include "json.h"
 #include "map.h"
 #include "pg.h"
 #include "strings.h"
@@ -145,10 +144,12 @@ Response serve_vertices(Request *request, Memory_context *context)
 
     Vertex_array *verts = NewArray(verts, ctx);
 
-    PGconn *db = connect_to_database(DATABASE_URL);
+    PG_client db = {DATABASE_URL, .use_cache = true, .keep_alive = true};
 
     Tile_info tile = parse_tile_request(request);
-    if (!tile.parse_success)  return (Response){400, .body = tile.fail_reason};
+    if (!tile.parse_success) {
+        return (Response){400, .body = tile.fail_reason};
+    }
 
     // Prepare the parameters to our SQL queries (they are the same for all queries below).
     // Negate the Y values to convert the map units of the browser to the database's coordinate reference system.
@@ -185,7 +186,7 @@ Response serve_vertices(Request *request, Memory_context *context)
         " order by st_area(box2d(d.bounds_clipped)) desc                                                                                               "
         ;
 
-        Postgres_result *result = query_database(db, query, &params, ctx);
+        PG_result *result = query_database(&db, query, &params, ctx);
 
         int district_id_column = *Get(&result->columns, "district_id");  assert(district_id_column >= 0);
         int polygon_column     = *Get(&result->columns, "polygon");      assert(polygon_column >= 0);
@@ -269,7 +270,7 @@ Response serve_vertices(Request *request, Memory_context *context)
         "   ) t                                                                                             "
         ;
 
-        Postgres_result *result = query_database(db, query, &params, ctx);
+        PG_result *result = query_database(&db, query, &params, ctx);
 
         int id_column   = *Get(&result->columns, "id");    assert(id_column >= 0);
         int path_column = *Get(&result->columns, "path");  assert(path_column >= 0);
@@ -307,6 +308,7 @@ Response serve_vertices(Request *request, Memory_context *context)
     response.headers = (string_dict){.context = ctx};
     *Set(&response.headers, "content-type") = "application/octet-stream";
 
+    close_database(&db);
     return response;
 }
 
@@ -314,7 +316,7 @@ Response serve_districts(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
 
-    PGconn *db = connect_to_database(DATABASE_URL);
+    PG_client db = {DATABASE_URL, .use_cache = true};
 
     string_array params = {.context = ctx};
 
@@ -357,7 +359,7 @@ Response serve_districts(Request *request, Memory_context *context)
     "   ) t                                    "
     ;
 
-    Postgres_result *result = query_database(db, query, &params, ctx);
+    PG_result *result = query_database(&db, query, &params, ctx);
 
     assert(*Get(&result->columns, "json") == 0);
     assert(result->rows.count == 1);
@@ -376,7 +378,7 @@ Response serve_seats_won(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
 
-    PGconn *db = connect_to_database(DATABASE_URL);
+    PG_client db = {DATABASE_URL, .use_cache = true};
 
     char *query =
     " select jsonb_agg(to_jsonb(t.*))::text as json                    "
@@ -400,7 +402,7 @@ Response serve_seats_won(Request *request, Memory_context *context)
         *Add(&params) = election;
     }
 
-    Postgres_result *result = query_database(db, query, &params, ctx);
+    PG_result *result = query_database(&db, query, &params, ctx);
 
     assert(*Get(&result->columns, "json") == 0);
     assert(result->rows.count == 1); //|Bug: There may be 0 rows if the election ID in the request path does not exist. Currently in this case there's a segfault.
@@ -419,7 +421,7 @@ Response serve_contest_votes(Request *request, Memory_context *context)
 {
     Memory_context *ctx = context;
 
-    PGconn *db = connect_to_database(DATABASE_URL);
+    PG_client db = {DATABASE_URL, .use_cache = true};
 
     char *query =
     " select jsonb_object_agg(\"countType\", c)::text as json           "
@@ -458,7 +460,7 @@ Response serve_contest_votes(Request *request, Memory_context *context)
         *Add(&params) = district;
     }
 
-    Postgres_result *result = query_database(db, query, &params, ctx);
+    PG_result *result = query_database(&db, query, &params, ctx);
 
     assert(*Get(&result->columns, "json") == 0);
     assert(result->rows.count == 1); //|Bug: There may be 0 rows if the election ID in the request path does not exist. Currently in this case there's a segfault.
@@ -488,8 +490,6 @@ int main(int argc, char **argv)
 
     Memory_context *top_context = new_context(NULL);
 
-    PGconn *database = connect_to_database(DATABASE_URL);
-
     Server *server = create_server(address, port, verbose, top_context);
 
     add_route(server, GET, "/vertices/(.+)",                                &serve_vertices);
@@ -503,7 +503,6 @@ int main(int argc, char **argv)
     start_server(server);
 
 
-    PQfinish(database);
     free_context(top_context);
     return 0;
 }

@@ -101,7 +101,7 @@ void map_reserve_(void **keys, void **vals, s64 *count, s64 *limit, s64 new_limi
 #define map_reserve(MAP, LIMIT)  \
     map_reserve_((void**)&(MAP)->keys, (void**)&(MAP)->vals, &(MAP)->count, &(MAP)->limit, (LIMIT), sizeof(*(MAP)->keys), sizeof(*(MAP)->vals), &(MAP)->buckets, &(MAP)->num_buckets, (MAP)->context)
 
-Topology *load_topology(PGconn *database, char *topology_name, Memory_context *context)
+Topology *load_topology(PG_client *database, char *topology_name, Memory_context *context)
 {
     Memory_context *ctx = context;
 
@@ -114,7 +114,7 @@ Topology *load_topology(PGconn *database, char *topology_name, Memory_context *c
         assert(num_chars < sizeof(query));
     }
 
-    Postgres_result *result = query_database(database, query, NULL, ctx);
+    PG_result *result = query_database(database, query, NULL, ctx);
 
     int id_column              = *Get(&result->columns, "edge_id");          assert(id_column >= 0);
     int next_left_edge_column  = *Get(&result->columns, "next_left_edge");   assert(next_left_edge_column >= 0);
@@ -439,9 +439,9 @@ int main()
 {
     Memory_context *ctx = new_context(NULL);
 
-    PGconn *db = connect_to_database("postgres://postgres:postgisclarity@osm.tal/gis");
+    PG_client db = {"postgres://postgres:postgisclarity@osm.tal/gis"};
 
-    Topology *topo = load_topology(db, "district_topo3", ctx);
+    Topology *topo = load_topology(&db, "district_topo3", ctx);
 
     simplify_topology(topo, NULL);
 

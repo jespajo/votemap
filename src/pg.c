@@ -4,8 +4,6 @@
 #include "strings.h"
 #include "system.h"
 
-#define QueryError(...)  (log_error(__VA_ARGS__), NULL)
-
 static u64 hash_query(char *query, string_array *params)
 {
 //|Copypasta from map.c.
@@ -35,41 +33,40 @@ static void add_s32(u8_array *array, s32 number)
     array->count = new_count;
 }
 
-PGconn *connect_to_database(char *url)
-// An expedient static variable means we can call this function first from the function that's also
-// responsible for closing the connection with PQfinish(PGconn *), and then from anywhere for the
-// life of the connection.
-// This function supports one database only; we don't bother checking the url after the first call.
-{
-    static PGconn *conn = NULL; //|Threadsafety
-
-    if (!conn)  conn = PQconnectdb(url);
-
-    if (PQstatus(conn) != CONNECTION_OK)  Fatal("Database connection failed: %s", PQerrorMessage(conn));
-
-    return conn;
-}
-
-static Postgres_result *query_database_uncached(PGconn *db, char *query, string_array *params, Memory_context *context)
-// Actually query the database and parse the result into a Postgres_result.
-// This is called by query_database.
+static PG_result *query_database_uncached(PG_client *client, char *query, string_array *params, Memory_context *context)
+// Actually query the database and parse the result.
+// This function is called by query_database().
+// Parameters are string literals. Cast them in your queries: `SELECT $1::int;`
 {
     Memory_context *ctx = context;
 
-    Postgres_result *result = New(Postgres_result, ctx);
+    PG_result *result = New(PG_result, ctx);
     result->columns = (int_dict){.context = ctx};
     result->rows    = (u8_array3){.context = ctx};
     SetDefault(&result->columns, -1);
+
+    // Connect to the database.
+    if (!client->conn)  client->conn = PQconnectdb(client->conn_string);
+    else  assert(client->keep_alive);
+
+    // Check the connection status.
+    if (PQstatus(client->conn) != CONNECTION_OK) {
+        log_error("Database connection failed: %s", PQerrorMessage(client->conn));
+        result = NULL;
+        goto done;
+    }
 
     // Make the query.
     PGresult *query_result; {
         int num_params = (params) ? params->count : 0;
         char const *const *param_data = (params) ? (char const *const *)params->data : NULL;
 
-        query_result = PQexecParams(db, query, num_params, NULL, param_data, NULL, NULL, 1);
+        query_result = PQexecParams(client->conn, query, num_params, NULL, param_data, NULL, NULL, 1);
 
         if (PQresultStatus(query_result) != PGRES_TUPLES_OK) {
-            return QueryError("Query failed: %s", PQerrorMessage(db));
+            log_error("Query failed: %s", PQerrorMessage(client->conn));
+            result = NULL;
+            goto done;
         }
     }
 
@@ -105,17 +102,23 @@ static Postgres_result *query_database_uncached(PGconn *db, char *query, string_
 
     PQclear(query_result);
 
+done:
+    if (!client->keep_alive)  close_database(client);
+
     return result;
 }
 
-Postgres_result *query_database(PGconn *db, char *query, string_array *params, Memory_context *context)
-// Parameters are string literals. Cast them in your queries: `SELECT $1::int;`
+PG_result *query_database(PG_client *client, char *query, string_array *params, Memory_context *context)
 // This function is mostly concerned with caching the results of query_database_uncached().
 {
+    Memory_context *ctx = context;
+
+    if (!client->use_cache) {
+        return query_database_uncached(client, query, params, ctx);
+    }
+
     char cache_dir[]    = "/tmp"; //|Todo: Create our own directory for cache files.
     char magic_number[] = "PG$$";
-
-    Memory_context *ctx = context;
 
     u64 query_hash = hash_query(query, params);
 
@@ -129,7 +132,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
     if (cache_file) {
         printf("Found cache file %s.\n", cache_file_name);
 
-        Postgres_result *result = New(Postgres_result, ctx);
+        PG_result *result = New(PG_result, ctx);
         result->columns = (int_dict){.context = ctx};
         result->rows    = (u8_array3){.context = ctx};
         SetDefault(&result->columns, -1);
@@ -140,7 +143,8 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
         u8 *d = cache_file->data;
 
         if (memcmp(d, magic_number, lengthof(magic_number))) {
-            return QueryError("We did not find the magic number in %s.", cache_file_name);
+            log_error("We did not find the magic number in %s.", cache_file_name);
+            return NULL;
         }
         d += lengthof(magic_number);
 
@@ -149,8 +153,9 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
 
         if (query_length != strlen(query) || memcmp(query, d, query_length)) {
             // There has been a hash collision resulting in two different queries with the same cache file name.
-            // This is unlikely. For now, throw an error. Deal with it later if it ever happens.
-            return QueryError("The current query does not match the one in %s.", cache_file_name);
+            // This is unlikely. For now, throw an error. Deal with it later if it ever happens. |Fixme
+            log_error("The current query does not match the one in %s.", cache_file_name);
+            return NULL;
         }
         d += query_length;
 
@@ -215,7 +220,7 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
     printf("No cache file found. Making query.\n");
 
     // Make the query and parse the result.
-    Postgres_result *result = query_database_uncached(db, query, params, ctx);
+    PG_result *result = query_database_uncached(client, query, params, ctx);
 
     //
     // Write the result to a cache file.
@@ -275,6 +280,17 @@ Postgres_result *query_database(PGconn *db, char *query, string_array *params, M
     write_array_to_file(cache_file, cache_file_name);
 
     return result;
+}
+
+void close_database(PG_client *client)
+{
+    if (client->conn) {
+        PQfinish(client->conn);
+        client->conn = NULL;
+    } else {
+        // The only way we could have not connected to the database is if we got the results from cache.
+        assert(client->use_cache);
+    }
 }
 
 u32 get_u32_from_cell(u8_array *cell)
