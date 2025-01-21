@@ -2,6 +2,7 @@
 
 #include "pg.h"
 #include "strings.h"
+#include "system.h"
 
 #define QueryError(...)  (log_error(__VA_ARGS__), NULL)
 

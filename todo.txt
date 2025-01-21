@@ -1,5 +1,4 @@
 Web server. Before multithreading.
-    Move file read/write functions to system module.
     Rename main -> votemap/serve
     Make a new Postgres connection for each request.
     Embed maps/dicts in structs rather than have pointers.

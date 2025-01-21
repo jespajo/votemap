@@ -22,8 +22,76 @@ System_error get_error_info(int code)
 }
 
 System_error get_last_error()
+// The idea is to use get_last_error() with classic C functions where they put the error code in errno.
+// With stuff like pthreads where they return the error code instead, use get_error_info(code).
 {
     return get_error_info(errno);
+}
+
+char_array *load_text_file(char *file_name, Memory_context *context)
+// Return NULL if the file can't be opened.
+{
+    char_array *buffer = NewArray(buffer, context);
+
+    FILE *file = fopen(file_name, "r");
+    if (!file) {
+        log_error("Couldn't open file %s.", file_name);
+        return NULL;
+    }
+
+    while (true) {
+        int c = fgetc(file);
+        if (c == EOF)  break;
+
+        // |Memory: This doubles the buffer when needed.
+        *Add(buffer) = (char)c;
+    }
+
+    *Add(buffer) = '\0';
+    buffer->count -= 1;
+
+    fclose(file);
+
+    return buffer;
+}
+
+u8_array *load_binary_file(char *file_name, Memory_context *context)
+// Return NULL if the file can't be opened.
+{
+    u8_array *buffer = NewArray(buffer, context);
+
+    FILE *file = fopen(file_name, "rb");
+    if (!file) {
+        log_error("Couldn't open file %s.", file_name);
+        return NULL;
+    }
+
+    while (true) {
+        int c = fgetc(file);
+        if (c == EOF)  break;
+
+        // |Memory: This doubles the buffer when needed.
+        *Add(buffer) = (u8)c;
+    }
+
+    fclose(file);
+
+    return buffer;
+}
+
+void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
+{
+    if (!count)  Fatal("You probably don't want to write an empty array to %s.", file_name);
+
+    FILE *file = fopen(file_name, "wb");
+    if (!file) {
+        Fatal("Couldn't create file %s (%s).", file_name, get_last_error().string);
+    }
+
+    u64 num_chars_written = fwrite(data, unit_size, count, file);
+    assert(num_chars_written > 0);
+
+    fclose(file);
 }
 
 s64 get_monotonic_time()

@@ -1,4 +1,3 @@
-#include <errno.h> // For diagnosing file read/write errors.
 #include <stdarg.h>
 
 #include "array.h"
@@ -57,75 +56,6 @@ void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memor
     *limit = new_limit;
 
     return data;
-}
-
-char_array *load_text_file(char *file_name, Memory_context *context)
-// Return NULL if the file can't be opened.
-{
-    char_array *buffer = NewArray(buffer, context);
-
-    FILE *file = fopen(file_name, "r");
-    if (!file) {
-        log_error("Couldn't open file %s.", file_name);
-        return NULL;
-    }
-
-    while (true) {
-        int c = fgetc(file);
-        if (c == EOF)  break;
-
-        // |Memory: This doubles the buffer when needed.
-        *Add(buffer) = (char)c;
-    }
-
-    *Add(buffer) = '\0';
-    buffer->count -= 1;
-
-    fclose(file);
-
-    return buffer;
-}
-
-u8_array *load_binary_file(char *file_name, Memory_context *context)
-// Return NULL if the file can't be opened.
-{
-    u8_array *buffer = NewArray(buffer, context);
-
-    FILE *file = fopen(file_name, "rb");
-    if (!file) {
-        log_error("Couldn't open file %s.", file_name);
-        return NULL;
-    }
-
-    while (true) {
-        int c = fgetc(file);
-        if (c == EOF)  break;
-
-        // |Memory: This doubles the buffer when needed.
-        *Add(buffer) = (u8)c;
-    }
-
-    fclose(file);
-
-    return buffer;
-}
-
-void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name)
-{
-    if (!count)  Fatal("You probably don't want to write an empty array to %s.", file_name);
-
-    FILE *file = fopen(file_name, "wb");
-
-    if (!file) {
-        char *reason = "";
-        if (errno == 2)  reason = "Does that directory exist?";
-        Fatal("Couldn't create file %s. %s", file_name, reason);
-    }
-
-    u64 num_chars_written = fwrite(data, unit_size, count, file);
-    assert(num_chars_written > 0);
-
-    fclose(file);
 }
 
 void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_context *context)

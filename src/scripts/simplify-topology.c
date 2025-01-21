@@ -5,6 +5,7 @@
 #include "../pg.h"
 #include "../shapes.h"
 #include "../strings.h"
+#include "../system.h"
 
 const double PI = 4*atan(1);
 
