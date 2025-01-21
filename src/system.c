@@ -9,16 +9,21 @@
 #include "strings.h"
 #include "system.h"
 
-System_error get_error()
+System_error get_error_info(int code)
 {
-    System_error error = {.code = errno};
+    System_error error = {.code = code};
 
-    bool ok = !strerror_r(errno, error.string, sizeof(error.string));
+    bool ok = !strerror_r(code, error.string, sizeof(error.string));
     if (!ok) {
-        snprintf(error.string, sizeof(error.string), "We couldn't get the system's error message.");
+        snprintf(error.string, sizeof(error.string), "We couldn't get the system's error message");
     }
 
     return error;
+}
+
+System_error get_last_error()
+{
+    return get_error_info(errno);
 }
 
 s64 get_monotonic_time()
@@ -27,7 +32,7 @@ s64 get_monotonic_time()
     struct timespec time;
     bool ok = !clock_gettime(CLOCK_MONOTONIC, &time);
     if (!ok) {
-        Fatal("clock_gettime failed (%s).", get_error().string);
+        Fatal("clock_gettime failed (%s).", get_last_error().string);
     }
 
     s64 milliseconds = 1000*time.tv_sec + time.tv_nsec/1.0e6;
@@ -40,7 +45,7 @@ void set_blocking(int file_no, bool blocking)
 {
     int flags = fcntl(file_no, F_GETFL, 0);
     if (flags == -1) {
-        Fatal("fcntl failed (%s).", get_error().string);
+        Fatal("fcntl failed (%s).", get_last_error().string);
     }
 
     if (blocking)  flags &= ~O_NONBLOCK;
@@ -48,7 +53,7 @@ void set_blocking(int file_no, bool blocking)
 
     bool ok = !fcntl(file_no, F_SETFL, flags);
     if (!ok) {
-        Fatal("fcntl failed (%s).", get_error().string);
+        Fatal("fcntl failed (%s).", get_last_error().string);
     }
 }
 
@@ -61,7 +66,7 @@ char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_context
 
     DIR *dir = opendir(dir_path);
     if (!dir) {
-        Fatal("Couldn't open directory %s (%s).", dir_path, get_error().string);
+        Fatal("Couldn't open directory %s (%s).", dir_path, get_last_error().string);
     }
 
     while (true) {

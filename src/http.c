@@ -225,14 +225,14 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
 
     server->socket_no = socket(AF_INET, SOCK_STREAM, 0);
     if (server->socket_no < 0) {
-        Fatal("Couldn't get a socket (%s).", get_error().string);
+        Fatal("Couldn't get a socket (%s).", get_last_error().string);
     }
 
     // Set SO_REUSEADDR because we want to run this program frequently during development.
     // Otherwise the kernel holds onto our address/port combo after our program finishes.
     int r = setsockopt(server->socket_no, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
     if (r < 0) {
-        Fatal("Couldn't set socket options (%s).", get_error().string);
+        Fatal("Couldn't set socket options (%s).", get_last_error().string);
     }
 
     set_blocking(server->socket_no, false);
@@ -245,13 +245,13 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
 
     r = bind(server->socket_no, (struct sockaddr const *)&socket_addr, sizeof(socket_addr));
     if (r < 0) {
-        Fatal("Couldn't bind socket (%s).", get_error().string);
+        Fatal("Couldn't bind socket (%s).", get_last_error().string);
     }
 
     int QUEUE_LENGTH = 32;
     r = listen(server->socket_no, QUEUE_LENGTH);
     if (r < 0) {
-        Fatal("Couldn't listen on socket (%s).", get_error().string);
+        Fatal("Couldn't listen on socket (%s).", get_last_error().string);
     }
 
     printf("Listening on http://%d.%d.%d.%d:%d...\n", address>>24, address>>16&0xff, address>>8&0xff, address&0xff, port);
@@ -304,7 +304,7 @@ void start_server(Server *server)
 
         int num_events = poll(pollfds.data, pollfds.count, timeout_ms);
         if (num_events < 0) {
-            Fatal("poll failed (%s).", get_error().string);
+            Fatal("poll failed (%s).", get_last_error().string);
         }
 
         s64 current_time = get_monotonic_time(); // We need to get this value after polling, but before jumping to cleanup.
@@ -336,7 +336,7 @@ void start_server(Server *server)
 
                 int client_socket_no = accept(server->socket_no, (struct sockaddr *)&client_socket_addr, &client_socket_addr_size);
                 if (client_socket_no < 0) {
-                    Fatal("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", get_error().string);
+                    Fatal("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", get_last_error().string);
                 }
 
                 set_blocking(client_socket_no, false);
@@ -392,7 +392,7 @@ void start_server(Server *server)
                             break;
                         } else {
                             // There was an actual error.
-                            Fatal("We failed to read from socket %d (%s).", client_socket_no, get_error().string);
+                            Fatal("We failed to read from socket %d (%s).", client_socket_no, get_last_error().string);
                         }
                     } else if (recv_count == 0) {
                         // The client has disconnected.
@@ -445,7 +445,7 @@ void start_server(Server *server)
                     s64 send_count = send(client_socket_no, data_to_send, num_bytes_to_send, flags);
                     if (send_count < 0) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
-                        else  Fatal("send failed (%s).", get_error().string);
+                        else  Fatal("send failed (%s).", get_last_error().string);
                     }
                     assert(send_count > 0);
 
@@ -562,7 +562,7 @@ cleanup:
 
             bool closed = !close(client_socket_no);
             if (!closed) {
-                Fatal("We couldn't close a client socket (%s).", get_error().string);
+                Fatal("We couldn't close a client socket (%s).", get_last_error().string);
             }
 
             free_context(client->context);
@@ -574,7 +574,7 @@ cleanup:
 
     bool closed = !close(server->socket_no);
     if (!closed) {
-        Fatal("We couldn't close our own socket (%s).", get_error().string);
+        Fatal("We couldn't close our own socket (%s).", get_last_error().string);
     }
 }
 
