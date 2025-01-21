@@ -51,12 +51,18 @@ void append_string(char_array *out, char *format, ...)
 }
 
 void print_double(double number, char_array *out)
-// Remove trailing zero decimal places and if it's a whole number then remove the whole decimal part.
+// Remove trailing zeroes from the fractional part.
+// If it's a whole number then remove the whole fractional part.
+//
+// |Todo:
+// | - Make it configurable: padding, precision, trailing zeroes.
+// | - Get this function to take a size, then we can have a FormatFloat macro that you can call with floats or doubles and by default it should print the precision that makes sense for the type.
+// | - Maybe just return a struct on the stack with an embedded char[] since the size is predictable.
 {
     s64 old_count = out->count;
     append_string(out, "%.15f", number);
 
-    // Find the index of the decimel place '.' character, or -1 if there was none.
+    // Find the index of the decimel place '.' character.
     s64 decimel_index = -1;
     for (s64 i = old_count; i < out->count; i++) {
         if (out->data[i] != '.')  continue;
@@ -97,4 +103,34 @@ bool starts_with_(char *string, char *match, s64 match_length)
         if (string[i] != match[i])  return false;
     }
     return true;
+}
+
+char_array2 *split_string(char *string, s64 length, char split_char, Memory_context *context)
+{
+    char_array2 *result = NewArray(result, context);
+
+    char *buffer = alloc(length+1, sizeof(char), context);
+    memcpy(buffer, string, length);
+
+    // If true, the returned array will have empty char_arrays where the split_char appears twice in a row,
+    // or at the start or end of the string. We may want to make this configurable later.
+    bool include_empties = false;
+
+    s64 i = 0;
+    while (i <= length) {
+        s64 j = i;
+        while (j < length && buffer[j] != split_char)  j += 1;
+
+        buffer[j] = '\0';
+
+        // We don't give the segments a limit or context because you can't Add() to them,
+        // since they're just pointers into a buffer---they don't own their data.
+        char_array segment = {.data = &buffer[i], .count = j-i};
+
+        if (segment.count > 0 || include_empties)  *Add(result) = segment;
+
+        i = j + 1;
+    }
+
+    return result;
 }

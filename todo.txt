@@ -1,3 +1,24 @@
+Web server. Before multithreading.
+    Make system error function that takes errno.
+    Rename main -> votemap/serve
+    Make a new Postgres connection for each request.
+    Embed maps/dicts in structs rather than have pointers.
+
+Multithreaded web server. How it will work.
+    The main thread listens for connections.
+    When it gets a connection, it initialises a Client and adds it to a task queue.
+    The worker threads consume the queue.
+    Each time a worker consumes a task, it:
+        Pops the task from the queue.
+        Takes action depending on the request phase, continuing until:
+            It can't fully parse (or invalidate) the request.
+            It can't fully send the reply.
+            Maybe one day... when a request yields on a task, like a Postgres query.
+        Then it adds the Client to the server's clients and writes to the worker pipe to signal completion.
+    The main thread, notified via the worker pipe, reconstructs its pollfds to include all Clients, and polls again.
+
+---
+
 To complete V2:
     Animate the panel to show an appropriate amount of detail when the app mode changes.
         Make it appear all the way left in desktop mode.
@@ -18,10 +39,6 @@ To complete V2:
     Don't show the labels until the map is showing the correct election's vertices.
 
 ---
-
-Web server:
-    Add stress tests.
-    Make it multithreaded.
 
 Database schema changes:
     Add updated_at columns to the votes tables.

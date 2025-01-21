@@ -1,21 +1,13 @@
-// For clock_gettime() we need _POSIX_C_SOURCE >= 199309L.
-// For strerror_r()    we need _POSIX_C_SOURCE >= 200112L.
-#define _POSIX_C_SOURCE 200112L
-
 #include <arpa/inet.h>
 #include <ctype.h>
-#include <dirent.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
 
 #include "http.h"
 #include "strings.h"
+#include "system.h"
 
 struct Client {
     Memory_context         *context;
@@ -38,55 +30,6 @@ struct Client {
     char_array              reply_header;   // Our response's header in raw text form.
     s64                     num_bytes_sent; // The total number of bytes we've sent of our response. Includes both header and body.
 };
-
-typedef struct System_error  System_error;
-struct System_error {
-    int  code;
-    char string[256];
-};
-
-static System_error get_error()
-{
-    System_error error = {.code = errno};
-
-    bool ok = !strerror_r(errno, error.string, sizeof(error.string));
-    if (!ok) {
-        snprintf(error.string, sizeof(error.string), "We couldn't get the system's error message.");
-    }
-
-    return error;
-}
-
-static s64 get_monotonic_time()
-// In milliseconds.
-{
-    struct timespec time;
-    bool ok = !clock_gettime(CLOCK_MONOTONIC, &time);
-    if (!ok) {
-        Fatal("clock_gettime failed (%s).", get_error().string);
-    }
-
-    s64 milliseconds = 1000*time.tv_sec + time.tv_nsec/1.0e6;
-
-    return milliseconds;
-}
-
-static void set_blocking(int file_no, bool blocking)
-// file_no is an open file descriptor.
-{
-    int flags = fcntl(file_no, F_GETFL, 0);
-    if (flags == -1) {
-        Fatal("fcntl failed (%s).", get_error().string);
-    }
-
-    if (blocking)  flags &= ~O_NONBLOCK;
-    else           flags |=  O_NONBLOCK;
-
-    bool ok = !fcntl(file_no, F_SETFL, flags);
-    if (!ok) {
-        Fatal("fcntl failed (%s).", get_error().string);
-    }
-}
 
 static u8 hex_to_byte(char c1, char c2)
 // Turn two hexadecimal digits into a byte of data. E.g. hex_to_byte('8', '0') -> 128 (0x80).
@@ -442,7 +385,6 @@ void start_server(Server *server)
 
                     int flags = 0;
                     s64 recv_count = recv(client_socket_no, free_data, num_free_bytes, flags);
-
                     if (recv_count < 0) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK) {
                             // There's nothing more to read now.
@@ -684,147 +626,6 @@ Response serve_file_insecurely(Request *request, Memory_context *context)
     if (content_type)  *Set(&headers, "content-type") = content_type;
 
     return (Response){200, headers, file->data, file->count};
-}
-
-//|Todo: Move to strings.h.
-static char_array2 *split_string(char *string, s64 length, char split_char, Memory_context *context)
-{
-    char_array2 *result = NewArray(result, context);
-
-    char *copy = alloc(length+1, sizeof(char), context);
-    memcpy(copy, string, length);
-    copy[length] = '\0';
-
-    s64 segment_start = 0;
-
-    for (s64 i = 0; i < length; i++) {
-        if (string[i] != split_char)  continue;
-
-        *Add(result) = (char_array){
-            .data  = &copy[segment_start],
-            .count = i - segment_start,
-        };
-
-        copy[i] = '\0';
-        segment_start = i+1;
-    }
-
-    *Add(result) = (char_array){
-        .data  = &copy[segment_start],
-        .count = length - segment_start,
-    };
-
-    return result;
-}
-
-char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_context *context)
-// dir_path shouldn't have a trailing '/'.
-{
-    char_array2 *paths = NewArray(paths, context);
-
-    DIR *dir = opendir(dir_path);
-    if (!dir) {
-        Fatal("Couldn't open directory %s (%s).", dir_path, get_error().string);
-    }
-
-    while (true) {
-        struct dirent *dirent = readdir(dir);
-        if (!dirent)  break;
-
-        if (with_dir_prefix)  *Add(paths) = *get_string(context, "%s/%s", dir_path, dirent->d_name);
-        else                  *Add(paths) = *get_string(context, "%s", dirent->d_name);
-    }
-
-    closedir(dir);
-
-    return paths;
-}
-
-Response serve_file_slowly(Request *request, Memory_context *context)
-// Serve the request path as a file. For directories, serve index.html if it exists, otherwise display the files in the directory.
-{
-    Memory_context *ctx = context;
-    char_array    *path = &request->path;
-
-    if (path->data[0] != '/')  return (Response){505, .body = "We expected the path to start with '/'\n."}; // 505 because I think an early version does support this?
-
-    typedef struct Directory Directory;
-    struct Directory {
-        char        *path;
-        char_array2 *files;
-    };
-
-    Array(Directory) dir_stack = {.context = ctx};
-
-    *Add(&dir_stack) = (Directory){.path  = ".", .files = read_directory(".", false, ctx)};
-
-    char_array2 *segments = split_string(path->data, path->count, '/', ctx);
-
-    char_array *file_path = NULL;
-    bool     is_directory = true;
-
-    for (s64 seg_index = 0; seg_index < segments->count; seg_index += 1) {
-        char_array *seg = &segments->data[seg_index];
-
-        if (seg->count == 0)  continue; // Ignore leading and trailing slashes as well as double slashes.
-
-        if (seg->data[0] == '.') {
-            if (seg->count == 1)  continue; // Ignore redundant '.' segments.
-
-            if (seg->count == 2 && seg->data[1] == '.') {
-                // This path segment is '..', meaning go up a directory.
-                if (dir_stack.count == 1)  return (Response){403, .body = "Can't access files higher than the current directory.\n"};
-
-                dir_stack.count -= 1; // Pop.
-                continue;
-            }
-        }
-
-        Directory *dir = &dir_stack.data[dir_stack.count-1];
-
-        file_path = get_string(ctx, "%s/%s", dir->path, seg->data);
-
-        s32 file_no = open(file_path->data, O_RDONLY);
-        if (file_no < 0) {
-            return (Response){404, .body = "Couldn't find that file.\n"};
-        }
-
-        struct stat file_info;
-        bool ok = !fstat(file_no, &file_info);
-        if (!ok) {
-            Fatal("stat failed (%s)", get_error().string);
-        }
-
-        is_directory = S_ISDIR(file_info.st_mode);
-        if (is_directory) {
-             dir = Add(&dir_stack); // Push.
-            *dir = (Directory){.path = file_path->data, .files = read_directory(file_path->data, false, ctx)};
-        }
-
-        close(file_no);
-    }
-
-    if (is_directory) {
-        Directory *dir = &dir_stack.data[dir_stack.count-1];
-        for (s64 i = 0; i < dir->files->count; i++) {
-            char_array *file_name = &dir->files->data[i];
-            if (file_name->count != lengthof("index.html"))               continue;
-            if (memcmp(file_name->data, "index.html", file_name->count))  continue;
-
-            // The directory contains a file called index.html.
-            append_string(file_path, "/index.html");
-            is_directory = false;
-            break;
-        }
-    }
-
-    if (!is_directory) {
-        // Rewrite the request path and run the insecure version of this function.
-        *path = *file_path;
-        return serve_file_insecurely(request, ctx);
-    } else {
-        return (Response){500, .body = "We can't serve directories yet!\n"};
-    }
 }
 
 Response serve_404(Request *request, Memory_context *context)
