@@ -1,6 +1,3 @@
-Web server. Before multithreading.
-    Embed maps/dicts in structs rather than have pointers.
-
 Multithreaded web server. How it will work.
     The main thread listens for connections.
     When it gets a connection, it initialises a Client and adds it to a task queue.

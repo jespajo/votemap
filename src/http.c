@@ -91,13 +91,14 @@ static bool parse_request(Client *client)
         char_array *path = &client->request.path;
         *path = (char_array){.context = ctx};
 
-        string_dict *query = NewDict(query, ctx); // We'll only add this to the result if we fully parse a query string.
-
-        // At first we're reading the request path. If we come to a query string, our target alternates between a pending key and value.
-        char_array *target = path;
+        string_dict *query = &client->request.query;
+        *query = (string_dict){.context = ctx};
 
         char_array key   = {.context = ctx};
         char_array value = {.context = ctx};
+
+        // At first we're reading the request path. If we come to a query string, our target alternates between a pending key and value.
+        char_array *target = path;
 
         while (d-data < size) {
             if (isalnum(*d) || Contains(ALLOWED, *d)) {
@@ -163,8 +164,6 @@ static bool parse_request(Client *client)
 
         *Add(path) = '\0';
         path->count -= 1;
-
-        if (query->count)  client->request.query = query;
     }
 
     if (!starts_with(d, " HTTP/")) {
@@ -227,7 +226,7 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     server->verbose = verbose;
     server->context = context;
     server->routes  = (Route_array){.context = context};
-    server->clients = NewMap(server->clients, context);
+    server->clients = (Client_map){.context = context, .binary_mode = true};
 
     server->socket_no = socket(AF_INET, SOCK_STREAM, 0);
     if (server->socket_no < 0) {
@@ -284,28 +283,27 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
 
 void start_server(Server *server)
 {
-    Client_map  *clients = server->clients;
+    Client_map  *clients = &server->clients;
     Route_array *routes  = &server->routes;
 
     bool server_should_stop = false;
 
-    Memory_context *frame_ctx = new_context(server->context); // A "frame" is one iteration of the main loop.
+    // On each iteration of the main loop, we'll build an array of file descriptors to poll.
+    Array(struct pollfd) pollfds = {.context = server->context};
 
     while (!server_should_stop)
     {
-        reset_context(frame_ctx);
-
-        // Build an array of file descriptors to poll. The first two elements in the array don't change:
-        // pollfds.data[0] is our main socket listening for connections and pollfds.data[1] is the file
-        // descriptor for SIGINT. If there are any other elements in the array, they are open client connections.
-        Array(struct pollfd) pollfds = {.context = frame_ctx};
-        *Add(&pollfds) = (struct pollfd){.fd = server->socket_no,      .events = POLLIN};
+        pollfds.count = 0;
+        // The first two elements in the pollfds array don't change.
+        // pollfds.data[0] is our main socket listening for connections.
+        *Add(&pollfds) = (struct pollfd){.fd = server->socket_no, .events = POLLIN};
+        // pollfds.data[1] is the file descriptor for SIGINT.
         *Add(&pollfds) = (struct pollfd){.fd = server->sigint_file_no, .events = POLLIN};
-
+        // Any other elements in the array are open client connections.
         s64 min_num_pollfds = pollfds.count;
 
         for (s64 i = 0; i < clients->count; i++) {
-            Client *client = &clients->vals[i];
+            Client *client = clients->vals[i];
 
             struct pollfd pollfd = {.fd = client->socket_no};
 
@@ -349,14 +347,16 @@ void start_server(Server *server)
                     if (pollfd->revents & POLLNVAL)  printf("POLLNVAL on socket %d.\n", pollfd->fd);
                 }
 
-                Client *client = Get(clients, pollfd->fd);
+                Client *client = *Get(clients, pollfd->fd);
                 client->phase = READY_TO_CLOSE;
                 continue;
             }
 
             if (pollfd->fd == server->sigint_file_no) {
                 // We've received a SIGINT.
-                if (server->verbose)  printf("Received SIGINT.\n");
+                struct signalfd_siginfo info; // We don't do anything with this, but it's handy to read it for debugging reasons.
+                read(server->sigint_file_no, &info, sizeof(info));
+
                 server_should_stop = true;
                 goto cleanup;
             }
@@ -383,16 +383,20 @@ void start_server(Server *server)
 
                 assert(!IsSet(clients, client_socket_no)); // We shouldn't have a request associated with this client socket yet.
 
-                *Set(clients, client_socket_no) = (Client){
-                    .context      = new_context(server->context),
-                    .start_time   = current_time,
-                    .socket_no    = client_socket_no,
-                    .phase        = PARSING_REQUEST,
-                };
+                // Create a new memory context for the client and initialise the Client struct on that.
+                Memory_context *client_context = new_context(server->context);
+
+                Client *client = New(Client, client_context);
+                client->context    = client_context;
+                client->start_time = current_time;
+                client->socket_no  = client_socket_no;
+                client->phase      = PARSING_REQUEST;
+
+                *Set(clients, client_socket_no) = client;
             } else if (pollfd->revents & POLLIN) {
                 // There's something to read on a client socket.
                 int client_socket_no = pollfd->fd;
-                Client *client = Get(clients, client_socket_no);
+                Client *client = *Get(clients, client_socket_no);
                 assert(client->phase == PARSING_REQUEST);
 
                 if (server->verbose)  printf("Socket %d has something to say!!\n", client_socket_no);
@@ -444,7 +448,7 @@ void start_server(Server *server)
             } else if (pollfd->revents & POLLOUT) {
                 // We can write to a client socket.
                 int client_socket_no = pollfd->fd;
-                Client *client = Get(clients, client_socket_no);
+                Client *client = *Get(clients, client_socket_no);
                 assert(client->phase == SENDING_REPLY);
 
                 if (server->verbose)  printf("We're about to write to socket %d.\n", client_socket_no);
@@ -495,7 +499,7 @@ void start_server(Server *server)
                         Request *req = &client->request;
                         char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
                         char *path   = req->path.count ? req->path.data : "";
-                        char *query  = req->query ? encode_query_string(req->query, ctx)->data : "";
+                        char *query  = req->query.count ? encode_query_string(&req->query, ctx)->data : "";
 
                         printf("[%d] %s %s%s\n", response->status, method, path, query);
                     }
@@ -508,7 +512,7 @@ void start_server(Server *server)
         // Try to parse and handle pending requests.
         //
         for (s64 request_index = 0; request_index < clients->count; request_index += 1) {
-            Client   *client   = &clients->vals[request_index];
+            Client   *client   = clients->vals[request_index];
             Request  *request  = &client->request;
             Response *response = &client->response;
 
@@ -578,7 +582,7 @@ void start_server(Server *server)
 cleanup:
         // Remove sockets that have timed out or that are marked "ready to close".
         for (s64 request_index = 0; request_index < clients->count; request_index++) {
-            Client *client = &clients->vals[request_index];
+            Client *client = clients->vals[request_index];
 
             s64 CONNECTION_TIMEOUT = 50000*1000; // The maximum age of any connection in milliseconds. |Cleanup: ATM this is so high it's pointless. Also we probably want to log about sockets we drop because they've timed out.
 

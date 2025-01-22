@@ -5,13 +5,13 @@
 #include "map.h"
 #include "regex.h"
 
-typedef struct Server     Server;
-typedef struct Request    Request;
-typedef struct Response   Response;
-typedef struct Client     Client;
-typedef struct Route      Route;
-typedef Array(Route)      Route_array;
-typedef Map(s32, Client)  Client_map;  // A map from client socket file descriptors to their associated Client structs.
+typedef struct Server      Server;
+typedef struct Request     Request;
+typedef struct Response    Response;
+typedef struct Client      Client;
+typedef struct Route       Route;
+typedef Array(Route)       Route_array;
+typedef Map(s32, Client *) Client_map;  // A map from client socket file descriptors to their associated Client structs.
 
 struct Server {
     Memory_context         *context;
@@ -25,7 +25,7 @@ struct Server {
 
     Route_array             routes;
 
-    Client_map             *clients;
+    Client_map              clients;
 };
 
 enum HTTP_method {GET=1, POST};
@@ -34,7 +34,7 @@ struct Request {
     enum HTTP_method        method;
     char_array              path;
     Captures                captures;        // Capture groups from applying the route's path_regex to the request path.
-    string_dict            *query;
+    string_dict             query;
 };
 
 struct Response {

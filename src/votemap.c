@@ -117,7 +117,7 @@ Tile_info parse_tile_request(Request *request)
         float *nums[] = {&result.upp, &result.x0, &result.y0, &result.x1, &result.y1};
 
         for (s64 i = 0; i < countof(keys); i++) {
-            char *num_string = *Get(request->query, keys[i]);
+            char *num_string = *Get(&request->query, keys[i]);
             if (!num_string) {
                 result.fail_reason = "The query string is missing at least one of the floats.\n";
                 return result;
