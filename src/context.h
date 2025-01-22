@@ -1,6 +1,8 @@
 #ifndef CONTEXT_H_INCLUDED
 #define CONTEXT_H_INCLUDED
 
+#include <pthread.h>
+
 #include "basic.h"
 
 typedef struct Memory_block   Memory_block;
@@ -12,6 +14,8 @@ struct Memory_block {
 };
 
 struct Memory_context {
+    pthread_mutex_t mutex;
+
     Memory_context *parent;
 
     // Backing memory the context has allocated from its parent (or from the operating system if the parent is NULL).

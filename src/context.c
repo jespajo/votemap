@@ -3,10 +3,7 @@
 // |Speed: At the moment we frequently operate on the arrays of blocks by deleting a block with delete_block() and then adding
 // blocks with add_block(). Each of these functions leaves the array sorted, so if we delete the first block in the array, it
 // will shift all subsequent blocks to the left, and if we then insert a new block at the start of the array, it will shift
-// everything back to the right. There is room for improvement here. Solving this may involve some kind of transaction-based
-// approach---you'd store up the changes you want to make (delete this block, insert two before that one) and then make all the
-// changes at once. Maybe if we had these kinds of transactions we could even make memory contexts threadsafe---though threads
-// sharing a context is probably a bad idea anyway because contention would make it slow.
+// everything back to the right. There is room for improvement here.
 
 #include "context.h"
 
@@ -345,19 +342,31 @@ void *alloc(s64 count, u64 unit_size, Memory_context *context)
     u64 size      = count * unit_size;
     u64 alignment = get_alignment(unit_size);
 
+    void *data = NULL;
+
+    pthread_mutex_lock(&c->mutex);
+
     // See if there's an already-free block of the right size.
     for (s64 i = get_free_block_index(c, size, NULL); i < c->free_count; i++) {
         Memory_block *free_block = &c->free_blocks[i];
         Memory_block *used_block = alloc_block(c, free_block, size, alignment);
-
-        if (used_block)  return used_block->data;
+        if (used_block) {
+            data = used_block->data;
+            break;
+        }
     }
 
-    // We weren't able to find a block big enough in the free list.
-    // We need to add a new buffer to the context.
-    Memory_block *free_block = grow_context(context, size);
+    if (!data) {
+        // We weren't able to find a block big enough in the free list.
+        // We need to add a new buffer to the context.
+        Memory_block *free_block = grow_context(context, size);
 
-    return alloc_block(c, free_block, size, alignment)->data;
+        data = alloc_block(c, free_block, size, alignment)->data;
+    }
+
+    pthread_mutex_unlock(&c->mutex);
+
+    return data;
 }
 
 void *zero_alloc(s64 count, u64 unit_size, Memory_context *context)
@@ -380,17 +389,46 @@ void *resize(void *data, s64 new_limit, u64 unit_size, Memory_context *context)
 
     u64 new_size = new_limit * unit_size;
 
+    pthread_mutex_lock(&c->mutex);
+
     Memory_block *used_block = find_used_block(c, data);
     assert(used_block);
 
     Memory_block *resized = resize_block(context, used_block, new_size);
-    if (resized)  return resized->data;
+    if (resized) {
+        // We managed to resize in place.
+        assert(resized->data == data);
+        pthread_mutex_unlock(&c->mutex);
+        return data;
+    }
 
     // We can't resize the block in place. We'll have to move it.
 
     s64 old_index = used_block - c->used_blocks;
 
-    void *new_data = alloc(new_limit, unit_size, context);
+    void *new_data = NULL;
+    // |Copypasta from alloc():
+    {
+        u64 alignment = get_alignment(unit_size);
+
+        // See if there's an already-free block of the right size.
+        for (s64 i = get_free_block_index(c, new_size, NULL); i < c->free_count; i++) {
+            Memory_block *free_block = &c->free_blocks[i];
+            Memory_block *used_block = alloc_block(c, free_block, new_size, alignment);
+            if (used_block) {
+                new_data = used_block->data;
+                break;
+            }
+        }
+
+        if (!new_data) {
+            // We weren't able to find a block big enough in the free list.
+            // We need to add a new buffer to the context.
+            Memory_block *free_block = grow_context(context, new_size);
+
+            new_data = alloc_block(c, free_block, new_size, alignment)->data;
+        }
+    }
 
     // `alloc` may have made an unknown number of allocations or reallocations. Which means the used
     // block's index might have changed and the whole array of used blocks might have moved. We need
@@ -407,6 +445,8 @@ void *resize(void *data, s64 new_limit, u64 unit_size, Memory_context *context)
 
     dealloc_block(context, used_block);
 
+    pthread_mutex_unlock(&c->mutex);
+
     return new_data;
 }
 
@@ -415,10 +455,14 @@ void dealloc(void *data, Memory_context *context)
     assert(data);
     assert(context);
 
+    pthread_mutex_lock(&context->mutex);
+
     Memory_block *used_block = find_used_block(context, data);
     assert(used_block);
 
     dealloc_block(context, used_block);
+
+    pthread_mutex_unlock(&context->mutex);
 }
 
 Memory_context *new_context(Memory_context *parent)
@@ -430,6 +474,8 @@ Memory_context *new_context(Memory_context *parent)
 
     context->parent = parent;
 
+    pthread_mutex_init(&context->mutex, NULL);
+
     return context;
 }
 
@@ -438,12 +484,16 @@ void free_context(Memory_context *context)
 {
     Memory_context *c = context;
 
+    pthread_mutex_lock(&c->mutex);
+
     if (c->parent) {
         for (s64 i = 0; i < c->buffer_count; i++)  dealloc(c->buffers[i].data, c->parent);
 
         if (c->buffers)      dealloc(c->buffers,     c->parent);
         if (c->free_blocks)  dealloc(c->free_blocks, c->parent);
         if (c->used_blocks)  dealloc(c->used_blocks, c->parent);
+
+        pthread_mutex_unlock(&c->mutex);
 
         dealloc(c, c->parent);
     } else {
@@ -453,6 +503,8 @@ void free_context(Memory_context *context)
         if (c->free_blocks)  free(c->free_blocks);
         if (c->used_blocks)  free(c->used_blocks);
 
+        pthread_mutex_unlock(&c->mutex);
+
         free(c);
     }
 }
@@ -460,6 +512,8 @@ void free_context(Memory_context *context)
 void reset_context(Memory_context *context)
 {
     Memory_context *c = context;
+
+    pthread_mutex_lock(&c->mutex);
 
     c->free_count = 0;
     c->used_count = 0;
@@ -474,6 +528,8 @@ void reset_context(Memory_context *context)
 
         add_free_block(c, data, size);
     }
+
+    pthread_mutex_unlock(&c->mutex);
 }
 
 //
@@ -509,6 +565,8 @@ static bool are_in_used_order(Memory_block *blocks, s64 count)
 void check_context_integrity(Memory_context *context)
 {
     Memory_context *c = context;
+
+    pthread_mutex_lock(&c->mutex);
 
     assert(are_in_free_order(c->free_blocks, c->free_count));
     assert(are_in_used_order(c->used_blocks, c->used_count));
@@ -569,5 +627,7 @@ void check_context_integrity(Memory_context *context)
 
     assert(num_free == c->free_count);
     assert(num_used == c->used_count);
+
+    pthread_mutex_unlock(&c->mutex);
 }
 #endif // NDEBUG
