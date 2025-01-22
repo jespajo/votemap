@@ -21,6 +21,7 @@ struct Server {
     bool                    verbose;
 
     s32                     socket_no;
+    s32                     sigint_file_no;
 
     Route_array             routes;
 

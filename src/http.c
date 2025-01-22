@@ -1,3 +1,9 @@
+// For sigemptyset and sigaddset, we need to define _POSIX_C_SOURCE (as anything).
+// For pthread_sigmask, we need to define _POSIX_C_SOURCE >= 199506L.
+#define _POSIX_C_SOURCE 199506L
+#include <signal.h>
+#include <sys/signalfd.h>
+
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <netinet/in.h>
@@ -256,6 +262,23 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
 
     printf("Listening on http://%d.%d.%d.%d:%d...\n", address>>24, address>>16&0xff, address>>8&0xff, address&0xff, port);
 
+    // Create a file descriptor to handle SIGINT.
+    {
+        sigset_t mask;
+        sigemptyset(&mask);
+        sigaddset(&mask, SIGINT);
+
+        int r = pthread_sigmask(SIG_BLOCK, &mask, NULL);
+        if (r == -1) {
+            Fatal("Couldn't mask SIGINT (%s).", get_last_error().string);
+        }
+
+        server->sigint_file_no = signalfd(-1, &mask, SFD_NONBLOCK);
+        if (server->sigint_file_no == -1) {
+            Fatal("Couldn't create a file descriptor to handle SIGINT (%s).", get_last_error().string);
+        }
+    }
+
     return server;
 }
 
@@ -272,12 +295,14 @@ void start_server(Server *server)
     {
         reset_context(frame_ctx);
 
-        // Build an array of file descriptors to poll. The first element in the array never changes:
-        // pollfds.data[0] is our main socket listening for connections. If there are any other elements
-        // in the array, they are open client connections.
+        // Build an array of file descriptors to poll. The first two elements in the array don't change:
+        // pollfds.data[0] is our main socket listening for connections and pollfds.data[1] is the file
+        // descriptor for SIGINT. If there are any other elements in the array, they are open client connections.
         Array(struct pollfd) pollfds = {.context = frame_ctx};
+        *Add(&pollfds) = (struct pollfd){.fd = server->socket_no,      .events = POLLIN};
+        *Add(&pollfds) = (struct pollfd){.fd = server->sigint_file_no, .events = POLLIN};
 
-        *Add(&pollfds) = (struct pollfd){.fd = server->socket_no, .events = POLLIN};
+        s64 min_num_pollfds = pollfds.count;
 
         for (s64 i = 0; i < clients->count; i++) {
             Client *client = &clients->vals[i];
@@ -300,7 +325,7 @@ void start_server(Server *server)
 
         // If there aren't any open connections, wait indefinitely. If there are connections, poll
         // once per second so we can check if any connection has expired.
-        int timeout_ms = (pollfds.count-2 > 0) ? 1000 : -1;
+        int timeout_ms = (pollfds.count > min_num_pollfds) ? 1000 : -1;
 
         int num_events = poll(pollfds.data, pollfds.count, timeout_ms);
         if (num_events < 0) {
@@ -327,6 +352,13 @@ void start_server(Server *server)
                 Client *client = Get(clients, pollfd->fd);
                 client->phase = READY_TO_CLOSE;
                 continue;
+            }
+
+            if (pollfd->fd == server->sigint_file_no) {
+                // We've received a SIGINT.
+                if (server->verbose)  printf("Received SIGINT.\n");
+                server_should_stop = true;
+                goto cleanup;
             }
 
             if (pollfd->fd == server->socket_no) {

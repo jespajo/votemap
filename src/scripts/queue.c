@@ -75,6 +75,7 @@ void *thread_start(void *arg)
 }
 
 struct task *add_task(struct queue *queue)
+// This assumes you've already locked the queue's mutex.
 {
     struct task *task = New(struct task, queue->context);
 

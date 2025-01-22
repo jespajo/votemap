@@ -1,5 +1,4 @@
 Web server. Before multithreading.
-    Add SIGINT handler to test graceful shutdown.
     Embed maps/dicts in structs rather than have pointers.
 
 Multithreaded web server. How it will work.
