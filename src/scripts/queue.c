@@ -115,12 +115,6 @@ int main(int argc, char **argv)
 
     // Start the threads.
     printf("Starting %d threads.\n", num_threads);
-    for (int i = 0; i < num_threads; i++) {
-        bool ok = !pthread_create(Add(&threads), NULL, thread_start, &queue);
-        if (!ok) {
-            Fatal("Thread creation failed.\n");
-        }
-    }
 
     bool done = false;
 
@@ -154,12 +148,6 @@ int main(int argc, char **argv)
         pthread_mutex_unlock(&queue.mutex);
     }
 
-    for (int i = 0; i < num_threads; i++) {
-        bool ok = !pthread_join(threads.data[i], NULL);
-        if (!ok) {
-            Fatal("Thread joining failed.\n");
-        }
-    }
     printf("Joined %d threads.\n", num_threads);
 
     // Now that we've joined all the other threads, we can operate on the queue without locking.

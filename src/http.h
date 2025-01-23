@@ -11,7 +11,10 @@ typedef struct Response    Response;
 typedef struct Client      Client;
 typedef struct Route       Route;
 typedef Array(Route)       Route_array;
-typedef Map(s32, Client *) Client_map;  // A map from client socket file descriptors to their associated Client structs.
+typedef Map(s32, Client*)  Client_map;
+typedef Array(pthread_t)   pthread_t_array;
+typedef struct HTTP_task   HTTP_task;
+typedef struct HTTP_queue  HTTP_queue;
 
 struct Server {
     Memory_context         *context;
@@ -26,9 +29,14 @@ struct Server {
     Route_array             routes;
 
     Client_map              clients;
+
+    HTTP_queue             *work_queue;
+    HTTP_queue             *done_queue;
+    pthread_t_array         worker_threads;
+    s32                     worker_pipe_nos[2];
 };
 
-enum HTTP_method {GET=1, POST};
+enum HTTP_method {GET=1, POST}; // We can add HTTP_ prefixes to these later if we need.
 
 struct Request {
     enum HTTP_method        method;
@@ -45,7 +53,7 @@ struct Response {
 };
 
 // A Request_handler is a function that takes a pointer to a Request and returns a Response.
-typedef Response Request_handler(Request *, Memory_context *);
+typedef Response Request_handler(Request*, Memory_context*);
 
 struct Route {
     enum HTTP_method        method;

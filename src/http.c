@@ -26,6 +26,7 @@ struct Client {
         HANDLING_REQUEST,
         SENDING_REPLY,
         READY_TO_CLOSE,
+        CLOSED,
     }                       phase;
 
     char_array              message;        // A buffer for storing bytes received.
@@ -36,6 +37,79 @@ struct Client {
     char_array              reply_header;   // Our response's header in raw text form.
     s64                     num_bytes_sent; // The total number of bytes we've sent of our response. Includes both header and body.
 };
+
+struct HTTP_task {
+    HTTP_task              *next;
+    Client                 *client;
+};
+
+struct HTTP_queue {
+    pthread_mutex_t         mutex;
+    pthread_cond_t          ready;
+    bool                    blocks_when_empty; // If true, the queue uses the condition variable.
+
+    Memory_context         *context;
+
+    HTTP_task              *head;
+    HTTP_task              *tail;
+};
+
+static void add_to_queue(HTTP_queue *queue, Client *client)
+{
+    HTTP_task *task = New(HTTP_task, queue->context);
+    task->client = client;
+
+    pthread_mutex_lock(&queue->mutex);
+    if (queue->head) {
+        queue->tail->next = task;
+        queue->tail = task;
+    } else {
+        queue->head = task;
+        queue->tail = task;
+
+        if (queue->blocks_when_empty)  pthread_cond_broadcast(&queue->ready);
+    }
+    pthread_mutex_unlock(&queue->mutex);
+}
+
+static Client *pop_queue(HTTP_queue *queue)
+{
+    pthread_mutex_lock(&queue->mutex);
+    if (!queue->head) {
+        if (!queue->blocks_when_empty) {
+            pthread_mutex_unlock(&queue->mutex);
+            return NULL;
+        }
+        do {pthread_cond_wait(&queue->ready, &queue->mutex);}  while (!queue->head);
+    }
+
+    HTTP_task *task = queue->head;
+    queue->head = task->next;
+    if (!task->next)  queue->tail = NULL;
+
+    pthread_mutex_unlock(&queue->mutex);
+
+    Client *client = task->client; // Copy to our stack before deallocating.
+    dealloc(task, queue->context);
+    return client;
+}
+
+HTTP_queue *create_queue(Memory_context *context, bool block_when_empty)
+{
+    // Always create a child context for the queue so allocations don't block other contexts.
+    Memory_context *ctx = new_context(context);
+
+    HTTP_queue *queue = New(HTTP_queue, ctx);
+    queue->context = ctx;
+
+    pthread_mutex_init(&queue->mutex, NULL);
+    if (block_when_empty) {
+        pthread_cond_init(&queue->ready, NULL);
+        queue->blocks_when_empty = true;
+    }
+
+    return queue;
+}
 
 static u8 hex_to_byte(char c1, char c2)
 // Turn two hexadecimal digits into a byte of data. E.g. hex_to_byte('8', '0') -> 128 (0x80).
@@ -217,16 +291,197 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
     return result;
 }
 
+static void deal_with_a_request(Server *server, Client *client)
+// The main work that a worker thread does.
+{
+    if (client->phase == PARSING_REQUEST) {
+        char_array *message = &client->message;
+        if (message->limit == 0) {
+            // Initialise the recv buffer.
+            *message = (char_array){.context = client->context};
+            s64 INITIAL_RECV_BUFFER_SIZE = 2048;
+            array_reserve(message, INITIAL_RECV_BUFFER_SIZE);
+        }
+
+        // Try to read from the client socket.
+        while (true) {
+            char *buffer = &message->data[message->count];
+            s64 num_free_bytes = message->limit - message->count - 1; // Reserve space for a null byte.
+            if (num_free_bytes <= 0) {
+                array_reserve(message, round_up_pow2(message->limit+1));
+                continue;
+            }
+
+            int flags = 0;
+            s64 recv_count = recv(client->socket_no, buffer, num_free_bytes, flags);
+            if (recv_count < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // There's nothing more to read now.
+                    break;
+                } else {
+                    // There was an actual error. |Todo: Don't make this a fatal error.
+                    Fatal("We failed to read from a socket (%s).", get_last_error().string);
+                }
+            } else if (recv_count == 0) {
+                // The client has disconnected.
+                client->phase = READY_TO_CLOSE;
+                break;
+            } else {
+                // We have successfully received some bytes.
+                message->count += recv_count;
+                assert(message->count < message->limit);
+                message->data[message->count] = '\0';
+            }
+        }
+
+        // Try to parse the request.
+        if (message->count > 0)  parse_request(client); //|Cleanup: We don't use the return value now, so maybe change the function signature.
+    }
+
+    if (client->phase == HANDLING_REQUEST) {
+        Request *request = &client->request;
+
+        // Find a matching handler.
+        Request_handler *handler = NULL;
+        for (s64 i = 0; i < server->routes.count; i++) {
+            Route *route = &server->routes.data[i];
+            if (route->method != request->method)  continue;
+
+            request->captures = (Captures){.context = client->context};
+            bool match = match_regex(request->path.data, request->path.count, route->path_regex, &request->captures);
+            if (match) {
+                handler = route->handler;
+                break;
+            }
+        }
+        if (!handler) {
+            // We couldn't find a handler for this request, so return a 404.
+            handler = &serve_404;
+        }
+
+        // Run the handler.
+        Response *response = &client->response;
+        *response = (*handler)(request, client->context);
+
+        // If the response has a body but no size, calculate the size assuming the body is a zero-terminated string.
+        if (response->body && !response->size)  response->size = strlen(response->body);
+
+        if (!response->headers.context) {
+            // If the headers dict has no context, we assume the handler didn't touch it beyond zero-initialising it.
+            assert(!memcmp(&response->headers, &(string_dict){0}, sizeof(string_dict)));
+            response->headers = (string_dict){.context = client->context};
+        }
+        // Add a content-length header.
+        *Set(&response->headers, "content-length") = get_string(client->context, "%ld", response->size)->data;
+
+        // Print the headers into a buffer.
+        {
+            char_array *reply_header = &client->reply_header;
+            *reply_header = (char_array){.context = client->context};
+
+            append_string(reply_header, "HTTP/1.0 %d\r\n", response->status);
+            for (s64 i = 0; i < response->headers.count; i++) {
+                char *key   = response->headers.keys[i];
+                char *value = response->headers.vals[i];
+                append_string(reply_header, "%s: %s\r\n", key, value);
+            }
+            append_string(reply_header, "\r\n");
+        }
+
+        client->phase = SENDING_REPLY;
+    }
+
+    if (client->phase == SENDING_REPLY) {
+        char_array *reply_header   = &client->reply_header;
+        Response   *response       = &client->response;
+        s64        *num_bytes_sent = &client->num_bytes_sent;
+
+        s64 full_reply_size = reply_header->count + response->size;
+        assert(*num_bytes_sent < full_reply_size);
+
+        while (*num_bytes_sent < full_reply_size) {
+            void *data_to_send      = NULL;
+            s64   num_bytes_to_send = 0;
+            if (*num_bytes_sent < reply_header->count) {
+                // We're still sending the response header.
+                data_to_send      = reply_header->data  + *num_bytes_sent;
+                num_bytes_to_send = reply_header->count - *num_bytes_sent;
+            } else {
+                // We're sending the response body.
+                s64 body_sent = *num_bytes_sent - reply_header->count;
+
+                data_to_send      = response->body + body_sent;
+                num_bytes_to_send = response->size - body_sent;
+            }
+            assert(data_to_send);
+            assert(num_bytes_to_send > 0);
+
+            int flags = 0;
+            s64 send_count = send(client->socket_no, data_to_send, num_bytes_to_send, flags);
+            if (send_count < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
+                else  Fatal("send failed (%s).", get_last_error().string); //|Todo: Make this non-fatal.
+            }
+            assert(send_count > 0);
+
+            *num_bytes_sent += send_count;
+        }
+
+        if (*num_bytes_sent < full_reply_size) {
+            // We've partially sent our reply.
+        } else {
+            // We've fully sent our reply.
+            assert(*num_bytes_sent == full_reply_size);
+
+            client->phase = READY_TO_CLOSE;
+        }
+    }
+
+    if (client->phase == READY_TO_CLOSE) {
+        bool closed = !close(client->socket_no);
+        if (!closed) {
+            Fatal("We couldn't close a client socket (%s).", get_last_error().string);
+        }
+        client->phase = CLOSED;
+    }
+
+    add_to_queue(server->done_queue, client);
+
+    // Write a byte to the worker pipe to tell the server to poll the client again.
+    {
+        u8 byte = 1;
+        s64 r = write(server->worker_pipe_nos[1], &byte, sizeof(byte));
+        if (r == -1) {
+            //|Todo: Check EINTR?
+            Fatal("We couldn't write to the worker pipe (%s).", get_last_error().string);
+        }
+    }
+}
+
+static void *thread_start(void *arg)
+// The worker thread's loop.
+{
+    Server *server = arg;
+    HTTP_queue *queue = server->work_queue;
+
+    while (true) {
+        Client *client = pop_queue(queue);
+        if (!client)  break; // A task without a client means the thread should stop. |Temporary: I'm not sure the best way to do this.
+
+        deal_with_a_request(server, client); //|Cleanup: This function is tiny now.
+    }
+
+    return NULL;
+}
+
 Server *create_server(u32 address, u16 port, bool verbose, Memory_context *context)
 {
     Server *server = New(Server, context);
 
+    server->context = context;
     server->address = address;
     server->port    = port;
     server->verbose = verbose;
-    server->context = context;
-    server->routes  = (Route_array){.context = context};
-    server->clients = (Client_map){.context = context, .binary_mode = true};
 
     server->socket_no = socket(AF_INET, SOCK_STREAM, 0);
     if (server->socket_no < 0) {
@@ -262,68 +517,95 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     printf("Listening on http://%d.%d.%d.%d:%d...\n", address>>24, address>>16&0xff, address>>8&0xff, address&0xff, port);
 
     // Create a file descriptor to handle SIGINT.
-    {
-        sigset_t mask;
-        sigemptyset(&mask);
-        sigaddset(&mask, SIGINT);
+    sigset_t signal_mask;
+    sigemptyset(&signal_mask);
+    sigaddset(&signal_mask, SIGINT);
 
-        int r = pthread_sigmask(SIG_BLOCK, &mask, NULL);
-        if (r == -1) {
-            Fatal("Couldn't mask SIGINT (%s).", get_last_error().string);
-        }
+    r = pthread_sigmask(SIG_BLOCK, &signal_mask, NULL);
+    if (r) {
+        Fatal("Couldn't mask SIGINT (%s).", get_error_info(r).string);
+    }
 
-        server->sigint_file_no = signalfd(-1, &mask, SFD_NONBLOCK);
-        if (server->sigint_file_no == -1) {
-            Fatal("Couldn't create a file descriptor to handle SIGINT (%s).", get_last_error().string);
+    server->sigint_file_no = signalfd(-1, &signal_mask, SFD_NONBLOCK);
+    if (server->sigint_file_no == -1) {
+        Fatal("Couldn't create a file descriptor to handle SIGINT (%s).", get_last_error().string);
+    }
+
+    server->routes = (Route_array){.context = context};
+
+    server->clients = (Client_map){.context = context, .binary_mode = true};
+
+    server->work_queue = create_queue(context, true);
+
+    server->done_queue = create_queue(context, false);
+
+    server->worker_threads = (pthread_t_array){.context = context};
+    int NUM_WORKER_THREADS = 1; //|Todo: Put this somewhere else.
+    for (int i = 0; i < NUM_WORKER_THREADS; i++) {
+        int r = pthread_create(Add(&server->worker_threads), NULL, thread_start, server);
+        if (r) {
+            Fatal("Thread creation failed (%s).", get_error_info(r).string);
         }
     }
+
+    r = pipe(server->worker_pipe_nos);
+    if (r == -1) { //|Consistency: (== -1) or (< 0)?
+        Fatal("Couldn't create a pipe (%s).", get_last_error().string);
+    }
+    //|Todo: Should we make the pipe nonblocking?
 
     return server;
 }
 
 void start_server(Server *server)
 {
-    Client_map  *clients = &server->clients;
-    Route_array *routes  = &server->routes;
-
-    bool server_should_stop = false;
-
     // On each iteration of the main loop, we'll build an array of file descriptors to poll.
     Array(struct pollfd) pollfds = {.context = server->context};
 
+    // The first three elements in the pollfds array don't change:
+    // pollfds.data[0] is our main socket listening for connections.
+    *Add(&pollfds) = (struct pollfd){.fd = server->socket_no, .events = POLLIN};
+    // pollfds.data[1] is the file descriptor for SIGINT.
+    *Add(&pollfds) = (struct pollfd){.fd = server->sigint_file_no, .events = POLLIN};
+    // pollfds.data[2] is the worker pipe.
+    *Add(&pollfds) = (struct pollfd){.fd = server->worker_pipe_nos[0], .events = POLLIN};
+    // Any other elements in the array are open client connections.
+
+    // Also build an array of clients to remove at the end of each loop.
+    Array(Client*) to_delete = {.context = server->context};
+
+    bool server_should_stop = false;
+
     while (!server_should_stop)
     {
-        pollfds.count = 0;
-        // The first two elements in the pollfds array don't change.
-        // pollfds.data[0] is our main socket listening for connections.
-        *Add(&pollfds) = (struct pollfd){.fd = server->socket_no, .events = POLLIN};
-        // pollfds.data[1] is the file descriptor for SIGINT.
-        *Add(&pollfds) = (struct pollfd){.fd = server->sigint_file_no, .events = POLLIN};
-        // Any other elements in the array are open client connections.
-        s64 min_num_pollfds = pollfds.count;
+        while (true) {
+            Client *client = pop_queue(server->done_queue); //|Speed: We lock and unlock the queue mutex every time.
+            if (!client)  break;
 
-        for (s64 i = 0; i < clients->count; i++) {
-            Client *client = clients->vals[i];
+            assert(*Get(&server->clients, client->socket_no) == client);
+
+            // Every task in the done queue is associated with one byte written to the worker pipes. We'll read the byte now. This is so that, if there have been multiple writes to the pipes, we consume them all, so we don't get a redundant POLLIN when we next poll.
+            u8 byte;
+            read(server->worker_pipe_nos[0], &byte, sizeof(byte));
+
+            if (client->phase == CLOSED) {
+                *Add(&to_delete) = client;
+                //|Temporary: We need to clean up straight away because if we try to keep accepting new connections first, the operating system will reassign the socket file descriptor for this client to a new client and when we create the new client, we will overwrite this one on the client map. In fact I think it's still a bug regardless. Because as soon as a thread closes a socket, we could get another connection that gets picked up by the poll() before the thread gets a chance to add the socket to the done_queue. |Bug
+                goto cleanup;
+            }
 
             struct pollfd pollfd = {.fd = client->socket_no};
-
             switch (client->phase) {
                 case PARSING_REQUEST:  pollfd.events |= POLLIN;   break;
                 case SENDING_REPLY:    pollfd.events |= POLLOUT;  break;
-                case READY_TO_CLOSE:   continue;
 
                 default:  assert(!"Unexpected request phase.");
             }
-            assert(pollfd.events);
-
             *Add(&pollfds) = pollfd;
         }
 
-        if (server->verbose)  printf("Polling %ld open file descriptors.\n", pollfds.count);
-
-        // If there aren't any open connections, wait indefinitely. If there are connections, poll
-        // once per second so we can check if any connection has expired.
-        int timeout_ms = (pollfds.count > min_num_pollfds) ? 1000 : -1;
+        // If there are clients to delete, wait half a second. Otherwise wait indefinitely.
+        int timeout_ms = (to_delete.count > 0) ? 500 : -1;
 
         int num_events = poll(pollfds.data, pollfds.count, timeout_ms);
         if (num_events < 0) {
@@ -332,13 +614,13 @@ void start_server(Server *server)
 
         s64 current_time = get_monotonic_time(); // We need to get this value after polling, but before jumping to cleanup.
 
-        // If poll() timed out without any events occurring, skip trying to process requests.
-        if (!num_events)  goto cleanup;
+        if (num_events == 0)  goto cleanup;
 
-        for (s64 pollfd_index = 0; pollfd_index < pollfds.count; pollfd_index += 1) {
+        for (s64 pollfd_index = pollfds.count-1; pollfd_index >= 0; pollfd_index -= 1) { // Iterate backwards so we can delete from the array.
             struct pollfd *pollfd = &pollfds.data[pollfd_index];
 
             if (!pollfd->revents)  continue;
+            //|Speed: We should decrement num_events and break when it hits 0.
 
             if (pollfd->revents & (POLLERR|POLLHUP|POLLNVAL)) {
                 if (server->verbose) {
@@ -347,22 +629,32 @@ void start_server(Server *server)
                     if (pollfd->revents & POLLNVAL)  printf("POLLNVAL on socket %d.\n", pollfd->fd);
                 }
 
-                Client *client = *Get(clients, pollfd->fd);
+                Client *client = *Get(&server->clients, pollfd->fd);
                 client->phase = READY_TO_CLOSE;
+                add_to_queue(server->work_queue, client);//|Todo: It's probably better to just close it ourselves.
+                array_unordered_remove_by_index(&pollfds, pollfd_index);
                 continue;
             }
 
             if (pollfd->fd == server->sigint_file_no) {
                 // We've received a SIGINT.
-                struct signalfd_siginfo info; // We don't do anything with this, but it's handy to read it for debugging reasons.
+                struct signalfd_siginfo info; // We don't do anything with this, but we need to read it or we'll get POLLIN on the next loop.
                 read(server->sigint_file_no, &info, sizeof(info));
 
                 server_should_stop = true;
-                goto cleanup;
+                continue;
+            }
+
+            if (pollfd->fd == server->worker_pipe_nos[0]) {
+                // A worker thread is letting us know that they put something in the done_queue.
+                // We'll check the queue on the next frame. There's nothing to do now.
+                continue;
             }
 
             if (pollfd->fd == server->socket_no) {
                 // A new connection has occurred.
+                if (server_should_stop)  continue; //|Todo: Don't even poll the listen socket in this case.
+
                 struct sockaddr_in client_socket_addr; // This will be initialised by accept().
                 socklen_t client_socket_addr_size = sizeof(client_socket_addr);
 
@@ -373,16 +665,6 @@ void start_server(Server *server)
 
                 set_blocking(client_socket_no, false);
 
-                if (server->verbose)  printf("Adding a new client (socket %d).\n", client_socket_no);
-
-                *Add(&pollfds) = (struct pollfd){
-                    .fd      = client_socket_no,
-                    .events  = POLLIN|POLLOUT, //|Cleanup: This line can be removed right?
-                    .revents = POLLIN, // We also set .revents ourselves so that we'll try receiving from this socket on this frame. |Hack
-                };
-
-                assert(!IsSet(clients, client_socket_no)); // We shouldn't have a request associated with this client socket yet.
-
                 // Create a new memory context for the client and initialise the Client struct on that.
                 Memory_context *client_context = new_context(server->context);
 
@@ -392,219 +674,55 @@ void start_server(Server *server)
                 client->socket_no  = client_socket_no;
                 client->phase      = PARSING_REQUEST;
 
-                *Set(clients, client_socket_no) = client;
-            } else if (pollfd->revents & POLLIN) {
-                // There's something to read on a client socket.
-                int client_socket_no = pollfd->fd;
-                Client *client = *Get(clients, client_socket_no);
-                assert(client->phase == PARSING_REQUEST);
-
-                if (server->verbose)  printf("Socket %d has something to say!!\n", client_socket_no);
-
-                char_array *message = &client->message;
-                if (!message->limit) {
-                    *message = (char_array){.context = client->context};
-
-                    s64 INITIAL_RECV_BUFFER_SIZE = 2048;
-                    array_reserve(message, INITIAL_RECV_BUFFER_SIZE);
-                }
-
-                while (true) {
-                    char *free_data = message->data + message->count;
-                    s64 num_free_bytes = message->limit - message->count - 1; // Reserve space for a null byte.
-                    if (num_free_bytes <= 0) {
-                        array_reserve(message, round_up_pow2(message->limit+1));
-                        continue;
-                    }
-
-                    if (server->verbose)  printf("We're about to read socket %d.\n", client_socket_no);
-
-                    int flags = 0;
-                    s64 recv_count = recv(client_socket_no, free_data, num_free_bytes, flags);
-                    if (recv_count < 0) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            // There's nothing more to read now.
-                            if (server->verbose)  printf("There was nothing to read.\n");
-                            break;
-                        } else {
-                            // There was an actual error.
-                            Fatal("We failed to read from socket %d (%s).", client_socket_no, get_last_error().string);
-                        }
-                    } else if (recv_count == 0) {
-                        // The client has disconnected.
-                        if (server->verbose)  printf("Socket %d has disconnected.\n", client_socket_no);
-
-                        client->phase = READY_TO_CLOSE;
-                        goto cleanup;
-                    } else {
-                        // We have successfully received some bytes.
-                        if (server->verbose)  printf("Read %ld bytes from socket %d.\n", recv_count, client_socket_no);
-
-                        message->count += recv_count;
-                        assert(message->count < message->limit);
-                        message->data[message->count] = '\0';
-                    }
-                }
-            } else if (pollfd->revents & POLLOUT) {
-                // We can write to a client socket.
-                int client_socket_no = pollfd->fd;
-                Client *client = *Get(clients, client_socket_no);
-                assert(client->phase == SENDING_REPLY);
-
-                if (server->verbose)  printf("We're about to write to socket %d.\n", client_socket_no);
-
-                char_array *reply_header   = &client->reply_header;
-                Response   *response       = &client->response;
-                s64        *num_bytes_sent = &client->num_bytes_sent;
-
-                s64 full_reply_size = reply_header->count + response->size;
-                assert(*num_bytes_sent < full_reply_size);
-
-                while (*num_bytes_sent < full_reply_size) {
-                    void *data_to_send      = NULL;
-                    s64   num_bytes_to_send = 0;
-                    if (*num_bytes_sent < reply_header->count) {
-                        // We're still sending the response header.
-                        data_to_send      = reply_header->data  + *num_bytes_sent;
-                        num_bytes_to_send = reply_header->count - *num_bytes_sent;
-                    } else {
-                        // We're sending the response body.
-                        s64 body_sent = *num_bytes_sent - reply_header->count;
-
-                        data_to_send      = response->body + body_sent;
-                        num_bytes_to_send = response->size - body_sent;
-                    }
-                    assert(data_to_send);
-                    assert(num_bytes_to_send > 0);
-
-                    int flags = 0;
-                    s64 send_count = send(client_socket_no, data_to_send, num_bytes_to_send, flags);
-                    if (send_count < 0) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
-                        else  Fatal("send failed (%s).", get_last_error().string);
-                    }
-                    assert(send_count > 0);
-
-                    *num_bytes_sent += send_count;
-                }
-
-                if (*num_bytes_sent < full_reply_size) {
-                    // We've partially sent our reply.
-                    if (server->verbose)  printf("Sent %ld/%ld bytes to socket %d.\n", *num_bytes_sent, full_reply_size, client_socket_no);
-                } else {
-                    // We've fully sent our reply.
-                    assert(*num_bytes_sent == full_reply_size);
-                    {
-                        Memory_context *ctx = client->context;
-                        Request *req = &client->request;
-                        char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
-                        char *path   = req->path.count ? req->path.data : "";
-                        char *query  = req->query.count ? encode_query_string(&req->query, ctx)->data : "";
-
-                        printf("[%d] %s %s%s\n", response->status, method, path, query);
-                    }
-                    client->phase = READY_TO_CLOSE;
-                }
-            }
-        }
-
-        //
-        // Try to parse and handle pending requests.
-        //
-        for (s64 request_index = 0; request_index < clients->count; request_index += 1) {
-            Client   *client   = clients->vals[request_index];
-            Request  *request  = &client->request;
-            Response *response = &client->response;
-
-            if (client->phase != PARSING_REQUEST)        continue;
-            if (client->message.count == 0)              continue;
-
-            //|Todo: Don't try to parse unless we received more bytes when we last polled.
-
-            // Parse the request.
-            bool parsed = parse_request(client);
-            if (!parsed)  continue;
-
-            if (server->verbose)  printf("Successfully parsed a message from socket %d.\n", client->socket_no);
-
-            if (client->phase == HANDLING_REQUEST) {
-                // Find a matching handler.
-                Request_handler *handler = NULL;
-                for (s64 i = 0; i < routes->count; i++) {
-                    Route *route = &routes->data[i];
-                    if (request->method != route->method)  continue;
-
-                    request->captures = (Captures){.context = client->context};
-                    bool match = match_regex(request->path.data, request->path.count, route->path_regex, &request->captures);
-                    if (match) {
-                        handler = route->handler;
-                        break;
-                    }
-                }
-                if (!handler) {
-                    if (server->verbose)  printf("We couldn't find a handler for this request, so we're returning a 404.\n");
-                    handler = &serve_404;
-                }
-
-                // Run the handler.
-                *response = (*handler)(request, client->context);
-            } else {
-                assert(client->phase == SENDING_REPLY);
+                assert(!IsSet(&server->clients, client_socket_no));
+                *Set(&server->clients, client_socket_no) = client;
+                add_to_queue(server->work_queue, client);
+                continue;
             }
 
-            // If the response has a body but no size, calculate the size assuming the body is a zero-terminated string.
-            if (response->body && !response->size)  response->size = strlen(response->body);
-
-            if (!response->headers.context) {
-                // If the headers dict has no context, we assume the handler didn't touch it beyond zero-initialising it.
-                assert(!memcmp(&response->headers, &(string_dict){0}, sizeof(string_dict)));
-                response->headers = (string_dict){.context = client->context};
+            if (pollfd->revents & (POLLIN|POLLOUT)) {
+                // We can read from or write to a client socket.
+                Client *client = *Get(&server->clients, pollfd->fd);
+                assert(client);
+                add_to_queue(server->work_queue, client);
+                array_unordered_remove_by_index(&pollfds, pollfd_index);
+                continue; //|Cleanup: We continue in every case?
             }
-            // Add a content-length header.
-            *Set(&response->headers, "content-length") = get_string(client->context, "%ld", response->size)->data;
-
-            char_array *reply_header = &client->reply_header;
-            *reply_header = (char_array){.context = client->context};
-
-            append_string(reply_header, "HTTP/1.0 %d\r\n", response->status);
-            {
-                string_dict *h = &response->headers;
-                for (s64 i = 0; i < h->count; i++) {
-                    append_string(reply_header, "%s: %s\r\n", h->keys[i], h->vals[i]);
-                }
-            }
-            append_string(reply_header, "\r\n");
-
-            client->phase = SENDING_REPLY;
-            //|Todo: Can we jump straight to trying to write to the socket?
         }
 
 cleanup:
-        // Remove sockets that have timed out or that are marked "ready to close".
-        for (s64 request_index = 0; request_index < clients->count; request_index++) {
-            Client *client = clients->vals[request_index];
+        for (s64 i = 0; i < to_delete.count; i++) {
+            Client *client = to_delete.data[i];
+            assert(client->phase == CLOSED);
 
-            s64 CONNECTION_TIMEOUT = 50000*1000; // The maximum age of any connection in milliseconds. |Cleanup: ATM this is so high it's pointless. Also we probably want to log about sockets we drop because they've timed out.
-
-            // Skip sockets that we shouldn't close, unless the server should stop, in which case we will disconnect everyone.
-            bool should_close = server_should_stop;
-            should_close |= (client->phase == READY_TO_CLOSE);
-            should_close |= (CONNECTION_TIMEOUT < (current_time - client->start_time));
-            if (!should_close)  continue;
-
-            s32 client_socket_no = client->socket_no;
-
-            //|Todo: Finish sending pending replies first (if we're disconnecting everyone because server_should_stop is true).
-
-            bool closed = !close(client_socket_no);
-            if (!closed) {
-                Fatal("We couldn't close a client socket (%s).", get_last_error().string);
+            { //|Cleanup:
+                Memory_context *ctx = client->context;
+                Request *req = &client->request;
+                char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
+                char *path   = req->path.count ? req->path.data : "";
+                char *query  = req->query.count ? encode_query_string(&req->query, ctx)->data : "";
+                printf("[%d] %s %s%s\n", client->response.status, method, path, query);
+                fflush(stdout);
             }
 
+            Delete(&server->clients, client->socket_no);
             free_context(client->context);
-            Delete(clients, client_socket_no);
+        }
+        to_delete.count = 0;
 
-            if (server->verbose)  printf("Closed and deleted socket %d.\n", client_socket_no);
+        if (server_should_stop) {
+            if (server->clients.count > 0)  continue;//|Fixme: This won't work if server_should_stop is also the loop condition though.
+
+            // Signal to the worker threads that it's time to wind up.
+            for (s64 i = 0; i < server->worker_threads.count; i++)  add_to_queue(server->work_queue, NULL);
+        }
+    }
+
+    // Join the worker threads.
+    for (int i = 0; i < server->worker_threads.count; i++) {
+        int r = pthread_join(server->worker_threads.data[i], NULL);
+        if (r) {
+            Fatal("Failed to join a thread (%s).", get_error_info(r).string);
         }
     }
 
@@ -616,6 +734,8 @@ cleanup:
 
 void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler)
 {
+    //|Todo: Check the server phase. You can't add routes once the server's started.
+
     Regex *regex = compile_regex(path_pattern, server->context);
     assert(regex);
 

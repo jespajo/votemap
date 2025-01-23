@@ -88,15 +88,19 @@ void reverse_array_(void *data, s64 limit, s64 count, u64 unit_size, Memory_cont
 }
 
 void array_unordered_remove_by_index_(void *data, s64 *count, u64 unit_size, s64 index_to_remove)
+// Remove the item by replacing it with the last item in the array. We rely on this behaviour because it
+// means we can remove items from an array we're iterating over as long as we go from back to front.
 {
     assert(0 <= index_to_remove && index_to_remove < *count);
 
     u8 *item_to_remove = (u8 *)data + index_to_remove*unit_size;
     u8 *last_item      = (u8 *)data + (*count-1)*unit_size;
 
-    memcpy(item_to_remove, last_item, unit_size);
+    if (item_to_remove != last_item) {
+        memcpy(item_to_remove, last_item, unit_size);
+    }
 
-    memset(last_item, 0, unit_size);
+    memset(last_item, 0, unit_size);//|Speed.
 
     *count -= 1;
 }
