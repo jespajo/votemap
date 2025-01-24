@@ -1,3 +1,10 @@
+//|Todo:
+// Connection: Keep-Alive.
+// Stress test and benchmark.
+// Clean up.
+// Improve queues.
+
+
 // For sigemptyset and sigaddset, we need to define _POSIX_C_SOURCE (as anything).
 // For pthread_sigmask, we need to define _POSIX_C_SOURCE >= 199506L.
 #define _POSIX_C_SOURCE 199506L
@@ -26,7 +33,6 @@ struct Client {
         HANDLING_REQUEST,
         SENDING_REPLY,
         READY_TO_CLOSE,
-        CLOSED,
     }                       phase;
 
     char_array              message;        // A buffer for storing bytes received.
@@ -438,11 +444,8 @@ static void deal_with_a_request(Server *server, Client *client)
     }
 
     if (client->phase == READY_TO_CLOSE) {
-        bool closed = !close(client->socket_no);
-        if (!closed) {
-            Fatal("We couldn't close a client socket (%s).", get_last_error().string);
-        }
-        client->phase = CLOSED;
+        // Do nothing. The main thread will close the client socket and free memory.
+        // |Todo: Maybe handle connection: keep-alive here?
     }
 
     add_to_queue(server->done_queue, client);
@@ -540,7 +543,7 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     server->done_queue = create_queue(context, false);
 
     server->worker_threads = (pthread_t_array){.context = context};
-    int NUM_WORKER_THREADS = 1; //|Todo: Put this somewhere else.
+    int NUM_WORKER_THREADS = 2; //|Todo: Put this somewhere else.
     for (int i = 0; i < NUM_WORKER_THREADS; i++) {
         int r = pthread_create(Add(&server->worker_threads), NULL, thread_start, server);
         if (r) {
@@ -584,14 +587,16 @@ void start_server(Server *server)
 
             assert(*Get(&server->clients, client->socket_no) == client);
 
-            // Every task in the done queue is associated with one byte written to the worker pipes. We'll read the byte now. This is so that, if there have been multiple writes to the pipes, we consume them all, so we don't get a redundant POLLIN when we next poll.
-            u8 byte;
-            read(server->worker_pipe_nos[0], &byte, sizeof(byte));
+            // Every task in the done queue is associated with one byte written to the worker pipe. We'll read the byte now, so that
+            // if there were multiple writes to the pipe, we consume them all, so we don't get a redundant POLLIN when we next poll.
+            {
+                u8 byte;
+                read(server->worker_pipe_nos[0], &byte, sizeof(byte));
+            }
 
-            if (client->phase == CLOSED) {
+            if (client->phase == READY_TO_CLOSE) {
                 *Add(&to_delete) = client;
-                //|Temporary: We need to clean up straight away because if we try to keep accepting new connections first, the operating system will reassign the socket file descriptor for this client to a new client and when we create the new client, we will overwrite this one on the client map. In fact I think it's still a bug regardless. Because as soon as a thread closes a socket, we could get another connection that gets picked up by the poll() before the thread gets a chance to add the socket to the done_queue. |Bug
-                goto cleanup;
+                continue;
             }
 
             struct pollfd pollfd = {.fd = client->socket_no};
@@ -612,9 +617,9 @@ void start_server(Server *server)
             Fatal("poll failed (%s).", get_last_error().string);
         }
 
-        s64 current_time = get_monotonic_time(); // We need to get this value after polling, but before jumping to cleanup.
+        s64 current_time = get_monotonic_time(); // We need to get this value after polling, but before jumping to reset.
 
-        if (num_events == 0)  goto cleanup;
+        if (num_events == 0)  goto reset;
 
         for (s64 pollfd_index = pollfds.count-1; pollfd_index >= 0; pollfd_index -= 1) { // Iterate backwards so we can delete from the array.
             struct pollfd *pollfd = &pollfds.data[pollfd_index];
@@ -690,10 +695,15 @@ void start_server(Server *server)
             }
         }
 
-cleanup:
+reset:
         for (s64 i = 0; i < to_delete.count; i++) {
             Client *client = to_delete.data[i];
-            assert(client->phase == CLOSED);
+            assert(client->phase == READY_TO_CLOSE);
+
+            bool closed = !close(client->socket_no);
+            if (!closed) {
+                Fatal("We couldn't close a client socket (%s).", get_last_error().string);
+            }
 
             { //|Cleanup:
                 Memory_context *ctx = client->context;

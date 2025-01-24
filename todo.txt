@@ -1,18 +1,3 @@
-Multithreaded web server. How it will work.
-    The main thread listens for connections.
-    When it gets a connection, it initialises a Client and adds it to a task queue.
-    The worker threads consume the queue.
-    Each time a worker consumes a task, it:
-        Pops the task from the queue.
-        Takes action depending on the request phase, continuing until:
-            It can't fully parse (or invalidate) the request.
-            It can't fully send the reply.
-            Maybe one day... when a request yields on a task, like a Postgres query.
-        Then it adds the Client to the server's clients and writes to the worker pipe to signal completion.
-    The main thread, notified via the worker pipe, reconstructs its pollfds to include all Clients, and polls again.
-
----
-
 To complete V2:
     Animate the panel to show an appropriate amount of detail when the app mode changes.
         Make it appear all the way left in desktop mode.
