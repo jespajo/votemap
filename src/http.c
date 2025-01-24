@@ -1,5 +1,5 @@
 //|Todo:
-// Connection: Keep-Alive.
+// Connection: Keep-Alive. Seems to work but now CTRL+C is broken???
 // Stress test and benchmark.
 // Clean up.
 // Improve queues.
@@ -36,12 +36,19 @@ struct Client {
     }                       phase;
 
     char_array              message;        // A buffer for storing bytes received.
+    s16_array               crlf_offsets;
     Request                 request;
 
     Response                response;
 
     char_array              reply_header;   // Our response's header in raw text form.
     s64                     num_bytes_sent; // The total number of bytes we've sent of our response. Includes both header and body.
+
+    enum {
+        HTTP_VERSION_1_0=1,
+        HTTP_VERSION_1_1,
+    }                       http_version;
+    bool                    keep_alive;     // Whether to keep the socket open after processing the request.
 };
 
 struct HTTP_task {
@@ -145,11 +152,50 @@ static bool parse_request(Client *client)
     char *data = client->message.data;
     s64   size = client->message.count;
 
-    if (size < 4)  return false;
-
-    client->request = (Request){0};
-
     char *d = data; // A pointer to advance as we parse.
+
+    // First, wait until we've received the whole header.
+    {
+        // We want to store the CRLF offsets as 16-bit integers, which means the header can't be longer than 32768 bytes.
+        // Since we don't parse POST requests yet, we'll just apply this limit to the request as a whole.
+        if (size > (s64)INT16_MAX) {
+            client->response = (Response){413, .body = "The request is too large.\n"};
+            client->phase = SENDING_REPLY;
+            return true;
+        }
+
+        s16_array *offsets = &client->crlf_offsets;
+        if (offsets->limit == 0) {
+            // We need to initialise client->crlf_offsets.
+            *offsets = (s16_array){.context = ctx};
+            array_reserve(offsets, 16);
+        } else if (offsets->count > 0) {
+            // We've previously added some offsets, so we can skip past the last one.
+            d = data + offsets->data[offsets->count-1] + 2;
+        }
+
+        bool full_header_received = false;
+        char *last_cr = NULL;
+        char *last_lf = NULL;
+
+        for (; d-data < size; d++) {
+            if (*d == '\r')  last_cr = d;
+            if (*d != '\n')  continue;
+            last_lf = d;
+            if (last_cr == last_lf-1) {
+                // We've found a CRLF.
+                s64 offset = last_cr - data;
+                assert(offset < (s64)INT16_MAX);
+                full_header_received = (offsets->count > 0 && offset == offsets->data[offsets->count-1] + 2);
+                if (full_header_received)  break; // Don't add the final CRLF to the offsets.
+                *Add(offsets) = (s16)offset;
+            }
+        }
+
+        if (!full_header_received)  return false;
+    }
+
+    d = data;
 
     if (starts_with(d, "GET ")) {
         client->request.method = GET;
@@ -217,15 +263,11 @@ static bool parse_request(Client *client)
             d += 1;
         }
 
-        // If we've come to the end of the available data, assume there's more to come. Don't worry about
-        // setting a max URI length, because we'll set limits on the request size overall.
-        if (d-data == size)  return false;
-
         if (*d != ' ') {
-            // We didn't finish at a space, which means we came to an unexpected character in the URI.
-            // If we managed to parse a path and we were onto a query string, we'll allow it.
+            // We didn't finish at a space, which means we came to an unexpected character in the URI. But if managed
+            // to parse a path and we were onto a query string, we'll allow it and just disregard the query string.
             if (path->count && target != path) {
-                // Advance the data pointer to the next space character after the URI.
+                // Advance to the next space character after the URI.
                 while (d-data < size) {
                     d += 1;
                     if (*d == ' ')  break;
@@ -241,22 +283,46 @@ static bool parse_request(Client *client)
                 return true;
             }
         }
+        assert(*d == ' ');
+        d += 1;
 
         *Add(path) = '\0';
         path->count -= 1;
     }
 
-    if (!starts_with(d, " HTTP/")) {
-        client->response = (Response){400, .body = "There was an unexpected character in the HTTP version.\n"};
-        client->phase = SENDING_REPLY;     // Fail.
+    if (starts_with(d, "HTTP/1.0")) {
+        client->http_version = HTTP_VERSION_1_0;
+    } else if (starts_with(d, "HTTP/1.1")) {
+        client->http_version = HTTP_VERSION_1_1;
+        client->keep_alive   = true; // Connection: keep-alive is the default after version 1.1.
     } else {
-        client->phase = HANDLING_REQUEST;  // Success.
+        client->response = (Response){505, .body = "Unsupported HTTP version.\n"};
+        client->phase = SENDING_REPLY;
+        return true;
     }
 
+    for (s64 i = 0; i < client->crlf_offsets.count-1; i++) {
+        char *line = data + (s64)client->crlf_offsets.data[i] + 2;
+        char *eol  = data + (s64)client->crlf_offsets.data[i+1];
+
+        // Normalise the header in place.
+        for (char *c = line; c < eol; c++)  *c = tolower(*c);
+
+        if (starts_with(line, "connection:")) {
+            char *value = trim_left(line + lengthof("connection:"), " \t");
+            if (starts_with(value, "keep-alive"))  client->keep_alive = true;
+            else if (starts_with(value, "close"))  client->keep_alive = false;
+
+            break; // For now, "connection" is the only request header that we care about.
+        }
+    }
+
+    client->phase = HANDLING_REQUEST;  // Success.
     return true;
 }
 
 static char_array *encode_query_string(string_dict *query, Memory_context *context)
+// Take a query string that we previously parsed into a string_dict and turn it back into text form.
 {
     char_array *result = NewArray(result, context);
 
@@ -369,26 +435,34 @@ static void deal_with_a_request(Server *server, Client *client)
         Response *response = &client->response;
         *response = (*handler)(request, client->context);
 
-        // If the response has a body but no size, calculate the size assuming the body is a zero-terminated string.
+        // If the response has a body but no size, calculate the size assuming the body is a zero-terminated string. |Silly
         if (response->body && !response->size)  response->size = strlen(response->body);
-
-        if (!response->headers.context) {
-            // If the headers dict has no context, we assume the handler didn't touch it beyond zero-initialising it.
-            assert(!memcmp(&response->headers, &(string_dict){0}, sizeof(string_dict)));
-            response->headers = (string_dict){.context = client->context};
-        }
-        // Add a content-length header.
-        *Set(&response->headers, "content-length") = get_string(client->context, "%ld", response->size)->data;
 
         // Print the headers into a buffer.
         {
             char_array *reply_header = &client->reply_header;
             *reply_header = (char_array){.context = client->context};
 
-            append_string(reply_header, "HTTP/1.0 %d\r\n", response->status);
+            char *version;
+            if (client->http_version == HTTP_VERSION_1_0)       version = "HTTP/1.0";
+            else if (client->http_version == HTTP_VERSION_1_1)  version = "HTTP/1.1";
+            else  assert(!"Unexpected HTTP version.");
+
+            append_string(reply_header, "%s %d\r\n", version, response->status);
+
+            // Add our own headers first.
+            if (client->http_version == HTTP_VERSION_1_0 && client->keep_alive) {
+                append_string(reply_header, "connection: keep-alive\r\n");
+            } else if (client->http_version == HTTP_VERSION_1_1 && !client->keep_alive) {
+                append_string(reply_header, "connection: close\r\n");
+            }
+            append_string(reply_header, "content-length: %ld\r\n", response->size);
+
+            // Add the headers provided by the request handler.
             for (s64 i = 0; i < response->headers.count; i++) {
                 char *key   = response->headers.keys[i];
                 char *value = response->headers.vals[i];
+                //|Todo: Make sure the handler didn't duplicate any of the headers we added.
                 append_string(reply_header, "%s: %s\r\n", key, value);
             }
             append_string(reply_header, "\r\n");
@@ -445,7 +519,7 @@ static void deal_with_a_request(Server *server, Client *client)
 
     if (client->phase == READY_TO_CLOSE) {
         // Do nothing. The main thread will close the client socket and free memory.
-        // |Todo: Maybe handle connection: keep-alive here?
+        // |Speed: If client->keep_alive, can we reset the client here instead of on the main thread?
     }
 
     add_to_queue(server->done_queue, client);
@@ -609,23 +683,27 @@ void start_server(Server *server)
             *Add(&pollfds) = pollfd;
         }
 
-        // If there are clients to delete, wait half a second. Otherwise wait indefinitely.
-        int timeout_ms = (to_delete.count > 0) ? 500 : -1;
+        int num_events = 0;
+        if (to_delete.count == 0) { // Only poll when there aren't any sockets to close or reuse.
+            // If there are open connections, poll once per second so we can keep checking whether
+            // any connections have timed out (|Todo). Otherwise wait indefinitely.
+            int timeout_ms = (server->clients.count > 0) ? 1000 : -1;
 
-        int num_events = poll(pollfds.data, pollfds.count, timeout_ms);
-        if (num_events < 0) {
-            Fatal("poll failed (%s).", get_last_error().string);
+            num_events = poll(pollfds.data, pollfds.count, timeout_ms);
+            if (num_events < 0) {
+                Fatal("poll failed (%s).", get_last_error().string);
+            }
         }
 
-        s64 current_time = get_monotonic_time(); // We need to get this value after polling, but before jumping to reset.
-
-        if (num_events == 0)  goto reset;
+        s64 current_time = get_monotonic_time(); // We need to get this value after polling.
 
         for (s64 pollfd_index = pollfds.count-1; pollfd_index >= 0; pollfd_index -= 1) { // Iterate backwards so we can delete from the array.
+            if (num_events == 0)  break;
+
             struct pollfd *pollfd = &pollfds.data[pollfd_index];
 
             if (!pollfd->revents)  continue;
-            //|Speed: We should decrement num_events and break when it hits 0.
+            else  num_events -= 1;
 
             if (pollfd->revents & (POLLERR|POLLHUP|POLLNVAL)) {
                 if (server->verbose) {
@@ -670,11 +748,8 @@ void start_server(Server *server)
 
                 set_blocking(client_socket_no, false);
 
-                // Create a new memory context for the client and initialise the Client struct on that.
-                Memory_context *client_context = new_context(server->context);
-
-                Client *client = New(Client, client_context);
-                client->context    = client_context;
+                Client *client = New(Client, server->context);
+                client->context    = new_context(server->context);
                 client->start_time = current_time;
                 client->socket_no  = client_socket_no;
                 client->phase      = PARSING_REQUEST;
@@ -695,17 +770,16 @@ void start_server(Server *server)
             }
         }
 
-reset:
+        // Clean up and recycle old sockets.
         for (s64 i = 0; i < to_delete.count; i++) {
             Client *client = to_delete.data[i];
             assert(client->phase == READY_TO_CLOSE);
 
-            bool closed = !close(client->socket_no);
-            if (!closed) {
-                Fatal("We couldn't close a client socket (%s).", get_last_error().string);
-            }
-
-            { //|Cleanup:
+            if (client->message.count == 0) {
+                // It was just a TCP connection. We didn't get any bytes. This happens when we kept a connection open
+                // due to "connection: keep-alive", but then the client immediately closed the connection. Don't log this.
+            } else {
+                // |Cleanup: This logging bit in general.
                 Memory_context *ctx = client->context;
                 Request *req = &client->request;
                 char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
@@ -715,8 +789,30 @@ reset:
                 fflush(stdout);
             }
 
-            Delete(&server->clients, client->socket_no);
-            free_context(client->context);
+            if (client->keep_alive) {
+                Memory_context *client_context = client->context;
+                s32 client_socket_no = client->socket_no;
+
+                reset_context(client->context);
+
+                *client = (Client){0};
+                client->context    = client_context; //|Cleanup: This is duplicated from when we initialise a client for the first time. We should put this in an init_client() function, which could then be responsible for initialising the Client struct more fully. Then we could also remove various checks throughout the code we do to see whether parts of the struct have been initialised.
+                client->start_time = current_time;
+                client->socket_no  = client_socket_no;
+                client->phase      = PARSING_REQUEST;
+
+                assert(*Get(&server->clients, client_socket_no) == client);
+                add_to_queue(server->work_queue, client);
+            } else {
+                bool closed = !close(client->socket_no);
+                if (!closed) {
+                    Fatal("We couldn't close a client socket (%s).", get_last_error().string);
+                }
+
+                Delete(&server->clients, client->socket_no);
+                free_context(client->context);
+                dealloc(client, server->context);
+            }
         }
         to_delete.count = 0;
 
