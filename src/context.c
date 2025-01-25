@@ -289,6 +289,11 @@ static Memory_block *dealloc_block(Memory_context *context, Memory_block *used_b
 
     assert(used_block->size);
 
+#ifndef NDEBUG
+    // Wipe freed memory in debug builds to make use-after-free bugs more obvious.
+    memset(used_block->data, 0, used_block->size);
+#endif
+
     // |Speed: For now we're just going to add and delete the relevant blocks one at a time.
 
     u8 *freed_data = used_block->data;
@@ -521,6 +526,11 @@ void reset_context(Memory_context *context)
     for (s64 i = 0; i < c->buffer_count; i++) {
         u8 *data = c->buffers[i].data;
         u64 size = c->buffers[i].size;
+
+#ifndef NDEBUG
+         // Wipe freed memory in debug builds to make use-after-free bugs more obvious.
+        memset(data, 0, size);
+#endif
 
         // Add the sentinels.
         add_used_block(c, data,      0);
