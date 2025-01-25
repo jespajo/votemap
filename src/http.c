@@ -1,8 +1,8 @@
 //|Todo:
-// Connection: Keep-Alive. Seems to work but now CTRL+C is broken???
+// Fix the issue where you can crash the server by holding ctrl+r in the browser.
 // Stress test and benchmark.
 // Clean up.
-// Improve queues.
+// Improve queues. I think we should just get rid of the done queue; the server should just read the Client pointers from the worker pipe.
 
 
 // For sigemptyset and sigaddset, we need to define _POSIX_C_SOURCE (as anything).
@@ -28,7 +28,7 @@ struct Client {
     s32                     socket_no;      // The client socket's file descriptor.
     s64                     start_time;     // When we accepted the connection.
 
-    enum Request_phase {
+    enum {
         PARSING_REQUEST=1,
         HANDLING_REQUEST,
         SENDING_REPLY,
@@ -510,16 +510,39 @@ static void deal_with_a_request(Server *server, Client *client)
         if (*num_bytes_sent < full_reply_size) {
             // We've partially sent our reply.
         } else {
-            // We've fully sent our reply.
+            // We've fully sent our reply. Success!
             assert(*num_bytes_sent == full_reply_size);
 
-            client->phase = READY_TO_CLOSE;
+            { // |Cleanup: This logging bit in general.
+                Memory_context *ctx = client->context;
+                Request *req = &client->request;
+                char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
+                char *path   = req->path.count ? req->path.data : "";
+                char *query  = req->query.count ? encode_query_string(&req->query, ctx)->data : "";
+                printf("[%d] %s %s%s\n", client->response.status, method, path, query);
+                fflush(stdout);
+            }
+
+            if (client->keep_alive) {
+                // Reset the client and prepare to receive more data on the socket.
+                Memory_context *client_context = client->context;
+                s32 client_socket_no = client->socket_no;
+
+                reset_context(client->context);
+
+                *client = (Client){0};
+                client->context = client_context; //|Cleanup: This is duplicated from when we initialise a client for the first time. We should put this in an init_client() function, which could then be responsible for initialising the Client struct more fully. Then we could also remove various checks throughout the code we do to see whether parts of the struct have been initialised.
+                client->start_time = get_monotonic_time();
+                client->socket_no = client_socket_no;
+                client->phase = PARSING_REQUEST;
+            } else {
+                client->phase = READY_TO_CLOSE;
+            }
         }
     }
 
     if (client->phase == READY_TO_CLOSE) {
         // Do nothing. The main thread will close the client socket and free memory.
-        // |Speed: If client->keep_alive, can we reset the client here instead of on the main thread?
     }
 
     add_to_queue(server->done_queue, client);
@@ -536,12 +559,13 @@ static void deal_with_a_request(Server *server, Client *client)
 }
 
 static void *thread_start(void *arg)
-// The worker thread's loop.
+// The worker thread's main loop.
 {
     Server *server = arg;
     HTTP_queue *queue = server->work_queue;
 
-    while (true) {
+    while (true)
+    {
         Client *client = pop_queue(queue);
         if (!client)  break; // A task without a client means the thread should stop. |Temporary: I'm not sure the best way to do this.
 
@@ -634,42 +658,49 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     return server;
 }
 
+void remove_client(Server *server, Client *client)
+{
+    int r = close(client->socket_no);
+    if (r == -1) {
+        Fatal("We couldn't close a client socket (%s).", get_last_error().string);
+    }
+
+    Delete(&server->clients, client->socket_no);
+    free_context(client->context);
+    dealloc(client, server->context);
+}
+
 void start_server(Server *server)
 {
-    // On each iteration of the main loop, we'll build an array of file descriptors to poll.
+    // An array of file descriptors to poll.
     Array(struct pollfd) pollfds = {.context = server->context};
-
-    // The first three elements in the pollfds array don't change:
-    // pollfds.data[0] is our main socket listening for connections.
-    *Add(&pollfds) = (struct pollfd){.fd = server->socket_no, .events = POLLIN};
-    // pollfds.data[1] is the file descriptor for SIGINT.
+    // The file descriptor that lets us know when we've received a SIGINT.
     *Add(&pollfds) = (struct pollfd){.fd = server->sigint_file_no, .events = POLLIN};
-    // pollfds.data[2] is the worker pipe.
+    // The server's main socket for new connections.
+    *Add(&pollfds) = (struct pollfd){.fd = server->socket_no, .events = POLLIN};
+    // The pipe that the worker threads use to communicate with us.
     *Add(&pollfds) = (struct pollfd){.fd = server->worker_pipe_nos[0], .events = POLLIN};
-    // Any other elements in the array are open client connections.
-
-    // Also build an array of clients to remove at the end of each loop.
-    Array(Client*) to_delete = {.context = server->context};
+    // Note that we will iterate backwards when checking the returned events, and we'll break once we've processed all the events.
+    // So we put the SIGINT file descriptor first because it rarely needs to be checked.
+    s64 non_client_pollfds_count = pollfds.count; // Any other elements in this array are open client connections.
 
     bool server_should_stop = false;
 
-    while (!server_should_stop)
+    while (server_should_stop == false || server->clients.count > 0) // This is the server's main loop.
     {
+        // Read messages from the worker threads. |Cleanup: We'll move this to the first pollfd loop.
         while (true) {
             Client *client = pop_queue(server->done_queue); //|Speed: We lock and unlock the queue mutex every time.
             if (!client)  break;
-
             assert(*Get(&server->clients, client->socket_no) == client);
 
             // Every task in the done queue is associated with one byte written to the worker pipe. We'll read the byte now, so that
             // if there were multiple writes to the pipe, we consume them all, so we don't get a redundant POLLIN when we next poll.
-            {
-                u8 byte;
-                read(server->worker_pipe_nos[0], &byte, sizeof(byte));
-            }
+            u8 byte;
+            read(server->worker_pipe_nos[0], &byte, sizeof(byte));
 
             if (client->phase == READY_TO_CLOSE) {
-                *Add(&to_delete) = client;
+                remove_client(server, client);
                 continue;
             }
 
@@ -683,16 +714,13 @@ void start_server(Server *server)
             *Add(&pollfds) = pollfd;
         }
 
-        int num_events = 0;
-        if (to_delete.count == 0) { // Only poll when there aren't any sockets to close or reuse.
-            // If there are open connections, poll once per second so we can keep checking whether
-            // any connections have timed out (|Todo). Otherwise wait indefinitely.
-            int timeout_ms = (server->clients.count > 0) ? 1000 : -1;
+        // If there are open connections, poll twice per second so we can keep checking whether
+        // any connections have timed out. Otherwise wait indefinitely.
+        int timeout_ms = (server->clients.count > 0) ? 500 : -1;
 
-            num_events = poll(pollfds.data, pollfds.count, timeout_ms);
-            if (num_events < 0) {
-                Fatal("poll failed (%s).", get_last_error().string);
-            }
+        int num_events = poll(pollfds.data, pollfds.count, timeout_ms);
+        if (num_events < 0) {
+            Fatal("poll failed (%s).", get_last_error().string);
         }
 
         s64 current_time = get_monotonic_time(); // We need to get this value after polling.
@@ -713,18 +741,8 @@ void start_server(Server *server)
                 }
 
                 Client *client = *Get(&server->clients, pollfd->fd);
-                client->phase = READY_TO_CLOSE;
-                add_to_queue(server->work_queue, client);//|Todo: It's probably better to just close it ourselves.
+                remove_client(server, client);
                 array_unordered_remove_by_index(&pollfds, pollfd_index);
-                continue;
-            }
-
-            if (pollfd->fd == server->sigint_file_no) {
-                // We've received a SIGINT.
-                struct signalfd_siginfo info; // We don't do anything with this, but we need to read it or we'll get POLLIN on the next loop.
-                read(server->sigint_file_no, &info, sizeof(info));
-
-                server_should_stop = true;
                 continue;
             }
 
@@ -760,6 +778,22 @@ void start_server(Server *server)
                 continue;
             }
 
+            if (pollfd->fd == server->sigint_file_no) {
+                // We've received a SIGINT.
+                struct signalfd_siginfo info; // |Cleanup: We don't do anything with this.
+                read(server->sigint_file_no, &info, sizeof(info));
+
+                server_should_stop = true;
+
+                // In the future, don't poll the SIGINT file descriptor or the server's socket listening for new connections.
+                assert(pollfds.data[0].fd == server->sigint_file_no);
+                pollfds.data[0].events = 0;
+                assert(pollfds.data[1].fd == server->socket_no);
+                pollfds.data[1].events = 0;
+
+                continue;
+            }
+
             if (pollfd->revents & (POLLIN|POLLOUT)) {
                 // We can read from or write to a client socket.
                 Client *client = *Get(&server->clients, pollfd->fd);
@@ -770,59 +804,26 @@ void start_server(Server *server)
             }
         }
 
-        // Clean up and recycle old sockets.
-        for (s64 i = 0; i < to_delete.count; i++) {
-            Client *client = to_delete.data[i];
-            assert(client->phase == READY_TO_CLOSE);
+        // Remove connections that have expired.
+        for (s64 pollfd_index = pollfds.count-1; pollfd_index >= non_client_pollfds_count; pollfd_index -= 1) {
+            struct pollfd *pollfd = &pollfds.data[pollfd_index];
+            assert(!pollfd->revents); // We should have removed any pollfds with returned events.
 
-            if (client->message.count == 0) {
-                // It was just a TCP connection. We didn't get any bytes. This happens when we kept a connection open
-                // due to "connection: keep-alive", but then the client immediately closed the connection. Don't log this.
-            } else {
-                // |Cleanup: This logging bit in general.
-                Memory_context *ctx = client->context;
-                Request *req = &client->request;
-                char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
-                char *path   = req->path.count ? req->path.data : "";
-                char *query  = req->query.count ? encode_query_string(&req->query, ctx)->data : "";
-                printf("[%d] %s %s%s\n", client->response.status, method, path, query);
-                fflush(stdout);
+            Client *client = *Get(&server->clients, pollfd->fd);
+            assert(client);
+
+            s64 request_age = current_time - client->start_time;
+            s64 max_age     = (server_should_stop) ? 1000 : 15000;
+
+            if (request_age > max_age) {
+                remove_client(server, client);
+                array_unordered_remove_by_index(&pollfds, pollfd_index);
             }
-
-            if (client->keep_alive) {
-                Memory_context *client_context = client->context;
-                s32 client_socket_no = client->socket_no;
-
-                reset_context(client->context);
-
-                *client = (Client){0};
-                client->context    = client_context; //|Cleanup: This is duplicated from when we initialise a client for the first time. We should put this in an init_client() function, which could then be responsible for initialising the Client struct more fully. Then we could also remove various checks throughout the code we do to see whether parts of the struct have been initialised.
-                client->start_time = current_time;
-                client->socket_no  = client_socket_no;
-                client->phase      = PARSING_REQUEST;
-
-                assert(*Get(&server->clients, client_socket_no) == client);
-                add_to_queue(server->work_queue, client);
-            } else {
-                bool closed = !close(client->socket_no);
-                if (!closed) {
-                    Fatal("We couldn't close a client socket (%s).", get_last_error().string);
-                }
-
-                Delete(&server->clients, client->socket_no);
-                free_context(client->context);
-                dealloc(client, server->context);
-            }
-        }
-        to_delete.count = 0;
-
-        if (server_should_stop) {
-            if (server->clients.count > 0)  continue;//|Fixme: This won't work if server_should_stop is also the loop condition though.
-
-            // Signal to the worker threads that it's time to wind up.
-            for (s64 i = 0; i < server->worker_threads.count; i++)  add_to_queue(server->work_queue, NULL);
         }
     }
+
+    // Signal to the worker threads that it's time to wind up.
+    for (s64 i = 0; i < server->worker_threads.count; i++)  add_to_queue(server->work_queue, NULL);
 
     // Join the worker threads.
     for (int i = 0; i < server->worker_threads.count; i++) {
@@ -832,6 +833,7 @@ void start_server(Server *server)
         }
     }
 
+    // Close the server's main socket. |Cleanup: Do this earlier?
     bool closed = !close(server->socket_no);
     if (!closed) {
         Fatal("We couldn't close our own socket (%s).", get_last_error().string);
