@@ -2,7 +2,6 @@
 // Fix the issue where you can crash the server by holding ctrl+r in the browser.
 // Stress test and benchmark.
 // Clean up.
-// Improve queues. I think we should just get rid of the done queue; the server should just read the Client pointers from the worker pipe.
 
 
 // For sigemptyset and sigaddset, we need to define _POSIX_C_SOURCE (as anything).
@@ -58,8 +57,7 @@ struct HTTP_task {
 
 struct HTTP_queue {
     pthread_mutex_t         mutex;
-    pthread_cond_t          ready;
-    bool                    blocks_when_empty; // If true, the queue uses the condition variable.
+    pthread_cond_t          ready; // The server will broadcast when there are tasks.
 
     Memory_context         *context;
 
@@ -80,7 +78,7 @@ static void add_to_queue(HTTP_queue *queue, Client *client)
         queue->head = task;
         queue->tail = task;
 
-        if (queue->blocks_when_empty)  pthread_cond_broadcast(&queue->ready);
+        pthread_cond_broadcast(&queue->ready);
     }
     pthread_mutex_unlock(&queue->mutex);
 }
@@ -88,13 +86,7 @@ static void add_to_queue(HTTP_queue *queue, Client *client)
 static Client *pop_queue(HTTP_queue *queue)
 {
     pthread_mutex_lock(&queue->mutex);
-    if (!queue->head) {
-        if (!queue->blocks_when_empty) {
-            pthread_mutex_unlock(&queue->mutex);
-            return NULL;
-        }
-        do {pthread_cond_wait(&queue->ready, &queue->mutex);}  while (!queue->head);
-    }
+    while (!queue->head)  pthread_cond_wait(&queue->ready, &queue->mutex);
 
     HTTP_task *task = queue->head;
     queue->head = task->next;
@@ -102,24 +94,20 @@ static Client *pop_queue(HTTP_queue *queue)
 
     pthread_mutex_unlock(&queue->mutex);
 
-    Client *client = task->client; // Copy to our stack before deallocating.
+    Client *client = task->client;
     dealloc(task, queue->context);
     return client;
 }
 
-HTTP_queue *create_queue(Memory_context *context, bool block_when_empty)
+HTTP_queue *create_queue(Memory_context *context)
 {
-    // Always create a child context for the queue so allocations don't block other contexts.
+    // Create a child context for the queue so allocations don't block other contexts.
     Memory_context *ctx = new_context(context);
-
     HTTP_queue *queue = New(HTTP_queue, ctx);
     queue->context = ctx;
 
     pthread_mutex_init(&queue->mutex, NULL);
-    if (block_when_empty) {
-        pthread_cond_init(&queue->ready, NULL);
-        queue->blocks_when_empty = true;
-    }
+    pthread_cond_init(&queue->ready, NULL);
 
     return queue;
 }
@@ -545,16 +533,12 @@ static void deal_with_a_request(Server *server, Client *client)
         // Do nothing. The main thread will close the client socket and free memory.
     }
 
-    add_to_queue(server->done_queue, client);
-
-    // Write a byte to the worker pipe to tell the server to poll the client again.
+    // Write the client pointer to the worker pipe to let the server know we're done with it.
     {
-        u8 byte = 1;
-        s64 r = write(server->worker_pipe_nos[1], &byte, sizeof(byte));
-        if (r == -1) {
-            //|Todo: Check EINTR?
+        s64 num_bytes_written = write(server->worker_pipe_nos[1], &client, sizeof(client));
+        if (num_bytes_written == -1) {
             Fatal("We couldn't write to the worker pipe (%s).", get_last_error().string);
-        }
+        } //|Todo: Repeat if we were interrupted before writing the full thing?
     }
 }
 
@@ -636,9 +620,7 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
 
     server->clients = (Client_map){.context = context, .binary_mode = true};
 
-    server->work_queue = create_queue(context, true);
-
-    server->done_queue = create_queue(context, false);
+    server->work_queue = create_queue(context);
 
     server->worker_threads = (pthread_t_array){.context = context};
     int NUM_WORKER_THREADS = 2; //|Todo: Put this somewhere else.
@@ -653,7 +635,6 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     if (r == -1) { //|Consistency: (== -1) or (< 0)?
         Fatal("Couldn't create a pipe (%s).", get_last_error().string);
     }
-    //|Todo: Should we make the pipe nonblocking?
 
     return server;
 }
@@ -686,34 +667,8 @@ void start_server(Server *server)
 
     bool server_should_stop = false;
 
-    while (server_should_stop == false || server->clients.count > 0) // This is the server's main loop.
+    while (!server_should_stop || server->clients.count) // This is the server's main loop.
     {
-        // Read messages from the worker threads. |Cleanup: We'll move this to the first pollfd loop.
-        while (true) {
-            Client *client = pop_queue(server->done_queue); //|Speed: We lock and unlock the queue mutex every time.
-            if (!client)  break;
-            assert(*Get(&server->clients, client->socket_no) == client);
-
-            // Every task in the done queue is associated with one byte written to the worker pipe. We'll read the byte now, so that
-            // if there were multiple writes to the pipe, we consume them all, so we don't get a redundant POLLIN when we next poll.
-            u8 byte;
-            read(server->worker_pipe_nos[0], &byte, sizeof(byte));
-
-            if (client->phase == READY_TO_CLOSE) {
-                remove_client(server, client);
-                continue;
-            }
-
-            struct pollfd pollfd = {.fd = client->socket_no};
-            switch (client->phase) {
-                case PARSING_REQUEST:  pollfd.events |= POLLIN;   break;
-                case SENDING_REPLY:    pollfd.events |= POLLOUT;  break;
-
-                default:  assert(!"Unexpected request phase.");
-            }
-            *Add(&pollfds) = pollfd;
-        }
-
         // If there are open connections, poll twice per second so we can keep checking whether
         // any connections have timed out. Otherwise wait indefinitely.
         int timeout_ms = (server->clients.count > 0) ? 500 : -1;
@@ -747,14 +702,31 @@ void start_server(Server *server)
             }
 
             if (pollfd->fd == server->worker_pipe_nos[0]) {
-                // A worker thread is letting us know that they put something in the done_queue.
-                // We'll check the queue on the next frame. There's nothing to do now.
+                // A worker thread is letting us know that they've finished with a client (for now).
+                Client *client;
+                s64 num_bytes_read = read(server->worker_pipe_nos[0], &client, sizeof(client));
+                if (num_bytes_read == -1) {
+                    Fatal("We couldn't read from the worker pipe (%s).\n", get_last_error().string);
+                } //|Todo: Make sure we read the whole pointer.
+                assert(*Get(&server->clients, client->socket_no) == client);
+
+                if (client->phase == READY_TO_CLOSE) {
+                    remove_client(server, client);
+                } else {
+                    struct pollfd pollfd = {.fd = client->socket_no};
+
+                    if (client->phase == PARSING_REQUEST)     pollfd.events |= POLLIN;
+                    else if (client->phase == SENDING_REPLY)  pollfd.events |= POLLOUT;
+                    else  assert(!"Unexpected request phase.");
+
+                    *Add(&pollfds) = pollfd;
+                }
                 continue;
             }
 
             if (pollfd->fd == server->socket_no) {
                 // A new connection has occurred.
-                if (server_should_stop)  continue; //|Todo: Don't even poll the listen socket in this case.
+                assert(server_should_stop == false);
 
                 struct sockaddr_in client_socket_addr; // This will be initialised by accept().
                 socklen_t client_socket_addr_size = sizeof(client_socket_addr);
@@ -790,7 +762,6 @@ void start_server(Server *server)
                 pollfds.data[0].events = 0;
                 assert(pollfds.data[1].fd == server->socket_no);
                 pollfds.data[1].events = 0;
-
                 continue;
             }
 

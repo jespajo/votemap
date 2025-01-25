@@ -31,7 +31,6 @@ struct Server {
     Client_map              clients;
 
     HTTP_queue             *work_queue;
-    HTTP_queue             *done_queue;
     pthread_t_array         worker_threads;
     s32                     worker_pipe_nos[2];
 };
