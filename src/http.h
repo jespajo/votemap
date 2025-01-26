@@ -13,8 +13,7 @@ typedef struct Route       Route;
 typedef Array(Route)       Route_array;
 typedef Map(s32, Client*)  Client_map;
 typedef Array(pthread_t)   pthread_t_array;
-typedef struct HTTP_task   HTTP_task;
-typedef struct HTTP_queue  HTTP_queue;
+typedef struct Client_queue Client_queue;
 
 struct Server {
     Memory_context         *context;
@@ -30,7 +29,7 @@ struct Server {
 
     Client_map              clients;
 
-    HTTP_queue             *work_queue;
+    Client_queue           *work_queue;
     pthread_t_array         worker_threads;
     s32                     worker_pipe_nos[2];
 };

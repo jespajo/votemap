@@ -51,64 +51,62 @@ struct Client {
     bool                    keep_alive;     // Whether to keep the socket open after processing the request.
 };
 
-struct HTTP_task {
-    HTTP_task              *next;
-    Client                 *client;
-};
-
-struct HTTP_queue {
+struct Client_queue {
     pthread_mutex_t         mutex;
     pthread_cond_t          ready;          // The server will broadcast when there are tasks.
 
-    Memory_context         *context;
-
-    HTTP_task              *head;
-    HTTP_task              *tail;
+    Array(Client*);
+    Client                **head;           // A pointer to the first element in the array that hasn't been taken from the queue. If it points to the element after the end of the array, the queue is empty.
 };
 
-static void add_to_queue(HTTP_queue *queue, Client *client)
+static void add_to_queue(Client_queue *queue, Client *client)
 {
-    HTTP_task *task = New(HTTP_task, queue->context);
-    task->client = client;
+    Client_queue *q = queue;
 
-    pthread_mutex_lock(&queue->mutex);
-    if (queue->head) {
-        queue->tail->next = task;
-        queue->tail = task;
-    } else {
-        queue->head = task;
-        queue->tail = task;
+    pthread_mutex_lock(&q->mutex);
 
-        pthread_cond_broadcast(&queue->ready);
+    s64 head_index = q->head - q->data;
+    assert(0 <= head_index && head_index <= q->count);
+
+    bool queue_was_empty = (head_index == q->count);
+
+    if (q->count == q->limit && head_index > 0) {
+        // We're out of room in the array, but there's space to the left of the head. Shift the head back to the start of the array.
+        memmove(q->data, q->head, (q->count - head_index)*sizeof(Client*));
+        q->count  -= head_index;
+        head_index = 0;
     }
-    pthread_mutex_unlock(&queue->mutex);
+
+    *Add(q) = client;
+    q->head = &q->data[head_index];
+
+    if (queue_was_empty)  pthread_cond_broadcast(&q->ready);
+    pthread_mutex_unlock(&q->mutex);
 }
 
-static Client *pop_queue(HTTP_queue *queue)
+static Client *pop_queue(Client_queue *queue)
 {
-    pthread_mutex_lock(&queue->mutex);
-    while (!queue->head)  pthread_cond_wait(&queue->ready, &queue->mutex);
+    Client_queue *q = queue;
 
-    HTTP_task *task = queue->head;
-    queue->head = task->next;
-    if (!task->next)  queue->tail = NULL;
+    pthread_mutex_lock(&q->mutex);
+    while (q->head == &q->data[q->count])  pthread_cond_wait(&q->ready, &q->mutex);
 
-    pthread_mutex_unlock(&queue->mutex);
+    Client *client = *q->head;
+    q->head += 1;
 
-    Client *client = task->client;
-    dealloc(task, queue->context);
+    pthread_mutex_unlock(&q->mutex);
     return client;
 }
 
-static HTTP_queue *create_queue(Memory_context *context)
+static Client_queue *create_queue(Memory_context *context)
 {
-    // Create a child context for the queue so allocations don't block other contexts.
-    Memory_context *ctx = new_context(context);
-    HTTP_queue *queue = New(HTTP_queue, ctx);
-    queue->context = ctx;
+    Client_queue *queue = NewArray(queue, context);
 
     pthread_mutex_init(&queue->mutex, NULL);
     pthread_cond_init(&queue->ready, NULL);
+
+    array_reserve(queue, 8);
+    queue->head = queue->data;
 
     return queue;
 }
@@ -550,7 +548,7 @@ static void *thread_start(void *arg)
 // The worker thread's main loop.
 {
     Server *server = arg;
-    HTTP_queue *queue = server->work_queue;
+    Client_queue *queue = server->work_queue;
 
     while (true)
     {
