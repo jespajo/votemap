@@ -527,6 +527,11 @@ static void log_regex(Regex *regex) //|Debug
 }
 
 bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captures)
+// |Todo:
+// - The captures parameter is confusing. We should just return a struct with .is_match and .captures members. Then we could easily create a bool-returning is_match() function.
+// - The caller should provide two contexts: a scratch context for temporary allocations (what we create tmp_ctx for) and another for allocations made to supply .captures. This would speed things up and give the caller control over when they want to deallocate. The scratch context can be optional (in which case we'd probably create and delete tmp_ctx like we do currently) and the captures context only needs to be provided if the caller wants to get the captures. We could make a macro to avoid the ugliness of common ",NULL,NULL)" trailing arguments. I think most of the time the caller will want to supply the scratch context themselves, so that should go first.
+// - The Regex struct should have a .num_capture_groups member.
+// - Saves should be stored in an array, with .prev_index members, rather than a linked list.
 {
     // Inside this function, we store saves as a singly-linked list.
     typedef struct Save Save;
@@ -551,7 +556,7 @@ bool match_regex(char *string, s64 string_length, Regex *regex, Captures *captur
 
     Save *saves = NULL;
 
-    // Create a child memory context for temporary data.
+    // Create a child memory context for temporary data. |Speed!
     Memory_context *tmp_ctx = new_context(regex->context);
 
     Thread_array cur_threads  = {.context = tmp_ctx};

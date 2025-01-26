@@ -2,6 +2,7 @@
 // Fix the issue where you can crash the server by holding ctrl+r in the browser.
 // Stress test and benchmark.
 // Clean up.
+// Documentation of memory ownership. The pollfds array is the authoritative list of the clients currently owned by the main thread. The main thread initialises a memory context for new clients and then passes them to worker threads via the server.work_queue. Until a worker thread writes the client pointer to the worker pipe, it owns (i.e. can modify) the Client struct and the client's memory context. Separately the server maintains server.clients, a hash table containing all open connections, keyed by the file descriptors of the open sockets. This hash table is not threadsafe and should never be accessed by the worker threads.
 
 
 // For sigemptyset and sigaddset, we need to define _POSIX_C_SOURCE (as anything).
@@ -57,7 +58,7 @@ struct HTTP_task {
 
 struct HTTP_queue {
     pthread_mutex_t         mutex;
-    pthread_cond_t          ready; // The server will broadcast when there are tasks.
+    pthread_cond_t          ready;          // The server will broadcast when there are tasks.
 
     Memory_context         *context;
 
@@ -99,7 +100,7 @@ static Client *pop_queue(HTTP_queue *queue)
     return client;
 }
 
-HTTP_queue *create_queue(Memory_context *context)
+static HTTP_queue *create_queue(Memory_context *context)
 {
     // Create a child context for the queue so allocations don't block other contexts.
     Memory_context *ctx = new_context(context);
@@ -127,6 +128,10 @@ static u8 hex_to_byte(char c1, char c2)
     return (u8)((x1 << 4) | x2);
 }
 
+// These are the characters that we treat just like regular letters and numbers when we come across them
+// in paths and query strings. Everything else either has a special meaning or is not allowed.
+#define ALLOWED_URI_CHARS "-._~/,+"
+
 static bool parse_request(Client *client)
 // Parse the message in client->message and save the result in client->request. If we successfully parse a request,
 // set client->phase to HANDLING_REQUEST and return true. If the request is invalid, fill out client->response, set
@@ -144,7 +149,7 @@ static bool parse_request(Client *client)
 
     // First, wait until we've received the whole header.
     {
-        // We want to store the CRLF offsets as 16-bit integers, which means the header can't be longer than 32768 bytes.
+        // We're storing the CRLF offsets as 16-bit integers, which means the header can't be longer than 32768 bytes.
         // Since we don't parse POST requests yet, we'll just apply this limit to the request as a whole.
         if (size > (s64)INT16_MAX) {
             client->response = (Response){413, .body = "The request is too large.\n"};
@@ -153,14 +158,9 @@ static bool parse_request(Client *client)
         }
 
         s16_array *offsets = &client->crlf_offsets;
-        if (offsets->limit == 0) {
-            // We need to initialise client->crlf_offsets.
-            *offsets = (s16_array){.context = ctx};
-            array_reserve(offsets, 16);
-        } else if (offsets->count > 0) {
-            // We've previously added some offsets, so we can skip past the last one.
-            d = data + offsets->data[offsets->count-1] + 2;
-        }
+
+        // If we've previously noted some CRLF offsets, skip past the last one.
+        if (offsets->count > 0)  d = data + offsets->data[offsets->count-1] + 2;
 
         bool full_header_received = false;
         char *last_cr = NULL;
@@ -194,19 +194,12 @@ static bool parse_request(Client *client)
         return true;
     }
 
-    // Other than alphanumeric characters, these are the only characters we don't treat specially in paths and query strings.
-    // They're RFC 3986's unreserved characters plus a few.
-    char const ALLOWED[] = "-._~/,+"; //|Cleanup: Defined twice.
-
     //
     // Parse the path and query string.
     //
     {
-        char_array *path = &client->request.path;
-        *path = (char_array){.context = ctx};
-
+        char_array  *path  = &client->request.path;
         string_dict *query = &client->request.query;
-        *query = (string_dict){.context = ctx};
 
         char_array key   = {.context = ctx};
         char_array value = {.context = ctx};
@@ -215,7 +208,7 @@ static bool parse_request(Client *client)
         char_array *target = path;
 
         while (d-data < size) {
-            if (isalnum(*d) || Contains(ALLOWED, *d)) {
+            if (isalnum(*d) || Contains(ALLOWED_URI_CHARS, *d)) {
                 *Add(target) = *d;
             } else if (*d == '%') {
                 if (d-data + 2 >= size)        break;
@@ -282,7 +275,7 @@ static bool parse_request(Client *client)
         client->http_version = HTTP_VERSION_1_0;
     } else if (starts_with(d, "HTTP/1.1")) {
         client->http_version = HTTP_VERSION_1_1;
-        client->keep_alive   = true; // Connection: keep-alive is the default after version 1.1.
+        client->keep_alive   = true; // Connection: keep-alive is the default in version 1.1.
     } else {
         client->response = (Response){505, .body = "Unsupported HTTP version.\n"};
         client->phase = SENDING_REPLY;
@@ -301,7 +294,7 @@ static bool parse_request(Client *client)
             if (starts_with(value, "keep-alive"))  client->keep_alive = true;
             else if (starts_with(value, "close"))  client->keep_alive = false;
 
-            break; // For now, "connection" is the only request header that we care about.
+            break; // For now, the only request header that we care about is "connection".
         }
     }
 
@@ -316,9 +309,6 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
 
     *Add(result) = '?';
 
-    // The only characters we won't encode (other than alphanumeric) are RFC 3986 unreserved characters.
-    char const ALLOWED[] = "-._~"; //|Cleanup: Why is this different from the other ALLOWED?
-
     for (s64 i = 0; i < query->count; i++) {
         if (i)  *Add(result) = '&';
 
@@ -327,7 +317,7 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
 
         for (s64 j = 0; j < key_len; j++) {
             char c = key[j];
-            if (isalnum(c) || Contains(ALLOWED, c))  *Add(result) = c;
+            if (isalnum(c) || Contains(ALLOWED_URI_CHARS, c))  *Add(result) = c;
             else  append_string(result, "%%%02x", c);
         }
 
@@ -340,7 +330,7 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
 
         for (s64 j = 0; j < val_len; j++) {
             char c = val[j];
-            if (isalnum(c) || Contains(ALLOWED, c))  *Add(result) = c;
+            if (isalnum(c) || Contains(ALLOWED_URI_CHARS, c))  *Add(result) = c;
             else  append_string(result, "%%%02x", c);
         }
     }
@@ -351,17 +341,38 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
     return result;
 }
 
+static void init_client(Client *client, Memory_context *context, s32 socket_no, s64 start_time)
+{
+    *client                   = (Client){0};
+
+    client->context           = context;
+    client->start_time        = start_time;
+    client->socket_no         = socket_no;
+    client->phase             = PARSING_REQUEST;
+
+    client->message           = (char_array){.context = context};
+    client->crlf_offsets      = (s16_array){.context = context};
+
+    client->request.path      = (char_array){.context = context};
+    client->request.query     = (string_dict){.context = context};
+    client->request.captures  = (Captures){.context = context}; //|Cleanup: Once we change the match_regex() signature, we won't need to initialise .captures here.
+
+    client->response.headers  = (string_dict){.context = context};
+
+    client->reply_header      = (char_array){.context = context};
+}
+
 static void deal_with_a_request(Server *server, Client *client)
 // The main work that a worker thread does.
 {
     if (client->phase == PARSING_REQUEST) {
         char_array *message = &client->message;
         if (message->limit == 0) {
-            // Initialise the recv buffer.
-            *message = (char_array){.context = client->context};
             s64 INITIAL_RECV_BUFFER_SIZE = 2048;
             array_reserve(message, INITIAL_RECV_BUFFER_SIZE);
         }
+
+        bool we_should_try_to_parse = false;
 
         // Try to read from the client socket.
         while (true) {
@@ -384,6 +395,7 @@ static void deal_with_a_request(Server *server, Client *client)
                 }
             } else if (recv_count == 0) {
                 // The client has disconnected.
+                we_should_try_to_parse = false;
                 client->phase = READY_TO_CLOSE;
                 break;
             } else {
@@ -391,11 +403,12 @@ static void deal_with_a_request(Server *server, Client *client)
                 message->count += recv_count;
                 assert(message->count < message->limit);
                 message->data[message->count] = '\0';
+                we_should_try_to_parse = true;
             }
         }
 
         // Try to parse the request.
-        if (message->count > 0)  parse_request(client); //|Cleanup: We don't use the return value now, so maybe change the function signature.
+        if (we_should_try_to_parse)  parse_request(client); //|Cleanup: We don't use the return value now, so maybe change the parse_request() function signature.
     }
 
     if (client->phase == HANDLING_REQUEST) {
@@ -407,7 +420,6 @@ static void deal_with_a_request(Server *server, Client *client)
             Route *route = &server->routes.data[i];
             if (route->method != request->method)  continue;
 
-            request->captures = (Captures){.context = client->context};
             bool match = match_regex(request->path.data, request->path.count, route->path_regex, &request->captures);
             if (match) {
                 handler = route->handler;
@@ -429,7 +441,7 @@ static void deal_with_a_request(Server *server, Client *client)
         // Print the headers into a buffer.
         {
             char_array *reply_header = &client->reply_header;
-            *reply_header = (char_array){.context = client->context};
+            array_reserve(reply_header, 128);
 
             char *version;
             if (client->http_version == HTTP_VERSION_1_0)       version = "HTTP/1.0";
@@ -513,16 +525,8 @@ static void deal_with_a_request(Server *server, Client *client)
 
             if (client->keep_alive) {
                 // Reset the client and prepare to receive more data on the socket.
-                Memory_context *client_context = client->context;
-                s32 client_socket_no = client->socket_no;
-
                 reset_context(client->context);
-
-                *client = (Client){0};
-                client->context = client_context; //|Cleanup: This is duplicated from when we initialise a client for the first time. We should put this in an init_client() function, which could then be responsible for initialising the Client struct more fully. Then we could also remove various checks throughout the code we do to see whether parts of the struct have been initialised.
-                client->start_time = get_monotonic_time();
-                client->socket_no = client_socket_no;
-                client->phase = PARSING_REQUEST;
+                init_client(client, client->context, client->socket_no, get_monotonic_time());
             } else {
                 client->phase = READY_TO_CLOSE;
             }
@@ -639,7 +643,7 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     return server;
 }
 
-void remove_client(Server *server, Client *client)
+static void close_and_delete_client(Server *server, Client *client)
 {
     int r = close(client->socket_no);
     if (r == -1) {
@@ -696,7 +700,7 @@ void start_server(Server *server)
                 }
 
                 Client *client = *Get(&server->clients, pollfd->fd);
-                remove_client(server, client);
+                close_and_delete_client(server, client);
                 array_unordered_remove_by_index(&pollfds, pollfd_index);
                 continue;
             }
@@ -711,7 +715,7 @@ void start_server(Server *server)
                 assert(*Get(&server->clients, client->socket_no) == client);
 
                 if (client->phase == READY_TO_CLOSE) {
-                    remove_client(server, client);
+                    close_and_delete_client(server, client);
                 } else {
                     struct pollfd pollfd = {.fd = client->socket_no};
 
@@ -739,10 +743,7 @@ void start_server(Server *server)
                 set_blocking(client_socket_no, false);
 
                 Client *client = New(Client, server->context);
-                client->context    = new_context(server->context);
-                client->start_time = current_time;
-                client->socket_no  = client_socket_no;
-                client->phase      = PARSING_REQUEST;
+                init_client(client, new_context(server->context), client_socket_no, current_time);
 
                 assert(!IsSet(&server->clients, client_socket_no));
                 *Set(&server->clients, client_socket_no) = client;
@@ -787,7 +788,7 @@ void start_server(Server *server)
             s64 max_age     = (server_should_stop) ? 1000 : 15000;
 
             if (request_age > max_age) {
-                remove_client(server, client);
+                close_and_delete_client(server, client);
                 array_unordered_remove_by_index(&pollfds, pollfd_index);
             }
         }
