@@ -43,9 +43,8 @@ Further improve labels.
 Web server:
     Use getaddrinfo().
     Support IPv6.
-    Parse request headers.
+    Parse more request headers.
     Parse request bodies; support POST requests.
-    Support Connection: Keep-Alive.
     Support Windows.
 
 Front end: draw map legend scale (e.g. show a line equal to 5km for reference).

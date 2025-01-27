@@ -125,27 +125,25 @@ static bool receive_message(Client *client)
             continue;
         }
 
-        int flags = 0;
+        int flags = MSG_NOSIGNAL;
         s64 recv_count = recv(client->socket, buffer, num_free_bytes, flags);
-        if (recv_count < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // There's nothing more to read now.
-                break;
-            } else {
-                // There was an actual error. |Todo: Don't make this a fatal error.
-                Fatal("We failed to read from a socket (%s).", get_last_error().string);
-            }
-        } else if (recv_count == 0) {
-            // The client has disconnected.
-            client->phase = READY_TO_CLOSE;
-            return false;
-        } else {
+        if (recv_count > 0) {
             // We have successfully received some bytes.
             message->count += recv_count;
             assert(message->count < message->limit);
             message->data[message->count] = '\0';
             we_received_data = true;
+            continue;
         }
+        if (recv_count < 0) {
+            // Break out if we've read all the available data.
+            if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
+            // Otherwise there was an actual error.
+            log_error("We failed to read from a socket (%s).", get_last_error().string);
+        }
+        // We get here if there was an error (recv_count < 0) or the client disconnected (recv_count == 0).
+        client->phase = READY_TO_CLOSE;
+        return false;
     }
 
     return we_received_data;
@@ -395,7 +393,8 @@ static void print_response_headers(Client *client)
 }
 
 static bool send_reply(Client *client)
-// Return true if we fully send the reply.
+// Return true if we successfully send the full reply. If sending would block, return false.
+// If there is an error, set client->phase to READY_TO_CLOSE and return false.
 {
     //
     // When we receive a request from a client, we store it in client.message. But our reply is
@@ -427,11 +426,14 @@ static bool send_reply(Client *client)
         assert(data_to_send);
         assert(num_bytes_to_send > 0);
 
-        int flags = 0;
+        int flags = MSG_NOSIGNAL;
         s64 send_count = send(client->socket, data_to_send, num_bytes_to_send, flags);
         if (send_count < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
-            else  Fatal("send failed (%s).", get_last_error().string); //|Todo: Make this non-fatal.
+
+            log_error("We failed to send to a client socket (%s).", get_last_error().string);
+            client->phase = READY_TO_CLOSE;
+            return false;
         }
         assert(send_count > 0);
 
@@ -549,9 +551,9 @@ static void *worker_thread_routine(void *arg)
         if (client->phase == SENDING_REPLY) {
             if (!client->reply_header.count)  print_response_headers(client);
 
-            bool sent = send_reply(client);
+            bool success = send_reply(client);
 
-            if (sent) {
+            if (success) {
                 { // |Cleanup: This logging bit in general.
                     Memory_context *ctx = client->context;
                     Request *req = &client->request;
