@@ -59,6 +59,19 @@ struct Client_queue {
     Client                **head;           // A pointer to the first element in the array that hasn't been taken from the queue. If it points to the element after the end of the array, the queue is empty.
 };
 
+static Client_queue *create_queue(Memory_context *context)
+{
+    Client_queue *queue = NewArray(queue, context);
+
+    pthread_mutex_init(&queue->mutex, NULL);
+    pthread_cond_init(&queue->ready, NULL);
+
+    array_reserve(queue, 8);
+    queue->head = queue->data;
+
+    return queue;
+}
+
 static void add_to_queue(Client_queue *queue, Client *client)
 {
     Client_queue *q = queue;
@@ -98,17 +111,51 @@ static Client *pop_queue(Client_queue *queue)
     return client;
 }
 
-static Client_queue *create_queue(Memory_context *context)
+static bool receive_message(Client *client)
+// Try to read from the client socket. Return true if we received data and there was no error or disconnection.
+// In other words return true if the caller should try to parse the received data.
 {
-    Client_queue *queue = NewArray(queue, context);
+    char_array *message = &client->message;
+    if (message->limit == 0) {
+        s64 INITIAL_RECV_BUFFER_SIZE = 2048;
+        array_reserve(message, INITIAL_RECV_BUFFER_SIZE);
+    }
 
-    pthread_mutex_init(&queue->mutex, NULL);
-    pthread_cond_init(&queue->ready, NULL);
+    bool we_received_data = false;
 
-    array_reserve(queue, 8);
-    queue->head = queue->data;
+    // Try to read from the client socket.
+    while (true) {
+        char *buffer = &message->data[message->count];
+        s64 num_free_bytes = message->limit - message->count - 1; // Reserve space for a null byte.
+        if (num_free_bytes <= 0) {
+            array_reserve(message, round_up_pow2(message->limit+1));
+            continue;
+        }
 
-    return queue;
+        int flags = 0;
+        s64 recv_count = recv(client->socket_no, buffer, num_free_bytes, flags);
+        if (recv_count < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // There's nothing more to read now.
+                break;
+            } else {
+                // There was an actual error. |Todo: Don't make this a fatal error.
+                Fatal("We failed to read from a socket (%s).", get_last_error().string);
+            }
+        } else if (recv_count == 0) {
+            // The client has disconnected.
+            client->phase = READY_TO_CLOSE;
+            return false;
+        } else {
+            // We have successfully received some bytes.
+            message->count += recv_count;
+            assert(message->count < message->limit);
+            message->data[message->count] = '\0';
+            we_received_data = true;
+        }
+    }
+
+    return we_received_data;
 }
 
 static u8 hex_to_byte(char c1, char c2)
@@ -300,6 +347,138 @@ static bool parse_request(Client *client)
     return true;
 }
 
+static Request_handler *find_request_handler(Server *server, Client *client)
+// Find a route for a client and return the route handler.
+{
+    assert(client->phase == HANDLING_REQUEST);
+
+    Request *request = &client->request;
+
+    for (s64 i = 0; i < server->routes.count; i++) {
+        Route *route = &server->routes.data[i];
+
+        if (route->method != request->method)  continue;
+
+        bool match = match_regex(request->path.data, request->path.count, route->path_regex, &request->captures);
+        if (!match)  continue;
+
+        return route->handler;
+    }
+    return NULL;
+}
+
+static void print_response_headers(Client *client)
+// Print the headers into a buffer.
+{
+    Response   *response     = &client->response;
+    char_array *reply_header = &client->reply_header;
+
+    array_reserve(reply_header, 128);
+
+    char *version = NULL;
+    if (client->http_version == HTTP_VERSION_1_0)       version = "HTTP/1.0";
+    else if (client->http_version == HTTP_VERSION_1_1)  version = "HTTP/1.1";
+    else  assert("Unexpected HTTP version.");
+
+    append_string(reply_header, "%s %d\r\n", version, response->status);
+
+    // Add our own headers first.
+    if (client->http_version == HTTP_VERSION_1_0 && client->keep_alive) {
+        append_string(reply_header, "connection: keep-alive\r\n");
+    } else if (client->http_version == HTTP_VERSION_1_1 && !client->keep_alive) {
+        append_string(reply_header, "connection: close\r\n");
+    }
+    append_string(reply_header, "content-length: %ld\r\n", response->size);
+
+    // Add the headers provided by the request handler.
+    for (s64 i = 0; i < response->headers.count; i++) {
+        char *key   = response->headers.keys[i];
+        char *value = response->headers.vals[i];
+        //|Todo: Make sure the handler didn't duplicate any of the headers we added.
+        append_string(reply_header, "%s: %s\r\n", key, value);
+    }
+    append_string(reply_header, "\r\n");
+}
+
+static bool send_reply(Client *client)
+// Return true if we fully send the reply.
+{
+    char_array *reply_header   = &client->reply_header;
+    Response   *response       = &client->response;
+    s64        *num_bytes_sent = &client->num_bytes_sent;
+
+    s64 full_reply_size = reply_header->count + response->size;
+    assert(*num_bytes_sent < full_reply_size);
+
+    while (*num_bytes_sent < full_reply_size) {
+        void *data_to_send      = NULL;
+        s64   num_bytes_to_send = 0;
+        if (*num_bytes_sent < reply_header->count) {
+            // We're still sending the response header.
+            data_to_send      = reply_header->data  + *num_bytes_sent;
+            num_bytes_to_send = reply_header->count - *num_bytes_sent;
+        } else {
+            // We're sending the response body.
+            s64 body_sent = *num_bytes_sent - reply_header->count;
+
+            data_to_send      = response->body + body_sent;
+            num_bytes_to_send = response->size - body_sent;
+        }
+        assert(data_to_send);
+        assert(num_bytes_to_send > 0);
+
+        int flags = 0;
+        s64 send_count = send(client->socket_no, data_to_send, num_bytes_to_send, flags);
+        if (send_count < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
+            else  Fatal("send failed (%s).", get_last_error().string); //|Todo: Make this non-fatal.
+        }
+        assert(send_count > 0);
+
+        *num_bytes_sent += send_count;
+    }
+
+    // Return false if we've partially sent our reply.
+    if (*num_bytes_sent < full_reply_size)  return false;
+
+    // We've fully sent our reply. Success!
+    assert(*num_bytes_sent == full_reply_size);
+    return true;
+}
+
+static void init_client(Client *client, Memory_context *context, s32 socket_no, s64 start_time)
+{
+    *client                   = (Client){0};
+
+    client->context           = context;
+    client->start_time        = start_time;
+    client->socket_no         = socket_no;
+    client->phase             = PARSING_REQUEST;
+
+    client->message           = (char_array){.context = context};
+    client->crlf_offsets      = (s16_array){.context = context};
+
+    client->request.path      = (char_array){.context = context};
+    client->request.query     = (string_dict){.context = context};
+    client->request.captures  = (Captures){.context = context}; //|Cleanup: Once we change the match_regex() signature, we won't need to initialise .captures here.
+
+    client->response.headers  = (string_dict){.context = context};
+
+    client->reply_header      = (char_array){.context = context};
+}
+
+static void close_and_delete_client(Server *server, Client *client)
+{
+    int r = close(client->socket_no);
+    if (r == -1) {
+        Fatal("We couldn't close a client socket (%s).", get_last_error().string);
+    }
+
+    Delete(&server->clients, client->socket_no);
+    free_context(client->context);
+    dealloc(client, server->context);
+}
+
 static char_array *encode_query_string(string_dict *query, Memory_context *context)
 // Take a query string that we previously parsed into a string_dict and turn it back into text form.
 {
@@ -339,211 +518,6 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
     return result;
 }
 
-static void init_client(Client *client, Memory_context *context, s32 socket_no, s64 start_time)
-{
-    *client                   = (Client){0};
-
-    client->context           = context;
-    client->start_time        = start_time;
-    client->socket_no         = socket_no;
-    client->phase             = PARSING_REQUEST;
-
-    client->message           = (char_array){.context = context};
-    client->crlf_offsets      = (s16_array){.context = context};
-
-    client->request.path      = (char_array){.context = context};
-    client->request.query     = (string_dict){.context = context};
-    client->request.captures  = (Captures){.context = context}; //|Cleanup: Once we change the match_regex() signature, we won't need to initialise .captures here.
-
-    client->response.headers  = (string_dict){.context = context};
-
-    client->reply_header      = (char_array){.context = context};
-}
-
-static void deal_with_a_request(Server *server, Client *client)
-// The main work that a worker thread does.
-{
-    if (client->phase == PARSING_REQUEST) {
-        char_array *message = &client->message;
-        if (message->limit == 0) {
-            s64 INITIAL_RECV_BUFFER_SIZE = 2048;
-            array_reserve(message, INITIAL_RECV_BUFFER_SIZE);
-        }
-
-        bool we_should_try_to_parse = false;
-
-        // Try to read from the client socket.
-        while (true) {
-            char *buffer = &message->data[message->count];
-            s64 num_free_bytes = message->limit - message->count - 1; // Reserve space for a null byte.
-            if (num_free_bytes <= 0) {
-                array_reserve(message, round_up_pow2(message->limit+1));
-                continue;
-            }
-
-            int flags = 0;
-            s64 recv_count = recv(client->socket_no, buffer, num_free_bytes, flags);
-            if (recv_count < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    // There's nothing more to read now.
-                    break;
-                } else {
-                    // There was an actual error. |Todo: Don't make this a fatal error.
-                    Fatal("We failed to read from a socket (%s).", get_last_error().string);
-                }
-            } else if (recv_count == 0) {
-                // The client has disconnected.
-                we_should_try_to_parse = false;
-                client->phase = READY_TO_CLOSE;
-                break;
-            } else {
-                // We have successfully received some bytes.
-                message->count += recv_count;
-                assert(message->count < message->limit);
-                message->data[message->count] = '\0';
-                we_should_try_to_parse = true;
-            }
-        }
-
-        // Try to parse the request.
-        if (we_should_try_to_parse)  parse_request(client); //|Cleanup: We don't use the return value now, so maybe change the parse_request() function signature.
-    }
-
-    if (client->phase == HANDLING_REQUEST) {
-        Request *request = &client->request;
-
-        // Find a matching handler.
-        Request_handler *handler = NULL;
-        for (s64 i = 0; i < server->routes.count; i++) {
-            Route *route = &server->routes.data[i];
-            if (route->method != request->method)  continue;
-
-            bool match = match_regex(request->path.data, request->path.count, route->path_regex, &request->captures);
-            if (match) {
-                handler = route->handler;
-                break;
-            }
-        }
-        if (!handler) {
-            // We couldn't find a handler for this request, so return a 404.
-            handler = &serve_404;
-        }
-
-        // Run the handler.
-        Response *response = &client->response;
-        *response = (*handler)(request, client->context);
-
-        // If the response has a body but no size, calculate the size assuming the body is a zero-terminated string. |Silly
-        if (response->body && !response->size)  response->size = strlen(response->body);
-
-        // Print the headers into a buffer.
-        {
-            char_array *reply_header = &client->reply_header;
-            array_reserve(reply_header, 128);
-
-            char *version;
-            if (client->http_version == HTTP_VERSION_1_0)       version = "HTTP/1.0";
-            else if (client->http_version == HTTP_VERSION_1_1)  version = "HTTP/1.1";
-            else  assert(!"Unexpected HTTP version.");
-
-            append_string(reply_header, "%s %d\r\n", version, response->status);
-
-            // Add our own headers first.
-            if (client->http_version == HTTP_VERSION_1_0 && client->keep_alive) {
-                append_string(reply_header, "connection: keep-alive\r\n");
-            } else if (client->http_version == HTTP_VERSION_1_1 && !client->keep_alive) {
-                append_string(reply_header, "connection: close\r\n");
-            }
-            append_string(reply_header, "content-length: %ld\r\n", response->size);
-
-            // Add the headers provided by the request handler.
-            for (s64 i = 0; i < response->headers.count; i++) {
-                char *key   = response->headers.keys[i];
-                char *value = response->headers.vals[i];
-                //|Todo: Make sure the handler didn't duplicate any of the headers we added.
-                append_string(reply_header, "%s: %s\r\n", key, value);
-            }
-            append_string(reply_header, "\r\n");
-        }
-
-        client->phase = SENDING_REPLY;
-    }
-
-    if (client->phase == SENDING_REPLY) {
-        char_array *reply_header   = &client->reply_header;
-        Response   *response       = &client->response;
-        s64        *num_bytes_sent = &client->num_bytes_sent;
-
-        s64 full_reply_size = reply_header->count + response->size;
-        assert(*num_bytes_sent < full_reply_size);
-
-        while (*num_bytes_sent < full_reply_size) {
-            void *data_to_send      = NULL;
-            s64   num_bytes_to_send = 0;
-            if (*num_bytes_sent < reply_header->count) {
-                // We're still sending the response header.
-                data_to_send      = reply_header->data  + *num_bytes_sent;
-                num_bytes_to_send = reply_header->count - *num_bytes_sent;
-            } else {
-                // We're sending the response body.
-                s64 body_sent = *num_bytes_sent - reply_header->count;
-
-                data_to_send      = response->body + body_sent;
-                num_bytes_to_send = response->size - body_sent;
-            }
-            assert(data_to_send);
-            assert(num_bytes_to_send > 0);
-
-            int flags = 0;
-            s64 send_count = send(client->socket_no, data_to_send, num_bytes_to_send, flags);
-            if (send_count < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
-                else  Fatal("send failed (%s).", get_last_error().string); //|Todo: Make this non-fatal.
-            }
-            assert(send_count > 0);
-
-            *num_bytes_sent += send_count;
-        }
-
-        if (*num_bytes_sent < full_reply_size) {
-            // We've partially sent our reply.
-        } else {
-            // We've fully sent our reply. Success!
-            assert(*num_bytes_sent == full_reply_size);
-
-            { // |Cleanup: This logging bit in general.
-                Memory_context *ctx = client->context;
-                Request *req = &client->request;
-                char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
-                char *path   = req->path.count ? req->path.data : "";
-                char *query  = req->query.count ? encode_query_string(&req->query, ctx)->data : "";
-                printf("[%d] %s %s%s\n", client->response.status, method, path, query);
-                fflush(stdout);
-            }
-
-            if (client->keep_alive) {
-                // Reset the client and prepare to receive more data on the socket.
-                reset_context(client->context);
-                init_client(client, client->context, client->socket_no, get_monotonic_time());
-            } else {
-                client->phase = READY_TO_CLOSE;
-            }
-        }
-    }
-
-    if (client->phase == READY_TO_CLOSE) {
-        // Do nothing. The main thread will close the client socket and free memory.
-    }
-
-    // Write the client pointer to the worker pipe to let the server know we're done with it.
-    {
-        s64 num_bytes_written = write(server->worker_pipe_nos[1], &client, sizeof(client));
-        if (num_bytes_written == -1) {
-            Fatal("We couldn't write to the worker pipe (%s).", get_last_error().string);
-        } //|Todo: Repeat if we were interrupted before writing the full thing?
-    }
-}
-
 static void *thread_start(void *arg)
 // The worker thread's main loop.
 {
@@ -553,9 +527,65 @@ static void *thread_start(void *arg)
     while (true)
     {
         Client *client = pop_queue(queue);
-        if (!client)  break; // A task without a client means the thread should stop. |Temporary: I'm not sure the best way to do this.
+        if (!client)  break; // The server adds NULL pointers to the queue to tell the workers it's time to wind up.
 
-        deal_with_a_request(server, client); //|Cleanup: This function is tiny now.
+        if (client->phase == PARSING_REQUEST) {
+            bool received = receive_message(client);
+
+            if (received)  parse_request(client); //|Cleanup: We don't use the return value now, so maybe change the parse_request() function signature.
+        }
+
+        if (client->phase == HANDLING_REQUEST) {
+            Request_handler *handler = find_request_handler(server, client);
+            if (!handler)  handler = &serve_404;
+
+            // Run the handler.
+            client->response = (*handler)(&client->request, client->context);
+
+            print_response_headers(client);
+
+            // If the response has a body but no size, calculate the size assuming the body is a zero-terminated string. |Silly
+            Response *response = &client->response;
+            if (response->body && !response->size)  response->size = strlen(response->body);
+
+            client->phase = SENDING_REPLY;
+        }
+
+        if (client->phase == SENDING_REPLY) {
+            bool sent = send_reply(client);
+
+            if (sent) {
+                { // |Cleanup: This logging bit in general.
+                    Memory_context *ctx = client->context;
+                    Request *req = &client->request;
+                    char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
+                    char *path   = req->path.count ? req->path.data : "";
+                    char *query  = req->query.count ? encode_query_string(&req->query, ctx)->data : "";
+                    printf("[%d] %s %s%s\n", client->response.status, method, path, query);
+                    fflush(stdout);
+                }
+
+                if (client->keep_alive) {
+                    // Reset the client and prepare to receive more data on the socket.
+                    reset_context(client->context);
+                    init_client(client, client->context, client->socket_no, get_monotonic_time());
+                } else {
+                    client->phase = READY_TO_CLOSE;
+                }
+            }
+        }
+
+        if (client->phase == READY_TO_CLOSE) {
+            // Do nothing. The main thread will close the client socket and free memory.
+        }
+
+        // Write the client pointer to the worker pipe to let the server know we're done with it.
+        {
+            s64 num_bytes_written = write(server->worker_pipe_nos[1], &client, sizeof(client));
+            if (num_bytes_written == -1) {
+                Fatal("We couldn't write to the worker pipe (%s).", get_last_error().string);
+            } //|Todo: Repeat if we were interrupted before writing the full thing?
+        }
     }
 
     return NULL;
@@ -641,16 +671,14 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     return server;
 }
 
-static void close_and_delete_client(Server *server, Client *client)
+void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler)
 {
-    int r = close(client->socket_no);
-    if (r == -1) {
-        Fatal("We couldn't close a client socket (%s).", get_last_error().string);
-    }
+    //|Todo: Check the server phase. You can't add routes once the server's started.
 
-    Delete(&server->clients, client->socket_no);
-    free_context(client->context);
-    dealloc(client, server->context);
+    Regex *regex = compile_regex(path_pattern, server->context);
+    assert(regex);
+
+    *Add(&server->routes) = (Route){method, regex, handler};
 }
 
 void start_server(Server *server)
@@ -808,16 +836,6 @@ void start_server(Server *server)
     if (!closed) {
         Fatal("We couldn't close our own socket (%s).", get_last_error().string);
     }
-}
-
-void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler)
-{
-    //|Todo: Check the server phase. You can't add routes once the server's started.
-
-    Regex *regex = compile_regex(path_pattern, server->context);
-    assert(regex);
-
-    *Add(&server->routes) = (Route){method, regex, handler};
 }
 
 Response serve_file_insecurely(Request *request, Memory_context *context)
