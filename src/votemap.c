@@ -148,7 +148,7 @@ Response serve_vertices(Request *request, Memory_context *context)
 
     Tile_info tile = parse_tile_request(request);
     if (!tile.parse_success) {
-        return (Response){400, .body = tile.fail_reason};
+        return (Response){400, .body = tile.fail_reason, .size = strlen(tile.fail_reason)};
     }
 
     // Prepare the parameters to our SQL queries (they are the same for all queries below).
@@ -478,7 +478,6 @@ int main(int argc, char **argv)
 {
     u32  address = 0;       // 0.0.0.0  |Todo: Make this configurable with getaddrinfo().
     u32  port    = 6008;
-    bool verbose = false;
 
     // If there is a command-line argument, take it as a port.
     if (argc > 1) {
@@ -490,7 +489,7 @@ int main(int argc, char **argv)
 
     Memory_context *top_context = new_context(NULL);
 
-    Server *server = create_server(address, port, verbose, top_context);
+    Server *server = create_server(address, port, top_context);
 
     add_route(server, GET, "/vertices/(.+)",                                &serve_vertices);
     add_route(server, GET, "/elections/(\\d+)/districts.json",              &serve_districts);

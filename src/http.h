@@ -20,10 +20,9 @@ struct Server {
 
     u32                     address;
     u16                     port;
-    bool                    verbose;
 
-    s32                     socket_no;
-    s32                     sigint_file_no;
+    s32                     socket;             // The file descriptor for the socket that accepts connections.
+    s32                     interrupt_handle;   // The file descriptor for handling SIGINT.
 
     Route_array             routes;
 
@@ -31,7 +30,7 @@ struct Server {
 
     Client_queue           *work_queue;
     pthread_t_array         worker_threads;
-    s32                     worker_pipe_nos[2];
+    s32                     worker_pipe[2];     // File descriptors for the pipe that workers use to communicate to the server (read, write).
 };
 
 enum HTTP_method {GET=1, POST}; // We can add HTTP_ prefixes to these later if we need.
@@ -59,7 +58,7 @@ struct Route {
     Request_handler        *handler;
 };
 
-Server *create_server(u32 address, u16 port, bool verbose, Memory_context *context);
+Server *create_server(u32 address, u16 port, Memory_context *context);
 void start_server(Server *server);
 void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler);
 

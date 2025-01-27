@@ -1,10 +1,3 @@
-//|Todo:
-// Fix the issue where you can crash the server by holding ctrl+r in the browser.
-// Stress test and benchmark.
-// Clean up.
-// Documentation of memory ownership. The pollfds array is the authoritative list of the clients currently owned by the main thread. The main thread initialises a memory context for new clients and then passes them to worker threads via the server.work_queue. Until a worker thread writes the client pointer to the worker pipe, it owns (i.e. can modify) the Client struct and the client's memory context. Separately the server maintains server.clients, a hash table containing all open connections, keyed by the file descriptors of the open sockets. This hash table is not threadsafe and should never be accessed by the worker threads.
-
-
 // For sigemptyset and sigaddset, we need to define _POSIX_C_SOURCE (as anything).
 // For pthread_sigmask, we need to define _POSIX_C_SOURCE >= 199506L.
 #define _POSIX_C_SOURCE 199506L
@@ -25,7 +18,7 @@
 struct Client {
     Memory_context         *context;
 
-    s32                     socket_no;      // The client socket's file descriptor.
+    s32                     socket;         // The client socket's file descriptor.
     s64                     start_time;     // When we accepted the connection.
 
     enum {
@@ -41,7 +34,7 @@ struct Client {
 
     Response                response;
 
-    char_array              reply_header;   // Our response's header in raw text form.
+    char_array              reply_header;   // Our response's header in text form.
     s64                     num_bytes_sent; // The total number of bytes we've sent of our response. Includes both header and body.
 
     enum {
@@ -133,7 +126,7 @@ static bool receive_message(Client *client)
         }
 
         int flags = 0;
-        s64 recv_count = recv(client->socket_no, buffer, num_free_bytes, flags);
+        s64 recv_count = recv(client->socket, buffer, num_free_bytes, flags);
         if (recv_count < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // There's nothing more to read now.
@@ -197,7 +190,8 @@ static bool parse_request(Client *client)
         // We're storing the CRLF offsets as 16-bit integers, which means the header can't be longer than 32768 bytes.
         // Since we don't parse POST requests yet, we'll just apply this limit to the request as a whole.
         if (size > (s64)INT16_MAX) {
-            client->response = (Response){413, .body = "The request is too large.\n"};
+            char static body[] = "The request is too large.\n";
+            client->response = (Response){413, .body=body, .size=lengthof(body)};
             client->phase = SENDING_REPLY;
             return true;
         }
@@ -234,7 +228,8 @@ static bool parse_request(Client *client)
         client->request.method = GET;
         d += 4;
     } else {
-        client->response = (Response){501, .body = "We only support GET requests!\n"};
+        char static body[] = "We only support GET requests!\n";
+        client->response = (Response){501, .body=body, .size=lengthof(body)};
         client->phase = SENDING_REPLY;
         return true;
     }
@@ -322,7 +317,8 @@ static bool parse_request(Client *client)
         client->http_version = HTTP_VERSION_1_1;
         client->keep_alive   = true; // Connection: keep-alive is the default in version 1.1.
     } else {
-        client->response = (Response){505, .body = "Unsupported HTTP version.\n"};
+        char static body[] = "Unsupported HTTP version.\n";
+        client->response = (Response){505, .body=body, .size=lengthof(body)};
         client->phase = SENDING_REPLY;
         return true;
     }
@@ -375,10 +371,8 @@ static void print_response_headers(Client *client)
 
     array_reserve(reply_header, 128);
 
-    char *version = NULL;
-    if (client->http_version == HTTP_VERSION_1_0)       version = "HTTP/1.0";
-    else if (client->http_version == HTTP_VERSION_1_1)  version = "HTTP/1.1";
-    else  assert("Unexpected HTTP version.");
+    char *version = "HTTP/1.0";
+    if (client->http_version == HTTP_VERSION_1_1)  version = "HTTP/1.1";
 
     append_string(reply_header, "%s %d\r\n", version, response->status);
 
@@ -403,6 +397,12 @@ static void print_response_headers(Client *client)
 static bool send_reply(Client *client)
 // Return true if we fully send the reply.
 {
+    //
+    // When we receive a request from a client, we store it in client.message. But our reply is
+    // split across two buffers: client.reply_header and client.response.body. We keep the header
+    // separate because the body is created first (by the request handler) and the header second.
+    // So to put them both into a contiguous buffer would require copying the body.
+    //
     char_array *reply_header   = &client->reply_header;
     Response   *response       = &client->response;
     s64        *num_bytes_sent = &client->num_bytes_sent;
@@ -428,7 +428,7 @@ static bool send_reply(Client *client)
         assert(num_bytes_to_send > 0);
 
         int flags = 0;
-        s64 send_count = send(client->socket_no, data_to_send, num_bytes_to_send, flags);
+        s64 send_count = send(client->socket, data_to_send, num_bytes_to_send, flags);
         if (send_count < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK)  break;
             else  Fatal("send failed (%s).", get_last_error().string); //|Todo: Make this non-fatal.
@@ -446,13 +446,13 @@ static bool send_reply(Client *client)
     return true;
 }
 
-static void init_client(Client *client, Memory_context *context, s32 socket_no, s64 start_time)
+static void init_client(Client *client, Memory_context *context, s32 socket, s64 start_time)
 {
     *client                   = (Client){0};
 
     client->context           = context;
     client->start_time        = start_time;
-    client->socket_no         = socket_no;
+    client->socket            = socket;
     client->phase             = PARSING_REQUEST;
 
     client->message           = (char_array){.context = context};
@@ -469,12 +469,12 @@ static void init_client(Client *client, Memory_context *context, s32 socket_no, 
 
 static void close_and_delete_client(Server *server, Client *client)
 {
-    int r = close(client->socket_no);
+    int r = close(client->socket);
     if (r == -1) {
         Fatal("We couldn't close a client socket (%s).", get_last_error().string);
     }
 
-    Delete(&server->clients, client->socket_no);
+    Delete(&server->clients, client->socket);
     free_context(client->context);
     dealloc(client, server->context);
 }
@@ -518,7 +518,7 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
     return result;
 }
 
-static void *thread_start(void *arg)
+static void *worker_thread_routine(void *arg)
 // The worker thread's main loop.
 {
     Server *server = arg;
@@ -541,17 +541,14 @@ static void *thread_start(void *arg)
 
             // Run the handler.
             client->response = (*handler)(&client->request, client->context);
-
-            print_response_headers(client);
-
-            // If the response has a body but no size, calculate the size assuming the body is a zero-terminated string. |Silly
-            Response *response = &client->response;
-            if (response->body && !response->size)  response->size = strlen(response->body);
+            assert(client->response.status);
 
             client->phase = SENDING_REPLY;
         }
 
         if (client->phase == SENDING_REPLY) {
+            if (!client->reply_header.count)  print_response_headers(client);
+
             bool sent = send_reply(client);
 
             if (sent) {
@@ -568,7 +565,7 @@ static void *thread_start(void *arg)
                 if (client->keep_alive) {
                     // Reset the client and prepare to receive more data on the socket.
                     reset_context(client->context);
-                    init_client(client, client->context, client->socket_no, get_monotonic_time());
+                    init_client(client, client->context, client->socket, get_monotonic_time());
                 } else {
                     client->phase = READY_TO_CLOSE;
                 }
@@ -581,7 +578,7 @@ static void *thread_start(void *arg)
 
         // Write the client pointer to the worker pipe to let the server know we're done with it.
         {
-            s64 num_bytes_written = write(server->worker_pipe_nos[1], &client, sizeof(client));
+            s64 num_bytes_written = write(server->worker_pipe[1], &client, sizeof(client));
             if (num_bytes_written == -1) {
                 Fatal("We couldn't write to the worker pipe (%s).", get_last_error().string);
             } //|Todo: Repeat if we were interrupted before writing the full thing?
@@ -591,28 +588,27 @@ static void *thread_start(void *arg)
     return NULL;
 }
 
-Server *create_server(u32 address, u16 port, bool verbose, Memory_context *context)
+Server *create_server(u32 address, u16 port, Memory_context *context)
 {
     Server *server = New(Server, context);
 
     server->context = context;
     server->address = address;
     server->port    = port;
-    server->verbose = verbose;
 
-    server->socket_no = socket(AF_INET, SOCK_STREAM, 0);
-    if (server->socket_no < 0) {
+    server->socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (server->socket < 0) {
         Fatal("Couldn't get a socket (%s).", get_last_error().string);
     }
 
     // Set SO_REUSEADDR because we want to run this program frequently during development.
     // Otherwise the kernel holds onto our address/port combo after our program finishes.
-    int r = setsockopt(server->socket_no, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
+    int r = setsockopt(server->socket, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
     if (r < 0) {
         Fatal("Couldn't set socket options (%s).", get_last_error().string);
     }
 
-    set_blocking(server->socket_no, false);
+    set_blocking(server->socket, false);
 
     struct sockaddr_in socket_addr = {
         .sin_family   = AF_INET,
@@ -620,13 +616,13 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
         .sin_addr     = {htonl(server->address)},
     };
 
-    r = bind(server->socket_no, (struct sockaddr const *)&socket_addr, sizeof(socket_addr));
+    r = bind(server->socket, (struct sockaddr const *)&socket_addr, sizeof(socket_addr));
     if (r < 0) {
         Fatal("Couldn't bind socket (%s).", get_last_error().string);
     }
 
     int QUEUE_LENGTH = 32;
-    r = listen(server->socket_no, QUEUE_LENGTH);
+    r = listen(server->socket, QUEUE_LENGTH);
     if (r < 0) {
         Fatal("Couldn't listen on socket (%s).", get_last_error().string);
     }
@@ -643,8 +639,8 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
         Fatal("Couldn't mask SIGINT (%s).", get_error_info(r).string);
     }
 
-    server->sigint_file_no = signalfd(-1, &signal_mask, SFD_NONBLOCK);
-    if (server->sigint_file_no == -1) {
+    server->interrupt_handle = signalfd(-1, &signal_mask, SFD_NONBLOCK);
+    if (server->interrupt_handle == -1) {
         Fatal("Couldn't create a file descriptor to handle SIGINT (%s).", get_last_error().string);
     }
 
@@ -655,15 +651,15 @@ Server *create_server(u32 address, u16 port, bool verbose, Memory_context *conte
     server->work_queue = create_queue(context);
 
     server->worker_threads = (pthread_t_array){.context = context};
-    int NUM_WORKER_THREADS = 2; //|Todo: Put this somewhere else.
+    int NUM_WORKER_THREADS = 4; //|Todo: Make this configurable or find out how many processors the computer has.
     for (int i = 0; i < NUM_WORKER_THREADS; i++) {
-        int r = pthread_create(Add(&server->worker_threads), NULL, thread_start, server);
+        int r = pthread_create(Add(&server->worker_threads), NULL, worker_thread_routine, server);
         if (r) {
             Fatal("Thread creation failed (%s).", get_error_info(r).string);
         }
     }
 
-    r = pipe(server->worker_pipe_nos);
+    r = pipe(server->worker_pipe);
     if (r == -1) { //|Consistency: (== -1) or (< 0)?
         Fatal("Couldn't create a pipe (%s).", get_last_error().string);
     }
@@ -683,16 +679,23 @@ void add_route(Server *server, enum HTTP_method method, char *path_pattern, Requ
 
 void start_server(Server *server)
 {
-    // An array of file descriptors to poll.
+    //
+    // The pollfds array is both the array of file descriptors passed to poll() and the authoritative list
+    // of the clients currently owned by the main thread. The main thread initialises a memory context for
+    // new clients and then passes them to worker threads via the server.work_queue. Until a worker thread
+    // sends the client pointer back to the server via the worker pipe, it owns (i.e. can modify) the
+    // Client struct and the client's memory context. Separately the server maintains server.clients, a
+    // hash table containing all open connections, keyed by the file descriptors of the open sockets. This
+    // hash table is not threadsafe and should never be accessed by the worker threads.
+    //
     Array(struct pollfd) pollfds = {.context = server->context};
-    // The file descriptor that lets us know when we've received a SIGINT.
-    *Add(&pollfds) = (struct pollfd){.fd = server->sigint_file_no, .events = POLLIN};
-    // The server's main socket for new connections.
-    *Add(&pollfds) = (struct pollfd){.fd = server->socket_no, .events = POLLIN};
-    // The pipe that the worker threads use to communicate with us.
-    *Add(&pollfds) = (struct pollfd){.fd = server->worker_pipe_nos[0], .events = POLLIN};
-    // Note that we will iterate backwards when checking the returned events, and we'll break once we've processed all the events.
-    // So we put the SIGINT file descriptor first because it rarely needs to be checked.
+
+    // The first three members of this array don't change. Note that we will iterate backwards when checking
+    // poll events, so we put the SIGINT handle first because it rarely needs to be checked.
+    *Add(&pollfds) = (struct pollfd){.fd = server->interrupt_handle, .events = POLLIN};
+    *Add(&pollfds) = (struct pollfd){.fd = server->socket,           .events = POLLIN};
+    *Add(&pollfds) = (struct pollfd){.fd = server->worker_pipe[0],   .events = POLLIN};
+
     s64 non_client_pollfds_count = pollfds.count; // Any other elements in this array are open client connections.
 
     bool server_should_stop = false;
@@ -719,31 +722,25 @@ void start_server(Server *server)
             else  num_events -= 1;
 
             if (pollfd->revents & (POLLERR|POLLHUP|POLLNVAL)) {
-                if (server->verbose) {
-                    if (pollfd->revents & POLLERR)   printf("POLLERR on socket %d.\n", pollfd->fd);
-                    if (pollfd->revents & POLLHUP)   printf("POLLHUP on socket %d.\n", pollfd->fd);
-                    if (pollfd->revents & POLLNVAL)  printf("POLLNVAL on socket %d.\n", pollfd->fd);
-                }
-
                 Client *client = *Get(&server->clients, pollfd->fd);
                 close_and_delete_client(server, client);
                 array_unordered_remove_by_index(&pollfds, pollfd_index);
                 continue;
             }
 
-            if (pollfd->fd == server->worker_pipe_nos[0]) {
+            if (pollfd->fd == server->worker_pipe[0]) {
                 // A worker thread is letting us know that they've finished with a client (for now).
                 Client *client;
-                s64 num_bytes_read = read(server->worker_pipe_nos[0], &client, sizeof(client));
+                s64 num_bytes_read = read(server->worker_pipe[0], &client, sizeof(client));
                 if (num_bytes_read == -1) {
                     Fatal("We couldn't read from the worker pipe (%s).\n", get_last_error().string);
                 } //|Todo: Make sure we read the whole pointer.
-                assert(*Get(&server->clients, client->socket_no) == client);
+                assert(*Get(&server->clients, client->socket) == client);
 
                 if (client->phase == READY_TO_CLOSE) {
                     close_and_delete_client(server, client);
                 } else {
-                    struct pollfd pollfd = {.fd = client->socket_no};
+                    struct pollfd pollfd = {.fd = client->socket};
 
                     if (client->phase == PARSING_REQUEST)     pollfd.events |= POLLIN;
                     else if (client->phase == SENDING_REPLY)  pollfd.events |= POLLOUT;
@@ -754,40 +751,40 @@ void start_server(Server *server)
                 continue;
             }
 
-            if (pollfd->fd == server->socket_no) {
+            if (pollfd->fd == server->socket) {
                 // A new connection has occurred.
                 assert(server_should_stop == false);
 
                 struct sockaddr_in client_socket_addr; // This will be initialised by accept().
                 socklen_t client_socket_addr_size = sizeof(client_socket_addr);
 
-                int client_socket_no = accept(server->socket_no, (struct sockaddr *)&client_socket_addr, &client_socket_addr_size);
-                if (client_socket_no < 0) {
+                int client_socket = accept(server->socket, (struct sockaddr *)&client_socket_addr, &client_socket_addr_size);
+                if (client_socket < 0) {
                     Fatal("poll() said we could read from our main socket, but we couldn't get a new connection (%s).", get_last_error().string);
                 }
 
-                set_blocking(client_socket_no, false);
+                set_blocking(client_socket, false);
 
                 Client *client = New(Client, server->context);
-                init_client(client, new_context(server->context), client_socket_no, current_time);
+                init_client(client, new_context(server->context), client_socket, current_time);
 
-                assert(!IsSet(&server->clients, client_socket_no));
-                *Set(&server->clients, client_socket_no) = client;
+                assert(!IsSet(&server->clients, client_socket));
+                *Set(&server->clients, client_socket) = client;
                 add_to_queue(server->work_queue, client);
                 continue;
             }
 
-            if (pollfd->fd == server->sigint_file_no) {
+            if (pollfd->fd == server->interrupt_handle) {
                 // We've received a SIGINT.
                 struct signalfd_siginfo info; // |Cleanup: We don't do anything with this.
-                read(server->sigint_file_no, &info, sizeof(info));
+                read(server->interrupt_handle, &info, sizeof(info));
 
                 server_should_stop = true;
 
                 // In the future, don't poll the SIGINT file descriptor or the server's socket listening for new connections.
-                assert(pollfds.data[0].fd == server->sigint_file_no);
+                assert(pollfds.data[0].fd == server->interrupt_handle);
                 pollfds.data[0].events = 0;
-                assert(pollfds.data[1].fd == server->socket_no);
+                assert(pollfds.data[1].fd == server->socket);
                 pollfds.data[1].events = 0;
                 continue;
             }
@@ -832,7 +829,7 @@ void start_server(Server *server)
     }
 
     // Close the server's main socket. |Cleanup: Do this earlier?
-    bool closed = !close(server->socket_no);
+    bool closed = !close(server->socket);
     if (!closed) {
         Fatal("We couldn't close our own socket (%s).", get_last_error().string);
     }
@@ -852,7 +849,8 @@ Response serve_file_insecurely(Request *request, Memory_context *context)
 
     u8_array *file = load_binary_file(path, context);
     if (!file) {
-        return (Response){404, .body = "We couldn't find that file.\n"};
+        char static body[] = "We couldn't find that file.\n";
+        return (Response){404, .body=body, .size=lengthof(body)};
     }
 
     char *file_extension = NULL;
@@ -886,7 +884,6 @@ Response serve_404(Request *request, Memory_context *context)
 
     return (Response){
         .status  = 404,
-        .headers = NULL,
         .body    = (u8 *)body,
         .size    = lengthof(body),
     };

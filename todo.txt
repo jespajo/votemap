@@ -14,8 +14,8 @@ To complete V2:
         Add cities and suburbs to the labels (depending on the zoom level).
     Add some roads and rivers.
     Add the polling booths.
-    Move to votemap-prod container with NGINX load-balancing.
     Don't show the labels until the map is showing the correct election's vertices.
+    Revert to the default view when the user presses escape.
 
 ---
 

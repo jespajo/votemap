@@ -7,7 +7,7 @@
 #include "../strings.h"
 #include "../system.h"
 
-const double PI = 4*atan(1);
+const double PI = 3.14159265358979323846;
 
 typedef struct Edge     Edge;
 typedef Map(s32, Edge)  Topology;
