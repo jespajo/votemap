@@ -2,21 +2,30 @@
 
 #include "basic.h"
 
-s64 round_up_pow2(s64 num)
+bool is_power_of_two(s64 x)
 {
-    assert(num >= 0);
-    assert(num <= (INT64_MAX >> 1));
+    if (x <= 0)  return false;
 
-    s64 result = 1;
-
-    while (result < num)  result <<= 1;
-
-    return result;
+    return !(x & (x - 1));
 }
 
-bool is_power_of_two(s64 num)
+s64 round_up_pow2(s64 x)
 {
-    return num == round_up_pow2(num);
+    assert(x >= 0);
+
+    if (is_power_of_two(x))  return x;
+
+    // Right-propagate the leftmost 1-bit.
+    x |= (x >> 1);
+    x |= (x >> 2);
+    x |= (x >> 4);
+    x |= (x >> 8);
+    x |= (x >> 16);
+    x |= (x >> 32);
+
+    assert(x < INT64_MAX);
+
+    return x + 1;
 }
 
 void log_error_(char *file, int line, char *format, ...)

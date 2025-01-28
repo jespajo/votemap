@@ -397,10 +397,9 @@ static bool send_reply(Client *client)
 // If there is an error, set client->phase to READY_TO_CLOSE and return false.
 {
     //
-    // When we receive a request from a client, we store it in client.message. But our reply is
-    // split across two buffers: client.reply_header and client.response.body. We keep the header
-    // separate because the body is created first (by the request handler) and the header second.
-    // So to put them both into a contiguous buffer would require copying the body.
+    // Our reply is split across two buffers: client.reply_header and client.response.body. We keep them
+    // separate because the body is created first (by the request handler) and the header comes after that.
+    // So if we wanted to put them both into one buffer, we'd have to copy the body.
     //
     char_array *reply_header   = &client->reply_header;
     Response   *response       = &client->response;

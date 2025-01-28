@@ -130,8 +130,6 @@ PG_result *query_database(PG_client *client, char *query, string_array *params, 
     u8_array *cache_file = load_binary_file(cache_file_name, ctx);
 
     if (cache_file) {
-        printf("Found cache file %s.\n", cache_file_name);
-
         PG_result *result = New(PG_result, ctx);
         result->columns = (int_dict){.context = ctx};
         result->rows    = (u8_array3){.context = ctx};
@@ -216,8 +214,6 @@ PG_result *query_database(PG_client *client, char *query, string_array *params, 
 
         return result;
     }
-
-    printf("No cache file found. Making query.\n");
 
     // Make the query and parse the result.
     PG_result *result = query_database_uncached(client, query, params, ctx);

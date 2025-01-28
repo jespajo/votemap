@@ -8,10 +8,10 @@ cflags += -Wno-unused
 cflags += -std=c99
 cflags += -g3
 #cflags += -O2
+#cflags += -DNDEBUG
 cflags += -MMD -MP
 cflags += -MT bin/$*.o
 cflags += -o $@
-#cflags += -DNDEBUG
 cflags += -I/usr/include/postgresql
 
 ifeq ($(cc),gcc)
@@ -20,13 +20,13 @@ endif
 
 lflags += -o $@
 lflags += -lm
+lflags += -lpthread
 
 # |Cleanup: Surely all this isn't necessary to link with Postgres?
 lflags += -L/usr/local/src/postgresql-14.8/build/src/interfaces/libpq
 lflags += -L/usr/local/src/postgresql-14.8/build/src/common
 lflags += -L/usr/local/src/postgresql-14.8/build/src/port
 lflags += -Wl,-Bstatic -lpq -lpgcommon -lpgport -Wl,-Bdynamic
-lflags += -lpthread
 
 sources    := $(shell find src -type f)
 non_mains  := $(shell grep -L '^int main' $(sources))
