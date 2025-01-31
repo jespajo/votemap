@@ -353,16 +353,19 @@ static Request_handler *find_request_handler(Server *server, Client *client)
 
         if (route->method != request->method)  continue;
 
-        bool match = match_regex(request->path.data, request->path.count, route->path_regex, &request->captures);
-        if (!match)  continue;
+        Match *match = run_regex(route->path_regex, request->path.data, request->path.count, client->context);
+        if (match->success) {
+            request->path_params = copy_capture_groups(match, client->context);
 
-        return route->handler;
+            return route->handler;
+        }
     }
+
     return NULL;
 }
 
 static void print_response_headers(Client *client)
-// Print the headers into a buffer.
+// Print the headers into the client->reply_header buffer.
 {
     Response   *response     = &client->response;
     char_array *reply_header = &client->reply_header;
@@ -461,7 +464,6 @@ static void init_client(Client *client, Memory_context *context, s32 socket, s64
 
     client->request.path      = (char_array){.context = context};
     client->request.query     = (string_dict){.context = context};
-    client->request.captures  = (Captures){.context = context}; //|Cleanup: Once we change the match_regex() signature, we won't need to initialise .captures here.
 
     client->response.headers  = (string_dict){.context = context};
 

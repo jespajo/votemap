@@ -322,7 +322,7 @@ Response serve_districts(Request *request, Memory_context *context)
 
     // Get the election ID from the request path and add it to the SQL query parameters.
     {
-        char *election = request->captures.data[0];
+        char *election = request->path_params.data[0];
         assert(election);
 
         *Add(&params) = election;
@@ -398,7 +398,7 @@ Response serve_seats_won(Request *request, Memory_context *context)
 
     string_array params = {.context = ctx};
     {
-        char *election = request->captures.data[0];  assert(election);
+        char *election = request->path_params.data[0];  assert(election);
         *Add(&params) = election;
     }
 
@@ -453,10 +453,10 @@ Response serve_contest_votes(Request *request, Memory_context *context)
 
     string_array params = {.context = ctx};
     {
-        char *election = request->captures.data[0];  assert(election);
+        char *election = request->path_params.data[0];  assert(election);
         *Add(&params) = election;
 
-        char *district = request->captures.data[1];  assert(district);
+        char *district = request->path_params.data[1];  assert(district);
         *Add(&params) = district;
     }
 

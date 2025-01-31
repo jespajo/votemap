@@ -19,6 +19,7 @@ typedef Array(u8_array2)     u8_array3;
 typedef Array(char *)        string_array; // An array of null-terminated strings.
 typedef Array(int)           int_array;
 typedef Array(s16)           s16_array;
+typedef Array(s64)           s64_array;
 
 void *maybe_grow_array(void *data, s64 *limit, s64 count, u64 unit_size, Memory_context *context);
 void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memory_context *context);

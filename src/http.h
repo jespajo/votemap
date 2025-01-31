@@ -38,8 +38,8 @@ enum HTTP_method {GET=1, POST}; // We can add HTTP_ prefixes to these later if w
 struct Request {
     enum HTTP_method        method;
     char_array              path;
-    Captures                captures;        // Capture groups from applying the route's path_regex to the request path.
-    string_dict             query;
+    string_array            path_params;
+    string_dict             query;//|Todo: Rename query_params.
 };
 
 struct Response {
