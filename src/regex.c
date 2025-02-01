@@ -60,7 +60,7 @@ struct Regex_instruction {
 static Regex *parse_error(char *pattern, s64 index)
 //|Todo: Change to `void report_parse_error(char *pattern, char *fail_char, char *message)`.
 {
-    char out_data[12] = {0};
+    char out_data[256] = {0};
     char_array out = {.data = out_data, .limit = sizeof(out_data)};
 
     if (isprint(pattern[index])) {

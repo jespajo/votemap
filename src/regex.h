@@ -1,7 +1,7 @@
 //
 // Usage:
 //
-//      Regex *regex = compile_regex("(\d+)-(\d+)-(\d+)", context);
+//      Regex *regex = compile_regex("(\\d+)-(\\d+)-(\\d+)", context);
 //
 //      char *test_string = "123-456-789";
 //
