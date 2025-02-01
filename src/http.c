@@ -149,21 +149,6 @@ static bool receive_message(Client *client)
     return we_received_data;
 }
 
-static u8 hex_to_byte(char c1, char c2)
-// Turn two hexadecimal digits into a byte of data. E.g. hex_to_byte('8', '0') -> 128 (0x80).
-{
-    // Assume the caller has already validated the characters with isxdigit().
-    assert(isxdigit(c1) && isxdigit(c2));
-
-    c1 |= 0x20; // OR-ing with 0x20 makes ASCII letters lowercase and doesn't affect ASCII numbers.
-    c2 |= 0x20;
-
-    u8 x1 = c1 <= '9' ? c1-'0' : c1-'a'+10;
-    u8 x2 = c2 <= '9' ? c2-'0' : c2-'a'+10;
-
-    return (u8)((x1 << 4) | x2);
-}
-
 // These are the characters that we treat just like regular letters and numbers when we come across them
 // in paths and query strings. Everything else either has a special meaning or is not allowed.
 #define ALLOWED_URI_CHARS "-._~/,+"

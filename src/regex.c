@@ -1,10 +1,8 @@
 //|Speed:
-//| Experiment with having each Thread being initialised with an array of saves (once the number of capture groups is on the Regex struct, we'll know the size this array needs to be). Test the impact on performance. In other words, do the saves the way Russ Cox does them instead of with your linked list.
-//| See if there's a better way to deduplicate the next_threads array. Cox seems to just store the last-added instruction as a global variable and make sure he doesn't add it again. But I don't understand how this is enough---what about duplicates added non-consecutively?
-//| Merge adjacent CHAR instructions into a STRING or LITERAL instruction.
+//| Merge adjacent CHAR instructions into a STRING instruction.
 //| Convert NFAs to DFAs.
 
-#include <ctype.h> // isprint()
+#include <ctype.h>
 
 #include "regex.h"
 #include "strings.h"
@@ -20,8 +18,9 @@
     } while (0)
 
 enum Opcode {
-    CHAR = 1,
-    ASCII_CLASS,
+    INVALID,
+    CHAR,
+    BYTE_CLASS,
     ANY,
     JUMP,
     SPLIT,
@@ -46,7 +45,7 @@ struct Regex_instruction {
         // instruction's index, and replace them with absolute pointers just before returning.
         s64                rel_next[2];
 
-        // If opcode == ASCII_CLASS, a bitfield describing the characters in the class.
+        // If opcode == BYTE_CLASS, a bitfield describing the characters in the class.
         // There is one bit for each byte in the range 0--127 (i.e. ASCII characters).
         u8                 class[128/8];
 
@@ -59,24 +58,108 @@ struct Regex_instruction {
 };
 
 static Regex *parse_error(char *pattern, s64 index)
+//|Todo: Change to `void report_parse_error(char *pattern, char *fail_char, char *message)`.
 {
-    log_error("Unexpected character in regex pattern at index %ld: '%c'.", index, pattern[index]);
+    char out_data[12] = {0};
+    char_array out = {.data = out_data, .limit = sizeof(out_data)};
+
+    if (isprint(pattern[index])) {
+        append_string(&out, "Unexpected character in regex pattern at index %ld:\n", index);
+        append_string(&out, "    /%s/\n", pattern);
+        append_string(&out, "     ");
+        for (s64 i = 0; i < index; i++)  *Add(&out) = ' ';
+        append_string(&out, "^\n");
+    } else {
+        append_string(&out, "Unexpected byte in regex pattern at index %ld: '%#02x'\n", index, pattern[index]);
+    }
+
+    log_error(out_data);
     return NULL;
 }
 
 static void negate_ascii_class(Instruction *inst)
 {
-    assert(inst->opcode == ASCII_CLASS);
+    assert(inst->opcode == BYTE_CLASS);
     for (int i = 0; i < countof(inst->class); i++)  inst->class[i] = ~inst->class[i];
 }
 
-static char *copy_string(char *source, Memory_context *context) //|Copypasta from map.c
+static Instruction get_token(char *pattern, char **end)
+// Read up to three characters from the pattern and return a CHAR or BYTE_CLASS instruction. Assume that special
+// characters like '.' and '|' represent themselves literally, regardless of whether they are escaped (useful for
+// inside square brackets). Return an INVALID instruction if we read a malformed escape sequence or a weird byte
+// (anything other than printable ASCII). Point *end at the character after the last one we parse.
 {
-    int length = strlen(source);
-    char *copy = alloc(length+1, sizeof(char), context);
-    memcpy(copy, source, length);
-    copy[length] = '\0';
-    return copy;
+    Instruction inst = {INVALID};
+
+    char *p = pattern;
+
+    if (!isprint(*p))  return inst;
+
+    if (*p == '\\') {
+        p += 1;
+        switch (*p) {
+            case 'd':
+            case 'D':
+                inst.opcode = BYTE_CLASS;
+                for (char d = '0'; d <= '9'; d++)  inst.class[d/8] |= (1 << (d%8));
+                if (*p == 'D')  negate_ascii_class(&inst);
+                p += 1;
+                break;
+            case 's':
+            case 'S':
+                inst.opcode = BYTE_CLASS;
+                for (char *s = WHITESPACE; *s; s++)  inst.class[*s/8] |= (1 << (*s%8));
+                if (*p == 'S')  negate_ascii_class(&inst);
+                p += 1;
+                break;
+            case 'w':
+            case 'W':
+                inst.opcode = BYTE_CLASS;
+                for (char w = 'A'; w <= 'Z'; w++)  inst.class[w/8] |= (1 << (w%8));
+                for (char w = 'a'; w <= 'z'; w++)  inst.class[w/8] |= (1 << (w%8));
+                for (char w = '0'; w <= '9'; w++)  inst.class[w/8] |= (1 << (w%8));
+                inst.class['_'/8] |= (1 << ('_'%8));
+                if (*p == 'W')  negate_ascii_class(&inst);
+                p += 1;
+                break;
+            case 't':
+                inst.opcode = CHAR;
+                inst.c = '\t';
+                p += 1;
+                break;
+            case 'n':
+                inst.opcode = CHAR;
+                inst.c = '\n';
+                p += 1;
+                break;
+            case 'x':
+                p += 1;
+                if (!isxdigit(*p) || !isxdigit(*(p+1))) {
+                    // Break (and return INVALID) because "\x" must be followed by two hexadecimal digits.
+                    break;
+                }
+                inst.opcode = CHAR;
+                inst.c = hex_to_byte(*p, *(p+1));
+                p += 2;
+                break;
+            default:
+                if (!Contains("()*?+[]{}.\\-^$", *p)) {
+                    // Break (and return INVALID) because it doesn't make sense to escape any other characters.
+                    break;
+                }
+                inst.opcode = CHAR;
+                inst.c = *p;
+                p += 1;
+        }
+    } else {
+        inst.opcode = CHAR;
+        inst.c = *p;
+        p += 1;
+    }
+
+    if (end)  *end = p;
+
+    return inst;
 }
 
 Regex *compile_regex(char *pattern, Memory_context *context)
@@ -119,8 +202,7 @@ Regex *compile_regex(char *pattern, Memory_context *context)
 
     while (*p) {
         switch (*p) {
-            case '(':
-              {
+            case '(': {
                 if (shift_index-shift_stack >= countof(shift_stack)-1)  return parse_error(pattern, p-pattern); // The expression exceeds the maximum of nested capture groups.
 
                 s64   save_id   = 2*re->groups.count;
@@ -153,9 +235,8 @@ Regex *compile_regex(char *pattern, Memory_context *context)
                 shift_index += 1;
                 p += 1;
                 continue;
-              }
-            case ')':
-              {
+            }
+            case ')': {
                 s64 start_index = *(shift_index-1) - 1;
                 Instruction save_start = re->program.data[start_index];
                 if (save_start.opcode != SAVE || save_start.save_id % 2) {
@@ -182,9 +263,8 @@ Regex *compile_regex(char *pattern, Memory_context *context)
                 *shift_index -= 1;
                 p += 1;
                 continue;
-              }
-            case '|':
-              {
+            }
+            case '|': {
                 s64 shift_count = re->program.count - *(shift_index-1);
                 Add(&re->program);
                 for (s64 i = re->program.count-1; i > *(shift_index-1); i--)  re->program.data[i] = re->program.data[i-1];
@@ -199,9 +279,8 @@ Regex *compile_regex(char *pattern, Memory_context *context)
                 *shift_index = -1;
                 p += 1;
                 continue;
-              }
-            case '*':
-              {
+            }
+            case '*': {
                 if (*shift_index < 0)  return parse_error(pattern, p-pattern);
 
                 s64 shift_count = re->program.count - *shift_index;
@@ -221,9 +300,8 @@ Regex *compile_regex(char *pattern, Memory_context *context)
                 *shift_index = -1;
                 p += 1;
                 continue;
-              }
-            case '+':
-              {
+            }
+            case '+': {
                 if (*shift_index < 0)  return parse_error(pattern, p-pattern);
 
                 s64 inst_count = re->program.count - *shift_index;
@@ -239,9 +317,8 @@ Regex *compile_regex(char *pattern, Memory_context *context)
                 *shift_index = -1;
                 p += 1;
                 continue;
-              }
-            case '?':
-              {
+            }
+            case '?': {
                 if (*shift_index < 0)  return parse_error(pattern, p-pattern);
 
                 s64 shift_count = re->program.count - *shift_index;
@@ -259,9 +336,8 @@ Regex *compile_regex(char *pattern, Memory_context *context)
                 *shift_index = -1;
                 p += 1;
                 continue;
-              }
-            case '{':
-              {
+            }
+            case '{': {
                 int const REPEAT_LIMIT = 100; // Meaning we accept e.g. \d{100} but not \d{101}.
 
                 if (*shift_index < 0)  return parse_error(pattern, p-pattern);
@@ -349,19 +425,17 @@ Regex *compile_regex(char *pattern, Memory_context *context)
 
                 *shift_index = -1;
                 continue;
-              }
-            case '.':
-              {
+            }
+            case '.': {
                 *Add(&re->program) = (Instruction){ANY};
 
                 *shift_index = re->program.count-1;
                 p += 1;
                 continue;
-              }
-            case '[':
-              {
+            }
+            case '[': {
                 Instruction *inst = Add(&re->program);
-                *inst = (Instruction){ASCII_CLASS};
+                *inst = (Instruction){BYTE_CLASS};
 
                 bool negate = false;
                 p += 1;
@@ -370,67 +444,41 @@ Regex *compile_regex(char *pattern, Memory_context *context)
                     p += 1;
                 }
 
-                do { //|Cleanup: This is too ugly to live...
-                    if (*p == '\0')  return parse_error(pattern, p-pattern);
+                while (*p != ']') { //|Todo: Do we care about rejecting empty square brackets?
+                    Instruction token = get_token(p, &p);
+                    if (token.opcode == INVALID)  return parse_error(pattern, p-pattern);
 
-                    if (*(p+1) == '-') {
-                        char range_start = *p;
-                        char range_end   = *(p+2); //|Fixme: What if this is a special character? What if it's negative?
-                        if (range_start >= range_end)  return parse_error(pattern, p-pattern);
-                        for (s64 i = 0; i < range_end-range_start; i++) {
-                            u8 byte_index = ((u8)range_start + i)/8;
-                            u8 bit_index  = ((u8)range_start + i)%8;
-                            inst->class[byte_index] |= (1 << bit_index);
-                        }
-                        p += 2;
+                    if (*p == '-') {
+                        if (token.opcode != CHAR)  return parse_error(pattern, p-pattern);
+
+                        Instruction next = get_token(p+1, &p);
+                        if (next.opcode != CHAR)  return parse_error(pattern, p-pattern);
+                        if (next.c <= token.c)    return parse_error(pattern, p-pattern);
+
+                        for (char c = token.c; c <= next.c; c++)  inst->class[c/8] |= (1 << (c%8));
+                    } else if (token.opcode == CHAR) {
+                        inst->class[token.c/8] |= (1 << (token.c%8));
                     } else {
-                        u8 byte_index = ((u8)*p)/8;
-                        u8 bit_index  = ((u8)*p)%8;
-                        inst->class[byte_index] |= (1 << bit_index);
-                        p += 1;
+                        assert(token.opcode == BYTE_CLASS);
+                        for (int i = 0; i < countof(inst->class); i++)  inst->class[i] |= token.class[i];
                     }
-                } while (*p != ']');
+                }
 
                 if (negate)  negate_ascii_class(inst);
 
                 p += 1;
                 *shift_index = re->program.count-1;
                 continue;
-              }
-            case '\\':
-              {
-                if (*(p+1) == 'd' || *(p+1) == 'D') {                   // \d or \D
-                    Instruction *inst = Add(&re->program);
-                    *inst = (Instruction){ASCII_CLASS};
-                    for (char d = '0'; d <= '9'; d++)  inst->class[d/8] |= (1<<(d%8));
-                    if (*(p+1) == 'D')  negate_ascii_class(inst);
-                } else if (*(p+1) == 's' || *(p+1) == 'S') {            // \s or \S
-                    Instruction *inst = Add(&re->program);
-                    *inst = (Instruction){ASCII_CLASS};
-                    for (char *s = WHITESPACE; *s; s++)  inst->class[(*s)/8] |= (1<<((*s)%8));
-                    if (*(p+1) == 'S')  negate_ascii_class(inst);
-                } else if (*(p+1) == 't') {                             // \t
-                    *Add(&re->program) = (Instruction){CHAR, .c = '\t'};
-                } else if (*(p+1) == 'n') {                             // \n
-                    *Add(&re->program) = (Instruction){CHAR, .c = '\n'};
-                } else if (Contains("()*?+[]{}.\\^$", *(p+1))) {        // escaped special character
-                    *Add(&re->program) = (Instruction){CHAR, .c = *(p+1)};
-                } else {
-                    return parse_error(pattern, p-pattern);
-                }
+            }
+            default: {
+                Instruction inst = get_token(p, &p);
+                if (inst.opcode == INVALID)  return parse_error(pattern, p-pattern);
+
+                *Add(&re->program) = inst;
 
                 *shift_index = re->program.count-1;
-                p += 2;
                 continue;
-              }
-            default:
-              {
-                *Add(&re->program) = (Instruction){CHAR, .c = *p};
-
-                *shift_index = re->program.count-1;
-                p += 1;
-                continue;
-              }
+            }
         }
     }
 
@@ -487,9 +535,9 @@ static void log_regex(Regex *regex) //|Debug
                 append_string(&out, "%-14s", "CHAR");
                 append_string(&out, "'%c'", inst->c);
                 break;
-            case ASCII_CLASS:
+            case BYTE_CLASS:
               {
-                append_string(&out, "%-14s", "ASCII_CLASS");
+                append_string(&out, "%-14s", "BYTE_CLASS");
                 int j = 0;
                 bool prev_is_set = false;
                 while (j < 128) {
@@ -536,88 +584,91 @@ static void log_regex(Regex *regex) //|Debug
 }
 
 Match *run_regex(Regex *regex, char *string, s64 string_length, Memory_context *context)
-// |Todo:
-// - The captures parameter is confusing. We should just return a struct with .is_match and .captures members. Then we could easily create a bool-returning is_match() function.
-// - The caller should provide two contexts: a scratch context for temporary allocations (what we create tmp_ctx for) and another for allocations made to supply .captures. This would speed things up and give the caller control over when they want to deallocate. The scratch context can be optional (in which case we'd probably create and delete tmp_ctx like we do currently) and the captures context only needs to be provided if the caller wants to get the captures. We could make a macro to avoid the ugliness of common ",NULL,NULL)" trailing arguments. I think most of the time the caller will want to supply the scratch context themselves, so that should go first.
-// - The Regex struct should have a .num_capture_groups member.
-// - Saves should be stored in an array, with .prev_index members, rather than a linked list.
-// - Rename string -> data once we implement \x20 type stuff.
+// This function uses the provided context both for the returned data and for temporary allocations. It doesn't
+// clean up its temporary allocations. We could add an optional temp_context argument to fix this if needed.
 {
-    Regex_program *program = &regex->program;
-    string_array  *groups  = &regex->groups;
-
-    // Inside this function, we store saves as a singly-linked list.
+    // When we come across a SAVE instruction, we create a Save struct to record the fact. It works like a linked list:
+    // a thread references the Save it saw most recently, which references the Save the thread saw before that and so on.
+    // We don't want to allocate every Save individually, so we put them in an array. Hence, since the array might move,
+    // we use indexes rather than pointers.
     typedef struct Save Save;
+    typedef Array(Save) Save_array;
     struct Save {
-        Save *prev;
-        s64   id;
-        s64   offset; // The index of the character in the source string we were up to when we encountered the SAVE instruction.
+        s64 id;                 // The SAVE instruction's save_id.
+        s64 prev_save_index;    // The index, in the saves array, of the Save previously encountered by the thread.
+        s64 match_offset;       // The index of the character we were up to when we saw the SAVE instruction.
     };
 
     // Russ Cox calls these "threads", in the sense that the compiled regex executes in a virtual machine, which has multiple
     // parallel instructions being executed for each letter in the string being tested. Where the metaphor fails, though, is
-    // that the order of execution of the regex threads is controlled, as it must be for greedy matching to work.
+    // that the order of execution of the regex threads is deterministic, as it must be for greedy matching to work.
     typedef struct Thread Thread;
     typedef Array(Thread) Thread_array;
     struct Thread {
         Instruction *instruction;
-        Save        *saves;
+        s64          last_save_index;
     };
 
     Match *match = New(Match, context);
 
-    Save *saves = NULL;
+    // These are the temporary arrays that we don't clean up. |Leak
+    Thread_array cur_threads  = {.context = context};
+    Thread_array next_threads = {.context = context};
+    Save_array   saves        = {.context = context};
 
-    // Create a child memory context for temporary data. |Speed!
-    Memory_context *tmp_ctx = new_context(context);
+    s64 last_save_index = -1;
 
-    Thread_array cur_threads  = {.context = tmp_ctx};
-    Thread_array next_threads = {.context = tmp_ctx};
-
-    *Add(&cur_threads) = (Thread){program->data};
+    *Add(&cur_threads) = (Thread){regex->program.data, -1};
 
     for (s64 string_index = 0; string_index <= string_length; string_index++) {
         char c = string[string_index];
 
         while (cur_threads.count) {
             Thread thread = cur_threads.data[--cur_threads.count]; // Pop.
-            Instruction *inst = thread.instruction;
 
-            switch (inst->opcode) {
+            switch (thread.instruction->opcode) {
                 case CHAR:
-                    if (c == inst->c)  *Add(&next_threads) = (Thread){inst+1, thread.saves};
+                    if (c != thread.instruction->c)  break;
+                    thread.instruction += 1;
+                    *Add(&next_threads) = thread;
                     break;
-                case ASCII_CLASS:
-                  {
-                    u8 byte_index = ((u8)c)/8;
-                    u8 bit_index  = ((u8)c)%8;
-                    bool is_set   = inst->class[byte_index] & (1<<(bit_index));
-                    if (is_set)  *Add(&next_threads) = (Thread){inst+1, thread.saves};
+                case BYTE_CLASS: {
+                    bool is_set = thread.instruction->class[c/8] & (1 << (c%8));
+                    if (!is_set)  break;
+                    thread.instruction += 1;
+                    *Add(&next_threads) = thread;
                     break;
-                  }
+                }
                 case ANY:
-                    *Add(&next_threads) = (Thread){inst+1, thread.saves};
+                    thread.instruction += 1;
+                    *Add(&next_threads) = thread;
                     break;
                 case JUMP:
-                    *Add(&cur_threads) = (Thread){inst->next[0], thread.saves};
+                    thread.instruction = thread.instruction->next[0];
+                    *Add(&cur_threads) = thread;
                     break;
-                case SPLIT:
-                    *Add(&cur_threads) = (Thread){inst->next[1], thread.saves};
-                    *Add(&cur_threads) = (Thread){inst->next[0], thread.saves}; // This is the one we want to run straight away, so push it right to the top of the stack.
+                case SPLIT: {
+                    Thread t0 = {thread.instruction->next[0], thread.last_save_index};
+                    Thread t1 = {thread.instruction->next[1], thread.last_save_index};
+                    *Add(&cur_threads) = t1;
+                    *Add(&cur_threads) = t0; // This is the one we want to run straight away, so push it to the top of the stack.
                     break;
-                case SAVE:
-                  {
-                    Save *save = New(Save, tmp_ctx); //|Speed: We could store these in a tmp_ctx array. It would speed up allocation. Though it would also mean the ->prev members would become invalid pointers when the array moves.
-                    save->prev   = thread.saves;
-                    save->id     = inst->save_id;
-                    save->offset = string_index;
-                    *Add(&cur_threads) = (Thread){inst+1, save};
+                }
+                case SAVE: {
+                    Save *save = Add(&saves);
+                    save->id              = thread.instruction->save_id;
+                    save->prev_save_index = thread.last_save_index;
+                    save->match_offset    = string_index;
+
+                    thread.instruction += 1;
+                    thread.last_save_index = saves.count-1;
+                    *Add(&cur_threads) = thread;
                     break;
-                  }
+                }
                 case MATCH:
                     if (string_index != string_length)  break; // Only match if we've come to the end of the source string.
                     match->success = true;
-                    saves = thread.saves;
+                    last_save_index = thread.last_save_index;
                     cur_threads.count = 0;
                     break;
                 default:
@@ -644,42 +695,47 @@ Match *run_regex(Regex *regex, char *string, s64 string_length, Memory_context *
             }
         }
 
-        // We consumed the current threads as a stack, i.e. back to front. The lowest-priority threads executed last.
+        // We consumed the current threads as a stack, back to front. The lowest-priority threads executed last.
         // All the while, we were adding to the next_threads array. Thus the next_threads array currently has the
-        // highest-priority threads at its front. So we need to reverse the array to consume it as a stack.
+        // highest-priority threads at its front. So we need to reverse it to consume it on the next loop.
         reverse_array(&next_threads);
 
         cur_threads.count = 0;
         Swap(&cur_threads, &next_threads);
     }
 
-    if (match->success && groups->count > 0) {
-        Capture_array *captures = &match->captures;
-        *captures = (Capture_array){.context = context};
-        array_reserve(captures, groups->count);
+    if (match->success && regex->groups.count > 0) {
+        match->captures = (Capture_array){.context = context};
+        array_reserve(&match->captures, regex->groups.count);
+        memset(match->captures.data, 0, match->captures.limit*sizeof(Capture));
 
-        for (Save *save = saves; save != NULL; save = save->prev) {
-            if (save->id % 2 == 0)  continue; // Skip the start-captures.
+        while (last_save_index >= 0) {
+            Save     save    = saves.data[last_save_index];
+            Capture *capture = &match->captures.data[save.id/2];
 
-            Capture *capture = &captures->data[save->id/2];
+            if (save.id % 2) {
+                // The save.id denotes the end of a capture group.
+                if (!capture->data) {
+                    // We haven't seen this group before. Record the end of the submatch.
+                    capture->data = &string[save.match_offset];
+                }
+            } else {
+                // The save.id denotes the start of a capture group.
+                if (capture->data && !capture->length) {
+                    // We've seen the end of this group but not the start. Record the capture.
+                    // Keeping the first instance we see makes sure that an expression like
+                    // /(ab)+/ matches "ababab" but only saves the last "ab".
+                    capture->length = (capture->data - string) - save.match_offset;
+                    capture->data   = &string[save.match_offset];
 
-            // Only overwrite each NULL once. Because we are iterating over the saves backwards, this makes sure
-            // a regular expression like /(ab)+/ matches "ababab" but only saves the last "ab".
-            if (capture->data)  continue;
-
-            // Look for the corresponding start-capture. |Speed: This way of iterating isn't super cache-friendly. How can we avoid the inner loop and do just one pass?
-            Save *end   = save;
-            Save *start = end->prev;
-            while (start->id != end->id-1)  start = start->prev;
-
-            capture->data   = &string[start->offset];
-            capture->length = end->offset - start->offset;
+                    match->captures.count += 1;
+                    if (match->captures.count == regex->groups.count)  break;
+                }
+            }
+            last_save_index = save.prev_save_index;
         }
-
-        captures->count = groups->count;
+        match->captures.count = regex->groups.count;
     }
-
-    free_context(tmp_ctx);
 
     return match;
 }

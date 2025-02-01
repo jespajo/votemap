@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdarg.h>
 
 #include "strings.h"
@@ -133,4 +134,19 @@ char_array2 *split_string(char *string, s64 length, char split_char, Memory_cont
     }
 
     return result;
+}
+
+u8 hex_to_byte(char c1, char c2)
+// Turn two hexadecimal digits into a byte of data. E.g. hex_to_byte('8', '0') -> 128 (0x80).
+{
+    // The caller should have already checked the characters with isxdigit().
+    assert(isxdigit(c1) && isxdigit(c2));
+
+    c1 |= 0x20; // OR-ing with 0x20 makes ASCII letters lowercase and doesn't affect ASCII numbers.
+    c2 |= 0x20;
+
+    u8 x1 = c1 <= '9' ? c1-'0' : c1-'a'+10;
+    u8 x2 = c2 <= '9' ? c2-'0' : c2-'a'+10;
+
+    return (u8)((x1 << 4) | x2);
 }

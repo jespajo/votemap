@@ -41,6 +41,7 @@ void dealloc(void *data, Memory_context *context);
 Memory_context *new_context(Memory_context *parent);
 void free_context(Memory_context *context);
 void reset_context(Memory_context *context);
+char *copy_string(char *source, Memory_context *context);
 void check_context_integrity(Memory_context *context);
 
 //

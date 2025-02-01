@@ -10,6 +10,7 @@ bool string_contains_char(char const *string, s64 length, char c);
 char *trim_left_(char *string, char *trim_chars, int num_trim_chars);
 bool starts_with_(char *string, char *match, s64 match_length);
 char_array2 *split_string(char *string, s64 length, char split_char, Memory_context *context);
+u8 hex_to_byte(char c1, char c2);
 
 //
 // These macros take a static string as an argument. A static string is either

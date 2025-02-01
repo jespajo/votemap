@@ -171,15 +171,6 @@ void grow_map_if_needed(void **keys, void **vals, s64 *count, s64 *limit, u64 ke
     }
 }
 
-static char *copy_string(char *source, Memory_context *context)
-{
-    int length = strlen(source);
-    char *copy = alloc(length+1, sizeof(char), context);
-    memcpy(copy, source, length);
-    copy[length] = '\0';
-    return copy;
-}
-
 s64 set_key(void *keys, s64 *count, u64 key_size, Hash_bucket *buckets, s64 num_buckets, Memory_context *context, bool binary_mode)
 // Assume the key to set is stored in map->keys[-1]. Add the key to the map's hash table if it
 // wasn't already there and return the key's index in the map->keys array.

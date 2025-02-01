@@ -343,3 +343,181 @@ abcdefghijklmnopqr
 abc
 jklmno
 pqr
+
+/[a\d]+/
+123
+a
+b
+123aaa
+123aaab
+a1a2a3
+
+/(?<yes>ab\)cd)/
+abcd
+ab)cd
+ab\)cd
+
+/([a-z0-9_\.\-]+)@([\da-z\.\-]+)\.([a-z\.]{2,5})/
+abc@gmail.com
+hello@hotmail.com.au
+asoij
+u1234567@anu.edu.au
+anu@u1234567.edu.au
+anu@u1234567.education.au
+anu@u1234567.edu.australia
+anu@u1234567.3du...
+
+/[a.$]c(d[\[32])/
+acd3
+bcd3
+.cd3
+bcd[
+.cd[
+
+/[a.$]cd(?<a_name>([[32])+)/
+acd3
+bcd3
+.cd3
+bcd[
+.cd[[2[2[2[[
+
+/[a-z\s]+/
+ab cd ef
+99
+a    b
+no
+
+/([\d\s.]+)/
+hello
+1 2 3...
+1 2 3 hello
+
+/([\x00-a]+).*/
+A B C
+a	B (TAB)
+!!
+!no!
+WXYZ[]\]^_`abcdef
+
+/\w/
+a
+_
+-
+
+/\W/
+a
+_
+-
+
+/a\sb/
+a b
+a-b
+
+/a\Sb/
+a b
+a-b
+
+/a[\s]b/
+a b
+a-b
+
+/a[\S]b/
+a b
+a-b
+
+/.*?()ef.*/
+def
+
+/.*?a([bc]*)(c*d).*/
+abcd
+
+/(((((((((a)))))))))/
+a
+
+/a[-]?c/
+ac
+a-c
+a c
+
+#
+# Commenting these out because deno can't handle them. Our implementation is fine though.
+#
+# /(.*?.X(.+)+X.*)/
+# bbbbXcXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# bbbbXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+#
+# /(.*?.X(.+)+XX.*)/
+# bbbbXcXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# bbbbXXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+#
+# /(.*?.X(.+)+[X].*)/
+# bbbbXcXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# bbbbXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+#
+# /(.*?.X(.+)+[X][X].*)/
+# bbbbXcXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# bbbbXXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+#
+# /(.*?.XX(.+)+X.*)/
+# bbbbXXcXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# bbbbXXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+#
+# /(.*?.XX(.+)+[X].*)/
+# bbbbXXcXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# bbbbXXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+#
+# /(.*?.[X](.+)+[X].*)/
+# bbbbXcXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# bbbbXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+#
+# /(.*?.[X](.+)+[X][X].*)/
+# bbbbXcXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# bbbbXXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+#
+# /(.*?.[X][X](.+)+[X].*)/
+# bbbbXXcXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# bbbbXXXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+/[+]([^(]+)/
+li
+
+/\d<(.*?)>/
+a<>
+
+/[bcd].{2,3}aaaa/
+XbXaaaaa
+Xb\x{100}aaaaa
+
+/(.*?(a(a)|i(i))n)/
+riiaan
+
+/(X{2,}[-X]{1,4}){3,}X{2,}/
+XXX-XXX-XXX--
+
+/[ ^ a b ]/
+a
+b
+A
+^
+
+/(\d+)*?4X/
+1234X
+
+#
+# These ones, we disagree with deno but are aligned with Rust and Go.
+#
+# /(([ab]+)|([cd]+)|([ef]+))+/
+# ace
+# aceb
+# acebd
+# acebdf
+#
+# /((a)(b)(c)|(a)(b)|(a))+/
+# abcaba
+
+/((\d{3,5}-?)+)/
+123-456-789
+123-45-6789
+12345-6789
+1234--6789
+123-456-789-987-6543-210
