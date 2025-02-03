@@ -477,7 +477,7 @@ Response serve_contest_votes(Request *request, Memory_context *context)
 int main(int argc, char **argv)
 {
     u32  address = 0;       // 0.0.0.0  |Todo: Make this configurable with getaddrinfo().
-    u32  port    = 6008;
+    u16  port    = 6008;
 
     // If there is a command-line argument, take it as a port.
     if (argc > 1) {

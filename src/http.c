@@ -106,7 +106,6 @@ static Client *pop_queue(Client_queue *queue)
 
 static bool receive_message(Client *client)
 // Try to read from the client socket. Return true if we received data and there was no error or disconnection.
-// In other words return true if the caller should try to parse the received data.
 {
     char_array *message = &client->message;
     if (message->limit == 0) {
