@@ -3,8 +3,8 @@
 
 #include "array.h"
 
-char_array *get_string(Memory_context *context, char *format, ...);
-void append_string(char_array *out, char *format, ...);
+char_array *get_string(Memory_context *context, char *format, ...) PrintfLike(2);
+void append_string(char_array *out, char *format, ...) PrintfLike(2);
 void print_double(double number, char_array *out);
 bool string_contains_char(char const *string, s64 length, char c);
 char *trim_left_(char *string, char *trim_chars, int num_trim_chars);

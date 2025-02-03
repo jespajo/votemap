@@ -18,6 +18,7 @@
 #else
   #error "We couldn't identify the operating system."
 #endif
+// |Note: We conflate "OS" and "compiler". The assumption is that we're using GCC or Clang to compile on Linux and MSVC on Windows. It'd be better to separate these concepts, but that would imply that we test combinations like Clang on Windows, which we don't.
 
 typedef  uint8_t  u8;
 typedef uint16_t u16;
@@ -28,13 +29,22 @@ typedef  int16_t s16;
 typedef  int32_t s32;
 typedef  int64_t s64;
 
+#if OS == LINUX
+  // FORMAT_ARG is the index of the format-string argument, starting from 1.
+  // We assume the variadic arguments come right after the format string.
+  #define PrintfLike(FORMAT_ARG)  __attribute__((format(printf, FORMAT_ARG, FORMAT_ARG+1)))
+#else
+  #define PrintfLike(FORMAT_ARG)
+#endif
+
 s64 round_up_pow2(s64 num);
 bool is_power_of_two(s64 num);
-void log_error_(char *file, int line, char *format, ...);
+void log_error_(char *file, int line, char *format, ...) PrintfLike(3);
 
 #define log_error(...)  log_error_(__FILE__, __LINE__, __VA_ARGS__)
 
-// Our assert is the pretty much the same as the standard C one, i.e. it will be removed during compilation if NDEBUG is defined.
+// Our assert() is pretty much the same as the standard C one, in that assertions will be removed if
+// NDEBUG is defined. But they trigger a breakpoint before exiting if we're running in a debugger.
 #ifndef NDEBUG
   #if OS == LINUX
     #define Breakpoint()  __builtin_trap()

@@ -73,7 +73,7 @@ static Regex *parse_error(char *pattern, s64 index)
         append_string(&out, "Unexpected byte in regex pattern at index %ld: '%#02x'\n", index, pattern[index]);
     }
 
-    log_error(out_data);
+    log_error("%s", out_data);
     return NULL;
 }
 
@@ -514,7 +514,7 @@ static void print_address(char_array *out, void *address) //|Debug
 // Not for general use. Only prints the last 6 hexadecimal digits of the address.
 {
     u64 number = ((u64)address) & 0xffffff;
-    append_string(out, "0x%06x", number);
+    append_string(out, "0x%06lx", number);
 }
 
 static void log_regex(Regex *regex) //|Debug
