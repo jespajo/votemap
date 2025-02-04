@@ -19,7 +19,7 @@ u8_array *load_binary_file(char *file_name, Memory_context *context);
 void write_array_to_file_(void *data, u64 unit_size, s64 count, char *file_name);
 s64 get_monotonic_time();
 void set_blocking(int file_no, bool blocking);
-char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_context *context);
+void recursively_add_file_names(char *top_dir_path, s64 top_path_length, string_array *files);
 
 #define write_array_to_file(ARRAY, FILE_NAME)  \
     write_array_to_file_((ARRAY)->data, sizeof((ARRAY)->data[0]), (ARRAY)->count, (FILE_NAME))

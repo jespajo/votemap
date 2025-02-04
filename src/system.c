@@ -2,6 +2,7 @@
 // For strerror_r()    we need _POSIX_C_SOURCE >= 200112L.
 #define _POSIX_C_SOURCE 200112L
 
+#include <sys/stat.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <time.h>
@@ -35,7 +36,6 @@ char_array *load_text_file(char *file_name, Memory_context *context)
 
     FILE *file = fopen(file_name, "r");
     if (!file) {
-        log_error("Couldn't open file %s.", file_name);
         return NULL;
     }
 
@@ -62,7 +62,6 @@ u8_array *load_binary_file(char *file_name, Memory_context *context)
 
     FILE *file = fopen(file_name, "rb");
     if (!file) {
-        log_error("Couldn't open file %s.", file_name);
         return NULL;
     }
 
@@ -125,30 +124,61 @@ void set_blocking(int file_no, bool blocking)
     }
 }
 
-char_array2 *read_directory(char *dir_path, bool with_dir_prefix, Memory_context *context)
-// Return an array of char_arrays with the names of the files in the directory.
-// If with_dir_prefix is true, you get the full paths; otherwise you just get the filenames.
-// dir_path shouldn't have a trailing '/'.
+void recursively_add_file_names(char *top_path, s64 top_path_length, string_array *files)
+// Add the paths of all files we can access under the directory at top_path. Don't follow symlinks.
+// top_path can't have a trailing slash.
+// top_path_length can be zero, in which case we'll use the current directory, but we won't put "./" at the start of the paths.
 {
-    char_array2 *paths = NewArray(paths, context);
+    if (top_path_length > 0)  assert(top_path[top_path_length-1] != '/');
 
-    DIR *dir = opendir(dir_path);
+    if (top_path_length == 0)  top_path = ".";
+
+    DIR *dir = opendir(top_path);
     if (!dir) {
-        Fatal("Couldn't open directory %s (%s).", dir_path, get_last_error().string);
+        Fatal("Couldn't open directory %s: %s", top_path, get_last_error().string);
     }
 
     while (true) {
+        errno = 0;
         struct dirent *dirent = readdir(dir);
-        if (!dirent)  break;
+        if (!dirent && errno != 0) {
+            Fatal("Couldn't read directory %s: %s", top_path, get_last_error().string);
+        } else if (!dirent) {
+            // Since errno == 0, this means there are no more files to read.
+            break;
+        } else {
+            if (!strcmp(dirent->d_name, "."))   continue;
+            if (!strcmp(dirent->d_name, ".."))  continue;
 
-        if (with_dir_prefix)  *Add(paths) = *get_string(context, "%s/%s", dir_path, dirent->d_name);
-        else                  *Add(paths) = *get_string(context, "%s", dirent->d_name);
+            char_array file_path = {.context = files->context};
+            if (top_path_length > 0) {
+                append_string(&file_path, "%s/%s", top_path, dirent->d_name);
+            } else {
+                append_string(&file_path, "%s", dirent->d_name);
+            }
 
-        // |Todo: Look at dirent->type and record whether it's a directory.
+            *Add(files) = file_path.data;
+
+            struct stat file_info = {0};
+            int r = stat(file_path.data, &file_info);
+            if (r == -1) {
+                Fatal("Couldn't stat file %s: %s", file_path.data, get_last_error().string);
+            }
+
+            int S_IFMT  = 0170000; //|Cleanup: #include these octal constants. Feature test macros?
+            int S_IFDIR = 0040000;
+
+            bool is_directory = (file_info.st_mode & S_IFMT) == S_IFDIR;
+            bool is_readable  = (file_info.st_mode & S_IXOTH); // This is conservative. We're only reading directories if anyone can read them.
+
+            if (is_directory && is_readable) {
+                recursively_add_file_names(file_path.data, file_path.count, files);
+            }
+        }
     }
 
-    closedir(dir);
-
-    return paths;
+    int r = closedir(dir);
+    if (r == -1) {
+        Fatal("Couldn't close directory %s: %s", top_path, get_last_error().string);
+    }
 }
-

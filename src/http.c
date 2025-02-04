@@ -539,20 +539,23 @@ static void *worker_thread_routine(void *arg)
             bool success = send_reply(client);
 
             if (success) {
+                s64 current_time = get_monotonic_time();
+
                 { // |Cleanup: This logging bit in general.
                     Memory_context *ctx = client->context;
                     Request *req = &client->request;
                     char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
                     char *path   = req->path.count ? req->path.data : "";
                     char *query  = req->query.count ? encode_query_string(&req->query, ctx)->data : "";
-                    printf("[%d] %s %s%s\n", client->response.status, method, path, query);
+                    s64 ms = current_time - client->start_time;
+                    printf("[%d] %s %s%s %ldms\n", client->response.status, method, path, query, ms);
                     fflush(stdout);
                 }
 
                 if (client->keep_alive) {
                     // Reset the client and prepare to receive more data on the socket.
                     reset_context(client->context);
-                    init_client(client, client->context, client->socket, get_monotonic_time());
+                    init_client(client, client->context, client->socket, current_time);
                 } else {
                     client->phase = READY_TO_CLOSE;
                 }
@@ -822,7 +825,7 @@ void start_server(Server *server)
     }
 }
 
-Response serve_file_insecurely(Request *request, Memory_context *context)
+static Response serve_file_insecurely(Request *request, Memory_context *context) //|Deprecated
 //|Insecure!! This function will serve any file in your filesystem, even supporting '..' in paths to go up a directory.
 {
     char *path = request->path.data;
@@ -863,6 +866,208 @@ Response serve_file_insecurely(Request *request, Memory_context *context)
     if (content_type)  *Set(&headers, "content-type") = content_type;
 
     return (Response){200, headers, file->data, file->count};
+}
+
+int compare_strings(void const *a, void const *b)
+// When using this with bsearch(), make sure that bsearch()'s first argument is a char**.
+{
+    return strcmp(*(char**)a, *(char**)b);
+}
+// We're creating these wrappers to avoid misusing the above. |Cleanup: Move to strings.h.
+void sort_strings_alphabetically(char **strings, s64 num_strings)
+{
+    qsort(strings, num_strings, sizeof(char*), compare_strings);
+}
+char *search_alphabetically_sorted_strings(char *string, char **strings, s64 num_strings)
+{
+    char *match = bsearch(&string, strings, num_strings, sizeof(char*), compare_strings);
+    return match;
+}
+
+typedef struct File_list_accessor File_list_accessor;
+typedef struct File_list_resource File_list_resource;
+
+struct File_list_accessor {
+    Memory_context     *context;
+
+    pthread_mutex_t     mutex_a;
+    File_list_resource *resource;
+};
+
+struct File_list_resource {
+    // A child context of the accessor's context, which contains everything to do with
+    // this resource including the resource struct itself.
+    Memory_context     *context;
+
+    // mutex_b and num_refs work together as a semaphore.
+    // We'd actually use a semaphore but we're doing this in C99.
+    pthread_mutex_t     mutex_b;
+    int                 num_refs;
+
+    string_array        file_list;
+    s64                 time_created;
+
+    // Similarly, mutex_c and update_pending could just be an atomic variable.
+    // A single thread, seeing that a resource has expired, sets update_pending = true
+    // to signify that it is taking responsibility for updating the resource.
+    pthread_mutex_t     mutex_c;
+    bool                update_pending;
+};
+
+// |Temporary: We'll make this global for now, but it's meant to go on the server struct.
+File_list_accessor file_list_accessor = {.mutex_a = PTHREAD_MUTEX_INITIALIZER};
+
+static File_list_resource *create_file_list_resource(File_list_accessor *accessor)
+// This function doesn't actually attach the resource to the accessor, but just uses its context.
+//
+{
+    Memory_context *context = new_context(accessor->context);
+
+    File_list_resource *resource = New(File_list_resource, context);
+
+    resource->context = context;
+
+    pthread_mutex_init(&resource->mutex_b, NULL);
+    pthread_mutex_init(&resource->mutex_c, NULL);
+
+    resource->file_list = (string_array){.context = context};
+
+    recursively_add_file_names(NULL, 0, &resource->file_list);
+
+    // |Speed: Do we get the file list already sorted making this the pathological case for qsort()?
+    sort_strings_alphabetically(resource->file_list.data, resource->file_list.count);
+
+    resource->time_created = get_monotonic_time();//|Todo: Maybe take this as an arg.
+
+    resource->num_refs = 1;
+
+    return resource;
+}
+
+Response serve_files(Request *request, Memory_context *context)
+{
+    File_list_accessor *accessor = &file_list_accessor;
+    File_list_resource *resource = NULL;
+
+    // When a thread wants to access a resource, it must lock accessor->mutex_a and increment resource->num_refs
+    // (which also requires locking resource->mutex_b) before releasing mutex_a.
+    pthread_mutex_lock(&accessor->mutex_a);
+    {
+        // Now that we've locked mutex_a, we know that the resource that the accessor points to is
+        // valid and cannot be deleted while we hold mutex_a. This is true because:
+        // - A resource will not be deallocated until its .num_refs reaches 0.
+        // - Every resource has its .num_refs initialised to 1 before any accessor points to it.
+        // - Every thread that accesses a resource increments .num_refs before decrementing it.
+        // - The one exception to the above point is the routine responsible for updating an
+        //   accessor's resource, which also locks mutex_a and changes the accessor's pointer before
+        //   decrementing the old resource's .num_refs.
+        resource = accessor->resource;
+
+        // If the resource doesn't exist at all, create it. |Temporary: This will move to create_server() so we won't need this here.
+        if (!resource) {
+            Memory_context *server_context = context->parent; //|Hack.
+            assert(!accessor->context);
+            accessor->context = new_context(server_context);
+            resource = create_file_list_resource(accessor);
+            accessor->resource = resource;
+        }
+
+        // Increment the resource's .num_refs, so we can release mutex_a but keep our lease on the resource.
+        pthread_mutex_lock(&resource->mutex_b);
+        {
+            resource->num_refs += 1;
+        }
+        pthread_mutex_unlock(&resource->mutex_b);
+    }
+    pthread_mutex_unlock(&accessor->mutex_a);
+
+    // Check whether the resource has expired.
+    s64 CACHE_TIMEOUT = 5000;
+    s64 current_time = get_monotonic_time();
+    bool expired = (current_time - resource->time_created) > CACHE_TIMEOUT;
+
+    // Check whether a different thread is taking responsibility for updating the resource.
+    bool we_should_update = false;
+    if (expired) {
+        int r = pthread_mutex_trylock(&resource->mutex_c);
+        if (r == 0) {
+            // We got the lock on mutex_c. If we're the first one here, it's up to us.
+            if (!resource->update_pending)  we_should_update = true;
+            resource->update_pending = true;
+            pthread_mutex_unlock(&resource->mutex_c);
+        } else if (r != EBUSY) {
+            Fatal("Failed to try locking a mutex: %s", get_error_info(r).string);
+        }
+    }
+
+    if (we_should_update) {
+        // |Todo: Schedule this work to be done on a different thread so we can respond to the current request ASAP.
+        Memory_context *server_context = context->parent; //|Hack.
+        Memory_context *new_resource_context = new_context(server_context);
+
+        File_list_resource *new_resource = create_file_list_resource(accessor);
+
+        bool we_should_clean_up = false;
+
+        pthread_mutex_lock(&accessor->mutex_a);
+        pthread_mutex_lock(&resource->mutex_b);
+        {
+            accessor->resource = new_resource;  // This updates the accessor, but we'll keep using the old resource pointer on this thread, like we would if we had scheduled the update to happen asynchronously.
+            resource->num_refs -= 1;
+
+            we_should_clean_up = (resource->num_refs == 0);
+        }
+        pthread_mutex_unlock(&resource->mutex_b);
+        pthread_mutex_unlock(&accessor->mutex_a);
+
+        assert(we_should_clean_up == false); // Not possible for the time being, because this thread still holds a reference to the resource. But when we put this work on another thread, we might have to clean up here.
+    }
+
+    // Now we can use the resource and decrement .num_refs when we're done.
+
+    char *requested_file = request->path.data;
+    assert(requested_file[0] == '/');
+    requested_file += 1;
+
+    string_array *list = &resource->file_list;
+
+    char *match = search_alphabetically_sorted_strings(requested_file, list->data, list->count);
+
+    Response response = {0};
+    if (match) {
+        response = serve_file_insecurely(request, context);
+    } else {
+        char static body[] = "You seem to be requesting a file that's not on the list of files we can serve.\n";
+        response = (Response){400, .body = body, .size = lengthof(body)};
+    }
+
+    // We've finished with the resource.
+
+    bool we_should_clean_up = false;
+    pthread_mutex_lock(&resource->mutex_b);
+    {
+        resource->num_refs -= 1;
+        we_should_clean_up = (resource->num_refs == 0);
+    }
+    pthread_mutex_unlock(&resource->mutex_b);
+
+    if (we_should_clean_up) {
+        //|Temporary: We shouldn't think about cleaning up until after we've responded to the current request. Not 100% sure how to do it. Another async task?
+
+        {
+            // Just to make sure things look as we expect:
+            Memory_context *server_context = context->parent; //|Hack
+            assert(resource->context->parent == accessor->context);
+            assert(accessor->context->parent == server_context);
+        }
+
+        pthread_mutex_destroy(&resource->mutex_b);
+        pthread_mutex_destroy(&resource->mutex_c);
+
+        free_context(resource->context);
+    }
+
+    return response;
 }
 
 Response serve_404(Request *request, Memory_context *context)

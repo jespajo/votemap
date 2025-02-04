@@ -63,7 +63,7 @@ void start_server(Server *server);
 void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler);
 
 // Request_handler functions:
-Response serve_file_insecurely(Request *request, Memory_context *context);
+Response serve_files(Request *request, Memory_context *context);
 Response serve_404(Request *request, Memory_context *context);
 
 #endif // HTTP_H_INCLUDED
