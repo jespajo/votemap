@@ -868,20 +868,24 @@ static Response serve_file_insecurely(Request *request, Memory_context *context)
     return (Response){200, headers, file->data, file->count};
 }
 
+//|Cleanup: Move these to strings.h.
 int compare_strings(void const *a, void const *b)
-// When using this with bsearch(), make sure that bsearch()'s first argument is a char**.
 {
     return strcmp(*(char**)a, *(char**)b);
 }
-// We're creating these wrappers to avoid misusing the above. |Cleanup: Move to strings.h.
 void sort_strings_alphabetically(char **strings, s64 num_strings)
 {
     qsort(strings, num_strings, sizeof(char*), compare_strings);
 }
 char *search_alphabetically_sorted_strings(char *string, char **strings, s64 num_strings)
+// Using compare_strings() with bsearch() is a bit unintuitive. You want to find a char*,
+// but you have to pass a char** and get a char** back. Everything's really a void* so the
+// compiler won't help if you get it wrong. Hence these wrappers exist.
 {
-    char *match = bsearch(&string, strings, num_strings, sizeof(char*), compare_strings);
-    return match;
+    char **match = bsearch(&string, strings, num_strings, sizeof(char*), compare_strings);
+
+    if (match)  return *match;
+    else        return NULL;
 }
 
 typedef struct File_list_accessor File_list_accessor;
@@ -982,7 +986,7 @@ Response serve_files(Request *request, Memory_context *context)
     pthread_mutex_unlock(&accessor->mutex_a);
 
     // Check whether the resource has expired.
-    s64 CACHE_TIMEOUT = 5000;
+    s64 CACHE_TIMEOUT = 50000000; //|Temporary: This is absurdly high (over a year), but that's just until we get this to work asynchronously. In our real project the list of files we want to serve doesn't change, and at the moment every part of this is quick except updating the list.
     s64 current_time = get_monotonic_time();
     bool expired = (current_time - resource->time_created) > CACHE_TIMEOUT;
 
@@ -1029,6 +1033,9 @@ Response serve_files(Request *request, Memory_context *context)
     assert(requested_file[0] == '/');
     requested_file += 1;
 
+    //|Temporary |Hack: We'll want this to work for all paths that equal directories on the list, not just the root. Also it's dodgy to rewrite the request path.
+    if (*requested_file == '\0')  append_string(&request->path, "index.html");
+
     string_array *list = &resource->file_list;
 
     char *match = search_alphabetically_sorted_strings(requested_file, list->data, list->count);
@@ -1037,8 +1044,8 @@ Response serve_files(Request *request, Memory_context *context)
     if (match) {
         response = serve_file_insecurely(request, context);
     } else {
-        char static body[] = "You seem to be requesting a file that's not on the list of files we can serve.\n";
-        response = (Response){400, .body = body, .size = lengthof(body)};
+        char static body[] = "That file isn't on our list.\n";
+        response = (Response){404, .body = body, .size = lengthof(body)};
     }
 
     // We've finished with the resource.
