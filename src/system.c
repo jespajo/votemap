@@ -124,14 +124,17 @@ void set_blocking(int file_no, bool blocking)
     }
 }
 
-void recursively_add_file_names(char *top_path, s64 top_path_length, string_array *files)
-// Add the paths of all files we can access under the directory at top_path. Don't follow symlinks.
-// top_path can't have a trailing slash.
-// top_path_length can be zero, in which case we'll use the current directory, but we won't put "./" at the start of the paths.
+static void recursively_add_file_names(char *top_path, s64 top_path_length, s64 trim_prefix_length, string_array *files)
+// Add the paths of all files we can access under the top_path directory. Don't follow symlinks.
+// top_path should be zero-terminated. It should not have a trailing slash.
+// top_path_length should be strlen(top_path).
+// trim_prefix_length determines how much of the file path we trim from the start. So if it's zero,
+// we include the whole path. If it's top_path_length+1, top_path is trimmed along with its trailing '/'.
+//
+// |Cleanup: The trim_prefix_length parameter is just terrible---you'll get mangled results if it isn't the index of a slash character in the path (which we assert, at least). In general, instead of strings, we should return a tree structure where each node says whether it's a directory and just has the file name, not the full path. That will be involve less memory leakage (since, even if we do trim the prefix, we still construct the full path, so we can use it if we call the function recursively on a subdirectory). It will also make it easier to loop over the dirent struct in one pass, call closedir(), and *then* call the function recursively on sub-directories. That will be slower I think, but it will mean this function only opens one file descriptor at a time, which if there are lots of nested subdirectories, could be a big difference. For the HTTP server, the file descriptors are much more important than the speed, since we'll be calling this asynchronously and we need all the sockets we can get for clients.
 {
-    if (top_path_length > 0)  assert(top_path[top_path_length-1] != '/');
-
-    if (top_path_length == 0)  top_path = ".";
+    assert(top_path[top_path_length] == '\0');
+    assert(top_path[top_path_length-1] != '/');
 
     DIR *dir = opendir(top_path);
     if (!dir) {
@@ -150,19 +153,16 @@ void recursively_add_file_names(char *top_path, s64 top_path_length, string_arra
             if (!strcmp(dirent->d_name, "."))   continue;
             if (!strcmp(dirent->d_name, ".."))  continue;
 
-            char_array file_path = {.context = files->context};
-            if (top_path_length > 0) {
-                append_string(&file_path, "%s/%s", top_path, dirent->d_name);
-            } else {
-                append_string(&file_path, "%s", dirent->d_name);
-            }
+            char_array *file_path = get_string(files->context, "%s/%s", top_path, dirent->d_name);
 
-            *Add(files) = file_path.data;
+            if (trim_prefix_length > 0)  assert(file_path->data[trim_prefix_length-1] == '/');
+
+            *Add(files) = &file_path->data[trim_prefix_length];
 
             struct stat file_info = {0};
-            int r = stat(file_path.data, &file_info);
+            int r = stat(file_path->data, &file_info);
             if (r == -1) {
-                Fatal("Couldn't stat file %s: %s", file_path.data, get_last_error().string);
+                Fatal("Couldn't stat file %s: %s", file_path->data, get_last_error().string);
             }
 
             int S_IFMT  = 0170000; //|Cleanup: #include these octal constants. Feature test macros?
@@ -172,7 +172,7 @@ void recursively_add_file_names(char *top_path, s64 top_path_length, string_arra
             bool is_readable  = (file_info.st_mode & S_IXOTH); // This is conservative. We're only reading directories if anyone can read them.
 
             if (is_directory && is_readable) {
-                recursively_add_file_names(file_path.data, file_path.count, files);
+                recursively_add_file_names(file_path->data, file_path->count, trim_prefix_length, files);
             }
         }
     }
@@ -181,4 +181,15 @@ void recursively_add_file_names(char *top_path, s64 top_path_length, string_arra
     if (r == -1) {
         Fatal("Couldn't close directory %s: %s", top_path, get_last_error().string);
     }
+}
+
+string_array get_all_files_under_directory(char *directory, Memory_context *context)
+{
+    string_array files = {.context = context};
+
+    int length = strlen(directory);
+
+    recursively_add_file_names(directory, length, length+1, &files);
+
+    return files;
 }

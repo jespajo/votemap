@@ -61,9 +61,10 @@ struct Route {
 Server *create_server(u32 address, u16 port, Memory_context *context);
 void start_server(Server *server);
 void add_route(Server *server, enum HTTP_method method, char *path_pattern, Request_handler *handler);
+void add_file_route(Server *server, char *path_pattern, char *directory);
 
 // Request_handler functions:
-Response serve_files(Request *request, Memory_context *context);
+Response serve_files(Request *request, Memory_context *context); //|Cleanup: Remove this, because external code shouldn't use it directly, only via add_file_route().
 Response serve_404(Request *request, Memory_context *context);
 
 #endif // HTTP_H_INCLUDED

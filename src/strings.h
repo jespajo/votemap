@@ -11,6 +11,8 @@ char *trim_left_(char *string, char *trim_chars, int num_trim_chars);
 bool starts_with_(char *string, char *match, s64 match_length);
 char_array2 *split_string(char *string, s64 length, char split_char, Memory_context *context);
 u8 hex_to_byte(char c1, char c2);
+void sort_strings_alphabetically(char **strings, s64 num_strings);
+char *search_alphabetically_sorted_strings(char *string, char **strings, s64 num_strings);
 
 //
 // These macros take a static string as an argument. A static string is either

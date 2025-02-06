@@ -1,3 +1,11 @@
+//|Todo:
+// Change the Request_handler signature to take a Client*.
+// Put the route on the client.
+// Put the file list accessor on the route.
+// Add a Server* to the Client struct.
+// Schedule resource update and cleanup to happen asynchronously.
+// Also put the Match on the Client or Request so request handlers can decide if they want to call copy_capture_groups() or copy_named_capture_groups().
+
 // For sigemptyset and sigaddset, we need to define _POSIX_C_SOURCE (as anything).
 // For pthread_sigmask, we need to define _POSIX_C_SOURCE >= 199506L.
 #define _POSIX_C_SOURCE 199506L
@@ -667,6 +675,158 @@ void add_route(Server *server, enum HTTP_method method, char *path_pattern, Requ
     *Add(&server->routes) = (Route){method, regex, handler};
 }
 
+#ifndef FILE_LIST_STUFF_WHICH_WE_WILL_PROBABLY_PUT_INTO_ITS_OWN_MODULE
+typedef struct File_list_accessor File_list_accessor;
+typedef struct File_list_resource File_list_resource;
+
+struct File_list_accessor {
+    Memory_context     *context;
+
+    char               *directory;
+
+    pthread_mutex_t     mutex;
+    File_list_resource *resource;
+};
+
+struct File_list_resource {
+    // A child context of the accessor's context. It contains everything to do with
+    // this resource including the resource struct itself.
+    Memory_context     *context;
+
+    struct {
+        pthread_mutex_t     mutex;
+        int                 value;
+    }                   num_refs;
+
+    string_array        file_list;
+    s64                 time_created;
+
+    // The first thread to notice that a resource has expired sets update_pending = true
+    // to let other threads know that it is taking responsibility for the update.
+    // (If we weren't using C99, we could use an atomic test-and-set instead of a mutex.)
+    struct {
+        pthread_mutex_t     mutex;
+        bool                value;
+    }                   update_pending;
+};
+
+File_list_resource *acquire_file_list(File_list_accessor *accessor)
+{
+    File_list_resource *resource = NULL;
+
+    pthread_mutex_lock(&accessor->mutex);
+    {
+        // Now that we've locked the accessor's mutex, we know that the resource the accessor points
+        // to is valid and cannot be deleted while we hold the mutex. This is true because:
+        // - A resource will not be deallocated until its .num_refs reaches 0.
+        // - Every resource has its .num_refs initialised to 1 before any accessor points to it.
+        // - Every thread that accesses a resource increments .num_refs before decrementing it.
+        // - The one exception to the above point is the routine responsible for updating an
+        //   accessor's resource, which also locks the accessor's mutex and changes the accessor's
+        //   pointer before decrementing the old resource's .num_refs.
+        resource = accessor->resource;
+
+        // Increment .num_refs so the resource stays valid after we unlock the accessor's mutex.
+        pthread_mutex_lock(&resource->num_refs.mutex);
+        {
+            resource->num_refs.value += 1;
+        }
+        pthread_mutex_unlock(&resource->num_refs.mutex);
+    }
+    pthread_mutex_unlock(&accessor->mutex);
+
+    return resource;
+}
+
+void release_file_list(File_list_resource *resource)
+{
+    int num_refs;
+    pthread_mutex_lock(&resource->num_refs.mutex);
+    {
+        resource->num_refs.value -= 1;
+        num_refs = resource->num_refs.value;
+    }
+    pthread_mutex_unlock(&resource->num_refs.mutex);
+
+    if (num_refs == 0) {
+        // Free the resource. For now, we're just doing this on the same thread. |Speed
+        pthread_mutex_destroy(&resource->num_refs.mutex);
+        pthread_mutex_destroy(&resource->update_pending.mutex);
+
+        free_context(resource->context);
+    }
+}
+
+void refresh_file_list(File_list_accessor *accessor)
+{
+    Memory_context *context = new_context(accessor->context);
+
+    File_list_resource *resource = New(File_list_resource, context);
+    resource->context = context;
+    pthread_mutex_init(&resource->update_pending.mutex, NULL);
+
+    resource->file_list = get_all_files_under_directory(accessor->directory, context);
+    sort_strings_alphabetically(resource->file_list.data, resource->file_list.count); // |Speed: Do we get the file list already sorted, making this the pathological case for qsort()?
+
+    resource->time_created = get_monotonic_time();//|Todo: Maybe take this as an arg.
+    pthread_mutex_init(&resource->num_refs.mutex, NULL);
+    resource->num_refs.value = 1;
+
+    // Put the resource on the accessor.
+    File_list_resource *old_resource;
+    pthread_mutex_lock(&accessor->mutex);
+    {
+        old_resource = accessor->resource;
+        accessor->resource = resource;
+    }
+    pthread_mutex_unlock(&accessor->mutex);
+
+    if (old_resource)  release_file_list(old_resource);
+}
+
+File_list_accessor *create_file_list_accessor(char *directory, Memory_context *context)
+{
+    Memory_context *sub_context = new_context(context); // |Memory
+
+    File_list_accessor *accessor = New(File_list_accessor, sub_context);
+    accessor->context = sub_context;
+    pthread_mutex_init(&accessor->mutex, NULL);
+
+    // Copy the directory path, sans the trailing slash if there is one.
+    {
+        int length = strlen(directory);
+        if (directory[length-1] == '/')  length -= 1;
+
+        char *copy = alloc(length+1, sizeof(char), context);
+        memcpy(copy, directory, length);
+        copy[length] = '\0';
+        accessor->directory = copy;
+    }
+
+    refresh_file_list(accessor);
+
+    return accessor;
+}
+
+File_list_accessor *global_file_list_accessor = NULL; // |Incomplete: This will live on the Route.
+#endif
+
+void add_file_route(Server *server, char *path_pattern, char *directory)
+// Add a route to serve files under a given directory.
+//
+// We might want to make this more flexible later: directory could be a single file (which, if it won't change, we could just keep in memory for the program's lifetime!---that will mean extending the concept of a "shared resource"). Also, the path_pattern could be like "files/(?<file_name>.*)"---that is, have a special capture group that gets taken as the file path rather than the full request path.
+{
+    assert(global_file_list_accessor == NULL);
+    global_file_list_accessor = create_file_list_accessor(directory, server->context);
+
+    //|Todo: Assert the server hasn't started.
+
+    Regex *regex = compile_regex(path_pattern, server->context);
+    assert(regex);
+
+    *Add(&server->routes) = (Route){GET, regex, &serve_files};
+}
+
 void start_server(Server *server)
 {
     //
@@ -868,122 +1028,10 @@ static Response serve_file_insecurely(Request *request, Memory_context *context)
     return (Response){200, headers, file->data, file->count};
 }
 
-//|Cleanup: Move these to strings.h.
-int compare_strings(void const *a, void const *b)
-{
-    return strcmp(*(char**)a, *(char**)b);
-}
-void sort_strings_alphabetically(char **strings, s64 num_strings)
-{
-    qsort(strings, num_strings, sizeof(char*), compare_strings);
-}
-char *search_alphabetically_sorted_strings(char *string, char **strings, s64 num_strings)
-// Using compare_strings() with bsearch() is a bit unintuitive. You want to find a char*,
-// but you have to pass a char** and get a char** back. Everything's really a void* so the
-// compiler won't help if you get it wrong. Hence these wrappers exist.
-{
-    char **match = bsearch(&string, strings, num_strings, sizeof(char*), compare_strings);
-
-    if (match)  return *match;
-    else        return NULL;
-}
-
-typedef struct File_list_accessor File_list_accessor;
-typedef struct File_list_resource File_list_resource;
-
-struct File_list_accessor {
-    Memory_context     *context;
-
-    pthread_mutex_t     mutex_a;
-    File_list_resource *resource;
-};
-
-struct File_list_resource {
-    // A child context of the accessor's context, which contains everything to do with
-    // this resource including the resource struct itself.
-    Memory_context     *context;
-
-    // mutex_b and num_refs work together as a semaphore.
-    // We'd actually use a semaphore but we're doing this in C99.
-    pthread_mutex_t     mutex_b;
-    int                 num_refs;
-
-    string_array        file_list;
-    s64                 time_created;
-
-    // Similarly, mutex_c and update_pending could just be an atomic variable.
-    // A single thread, seeing that a resource has expired, sets update_pending = true
-    // to signify that it is taking responsibility for updating the resource.
-    pthread_mutex_t     mutex_c;
-    bool                update_pending;
-};
-
-// |Temporary: We'll make this global for now, but it's meant to go on the server struct.
-File_list_accessor file_list_accessor = {.mutex_a = PTHREAD_MUTEX_INITIALIZER};
-
-static File_list_resource *create_file_list_resource(File_list_accessor *accessor)
-// This function doesn't actually attach the resource to the accessor, but just uses its context.
-//
-{
-    Memory_context *context = new_context(accessor->context);
-
-    File_list_resource *resource = New(File_list_resource, context);
-
-    resource->context = context;
-
-    pthread_mutex_init(&resource->mutex_b, NULL);
-    pthread_mutex_init(&resource->mutex_c, NULL);
-
-    resource->file_list = (string_array){.context = context};
-
-    recursively_add_file_names(NULL, 0, &resource->file_list);
-
-    // |Speed: Do we get the file list already sorted making this the pathological case for qsort()?
-    sort_strings_alphabetically(resource->file_list.data, resource->file_list.count);
-
-    resource->time_created = get_monotonic_time();//|Todo: Maybe take this as an arg.
-
-    resource->num_refs = 1;
-
-    return resource;
-}
-
 Response serve_files(Request *request, Memory_context *context)
 {
-    File_list_accessor *accessor = &file_list_accessor;
-    File_list_resource *resource = NULL;
-
-    // When a thread wants to access a resource, it must lock accessor->mutex_a and increment resource->num_refs
-    // (which also requires locking resource->mutex_b) before releasing mutex_a.
-    pthread_mutex_lock(&accessor->mutex_a);
-    {
-        // Now that we've locked mutex_a, we know that the resource that the accessor points to is
-        // valid and cannot be deleted while we hold mutex_a. This is true because:
-        // - A resource will not be deallocated until its .num_refs reaches 0.
-        // - Every resource has its .num_refs initialised to 1 before any accessor points to it.
-        // - Every thread that accesses a resource increments .num_refs before decrementing it.
-        // - The one exception to the above point is the routine responsible for updating an
-        //   accessor's resource, which also locks mutex_a and changes the accessor's pointer before
-        //   decrementing the old resource's .num_refs.
-        resource = accessor->resource;
-
-        // If the resource doesn't exist at all, create it. |Temporary: This will move to create_server() so we won't need this here.
-        if (!resource) {
-            Memory_context *server_context = context->parent; //|Hack.
-            assert(!accessor->context);
-            accessor->context = new_context(server_context);
-            resource = create_file_list_resource(accessor);
-            accessor->resource = resource;
-        }
-
-        // Increment the resource's .num_refs, so we can release mutex_a but keep our lease on the resource.
-        pthread_mutex_lock(&resource->mutex_b);
-        {
-            resource->num_refs += 1;
-        }
-        pthread_mutex_unlock(&resource->mutex_b);
-    }
-    pthread_mutex_unlock(&accessor->mutex_a);
+    File_list_accessor *accessor = global_file_list_accessor;
+    File_list_resource *resource = acquire_file_list(accessor);
 
     // Check whether the resource has expired.
     s64 CACHE_TIMEOUT = 50000000; //|Temporary: This is absurdly high (over a year), but that's just until we get this to work asynchronously. In our real project the list of files we want to serve doesn't change, and at the moment every part of this is quick except updating the list.
@@ -993,86 +1041,46 @@ Response serve_files(Request *request, Memory_context *context)
     // Check whether a different thread is taking responsibility for updating the resource.
     bool we_should_update = false;
     if (expired) {
-        int r = pthread_mutex_trylock(&resource->mutex_c);
+        int r = pthread_mutex_trylock(&resource->update_pending.mutex);
         if (r == 0) {
-            // We got the lock on mutex_c. If we're the first one here, it's up to us.
-            if (!resource->update_pending)  we_should_update = true;
-            resource->update_pending = true;
-            pthread_mutex_unlock(&resource->mutex_c);
-        } else if (r != EBUSY) {
-            Fatal("Failed to try locking a mutex: %s", get_error_info(r).string);
+            // We got the lock on .update_pending. If we're the first one here, it's up to us.
+            we_should_update = (resource->update_pending.value == false);
+            resource->update_pending.value = true;
+            pthread_mutex_unlock(&resource->update_pending.mutex);
+        } else if (r == EBUSY) {
+            // Do nothing. The only thing we ever do with .update_pending is set it once,
+            // so if someone else has the lock, we know it's set.
+        } else {
+            Fatal("Failed to trylock a mutex: %s", get_error_info(r).string);
         }
     }
 
     if (we_should_update) {
         // |Todo: Schedule this work to be done on a different thread so we can respond to the current request ASAP.
-        Memory_context *server_context = context->parent; //|Hack.
-        Memory_context *new_resource_context = new_context(server_context);
-
-        File_list_resource *new_resource = create_file_list_resource(accessor);
-
-        bool we_should_clean_up = false;
-
-        pthread_mutex_lock(&accessor->mutex_a);
-        pthread_mutex_lock(&resource->mutex_b);
-        {
-            accessor->resource = new_resource;  // This updates the accessor, but we'll keep using the old resource pointer on this thread, like we would if we had scheduled the update to happen asynchronously.
-            resource->num_refs -= 1;
-
-            we_should_clean_up = (resource->num_refs == 0);
-        }
-        pthread_mutex_unlock(&resource->mutex_b);
-        pthread_mutex_unlock(&accessor->mutex_a);
-
-        assert(we_should_clean_up == false); // Not possible for the time being, because this thread still holds a reference to the resource. But when we put this work on another thread, we might have to clean up here.
+        refresh_file_list(accessor);
     }
 
-    // Now we can use the resource and decrement .num_refs when we're done.
+    if (!strcmp(request->path.data, "/"))  append_string(&request->path, "index.html"); //|Hack
 
-    char *requested_file = request->path.data;
-    assert(requested_file[0] == '/');
-    requested_file += 1;
-
-    //|Temporary |Hack: We'll want this to work for all paths that equal directories on the list, not just the root. Also it's dodgy to rewrite the request path.
-    if (*requested_file == '\0')  append_string(&request->path, "index.html");
-
+    char *requested_file = &request->path.data[1];
     string_array *list = &resource->file_list;
 
     char *match = search_alphabetically_sorted_strings(requested_file, list->data, list->count);
 
     Response response = {0};
-    if (match) {
-        response = serve_file_insecurely(request, context);
-    } else {
+    if (!match) {
         char static body[] = "That file isn't on our list.\n";
         response = (Response){404, .body = body, .size = lengthof(body)};
+    } else {
+        // This is a |Temporary |Hack. We need a system that:
+        // - serves index.html if we can find it in any directory on the list (currently we only do it for "/")
+        // - doesn't rewrite the request path
+        request->path = *get_string(context, "%s/%s", accessor->directory, requested_file);
+
+        response = serve_file_insecurely(request, context);
     }
 
-    // We've finished with the resource.
-
-    bool we_should_clean_up = false;
-    pthread_mutex_lock(&resource->mutex_b);
-    {
-        resource->num_refs -= 1;
-        we_should_clean_up = (resource->num_refs == 0);
-    }
-    pthread_mutex_unlock(&resource->mutex_b);
-
-    if (we_should_clean_up) {
-        //|Temporary: We shouldn't think about cleaning up until after we've responded to the current request. Not 100% sure how to do it. Another async task?
-
-        {
-            // Just to make sure things look as we expect:
-            Memory_context *server_context = context->parent; //|Hack
-            assert(resource->context->parent == accessor->context);
-            assert(accessor->context->parent == server_context);
-        }
-
-        pthread_mutex_destroy(&resource->mutex_b);
-        pthread_mutex_destroy(&resource->mutex_c);
-
-        free_context(resource->context);
-    }
+    release_file_list(resource);
 
     return response;
 }

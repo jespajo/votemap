@@ -495,7 +495,7 @@ int main(int argc, char **argv)
     add_route(server, GET, "/elections/(\\d+)/districts.json",              &serve_districts);
     add_route(server, GET, "/elections/(\\d+)/seats-won.json",              &serve_seats_won);
     add_route(server, GET, "/elections/(\\d+)/contests/(\\d+)/votes.json",  &serve_contest_votes);
-    add_route(server, GET, "/.*",                                           &serve_files);
+    add_file_route(server, "/.*",                                           "web/");
 
     start_server(server);
 

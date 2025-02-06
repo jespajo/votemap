@@ -150,3 +150,24 @@ u8 hex_to_byte(char c1, char c2)
 
     return (u8)((x1 << 4) | x2);
 }
+
+static int compare_strings(void const *a, void const *b)
+// Using compare_strings() with bsearch() is a bit unintuitive. You want to find a char*,
+// but you have to pass a char** and get a char** back. Everything's really a void* so the
+// compiler won't help if you get it wrong. Hence we only export the wrappers below.
+{
+    return strcmp(*(char**)a, *(char**)b);
+}
+
+void sort_strings_alphabetically(char **strings, s64 num_strings)
+{
+    qsort(strings, num_strings, sizeof(char*), compare_strings);
+}
+
+char *search_alphabetically_sorted_strings(char *string, char **strings, s64 num_strings)
+{
+    char **match = bsearch(&string, strings, num_strings, sizeof(char*), compare_strings);
+
+    if (match)  return *match;
+    else        return NULL;
+}
