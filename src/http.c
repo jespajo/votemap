@@ -1,9 +1,7 @@
 //|Todo:
-// Put the route on the client.
 // Put the file list accessor on the route.
 // Add a Server* to the Client struct.
 // Schedule resource update and cleanup to happen asynchronously.
-// Also put the Match on the Client or Request so request handlers can decide if they want to call copy_capture_groups() or copy_named_capture_groups().
 
 // For sigemptyset and sigaddset, we need to define _POSIX_C_SOURCE (as anything).
 // For pthread_sigmask, we need to define _POSIX_C_SOURCE >= 199506L.
@@ -199,7 +197,7 @@ static bool parse_request(Client *client)
     //
     {
         char_array  *path  = &client->request.path;
-        string_dict *query = &client->request.query;
+        string_dict *query = &client->request.query_params;
 
         char_array key   = {.context = ctx};
         char_array value = {.context = ctx};
@@ -305,6 +303,7 @@ static bool parse_request(Client *client)
 
 static Request_handler *find_request_handler(Server *server, Client *client)
 // Find a route for a client and return the route handler.
+// Also save pointers to the route and the result of the matching regex on the client.
 {
     assert(client->phase == HANDLING_REQUEST);
 
@@ -317,7 +316,8 @@ static Request_handler *find_request_handler(Server *server, Client *client)
 
         Match *match = run_regex(route->path_regex, request->path.data, request->path.count, client->context);
         if (match->success) {
-            request->path_params = copy_capture_groups(match, client->context);
+            client->route       = route;
+            client->route_match = match;
 
             return route->handler;
         }
@@ -425,7 +425,7 @@ static void init_client(Client *client, Memory_context *context, s32 socket, s64
     client->crlf_offsets      = (s16_array){.context = context};
 
     client->request.path      = (char_array){.context = context};
-    client->request.query     = (string_dict){.context = context};
+    client->request.query_params = (string_dict){.context = context};
 
     client->response.headers  = (string_dict){.context = context};
 
@@ -524,7 +524,7 @@ static void *worker_thread_routine(void *arg)
                     Request *req = &client->request;
                     char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
                     char *path   = req->path.count ? req->path.data : "";
-                    char *query  = req->query.count ? encode_query_string(&req->query, ctx)->data : "";
+                    char *query  = req->query_params.count ? encode_query_string(&req->query_params, ctx)->data : "";
                     s64 ms = current_time - client->start_time;
                     printf("[%d] %s %s%s %ldms\n", client->response.status, method, path, query, ms);
                     fflush(stdout);

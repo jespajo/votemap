@@ -763,6 +763,7 @@ string_array copy_capture_groups(Match *match, Memory_context *context)
 
 string_dict copy_named_capture_groups(Match *match, Regex *regex, Memory_context *context)
 // Like copy_capture_groups() but in dict form. The returned dict only has named capture groups.
+// |Robustness: Maybe we should be storing a pointer to the Regex on the Match, so we don't have to pass the Regex to this function, to avoid any issues caused by passing the wrong one?
 {
     string_dict copies = (string_dict){.context = context};
 

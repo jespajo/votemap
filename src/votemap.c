@@ -64,7 +64,6 @@ Tile_info parse_tile_request(Request *request)
     Tile_info result = {0};
 
     // Valid paths:
-    //
     //      vertices/27966
     //      vertices/27966-dark
     //      vertices/27966-170
@@ -117,7 +116,7 @@ Tile_info parse_tile_request(Request *request)
         float *nums[] = {&result.upp, &result.x0, &result.y0, &result.x1, &result.y1};
 
         for (s64 i = 0; i < countof(keys); i++) {
-            char *num_string = *Get(&request->query, keys[i]);
+            char *num_string = *Get(&request->query_params, keys[i]);
             if (!num_string) {
                 result.fail_reason = "The query string is missing at least one of the floats.\n";
                 return result;
@@ -153,14 +152,14 @@ Response serve_vertices(Client *client)
 
     // Prepare the parameters to our SQL queries (they are the same for all queries below).
     // Negate the Y values to convert the map units of the browser to the database's coordinate reference system.
-    string_array params = {.context = ctx};
+    string_array sql_params = {.context = ctx};
     {
-        *Add(&params) = get_string(ctx, "%f", tile.upp)->data;
-        *Add(&params) = get_string(ctx, "%f", tile.x0)->data;
-        *Add(&params) = get_string(ctx, "%f", -tile.y0)->data;
-        *Add(&params) = get_string(ctx, "%f", tile.x1)->data;
-        *Add(&params) = get_string(ctx, "%f", -tile.y1)->data;
-        *Add(&params) = get_string(ctx, "%d", tile.election_id)->data;
+        *Add(&sql_params) = get_string(ctx, "%f", tile.upp)->data;
+        *Add(&sql_params) = get_string(ctx, "%f", tile.x0)->data;
+        *Add(&sql_params) = get_string(ctx, "%f", -tile.y0)->data;
+        *Add(&sql_params) = get_string(ctx, "%f", tile.x1)->data;
+        *Add(&sql_params) = get_string(ctx, "%f", -tile.y1)->data;
+        *Add(&sql_params) = get_string(ctx, "%d", tile.election_id)->data;
     }
 
     // Draw the electorate districts as polygons.
@@ -186,7 +185,7 @@ Response serve_vertices(Client *client)
         " order by st_area(box2d(d.bounds_clipped)) desc                                                                                               "
         ;
 
-        PG_result *result = query_database(&db, query, &params, ctx);
+        PG_result *result = query_database(&db, query, &sql_params, ctx);
 
         int district_id_column = *Get(&result->columns, "district_id");  assert(district_id_column >= 0);
         int polygon_column     = *Get(&result->columns, "polygon");      assert(polygon_column >= 0);
@@ -270,7 +269,7 @@ Response serve_vertices(Client *client)
         "   ) t                                                                                             "
         ;
 
-        PG_result *result = query_database(&db, query, &params, ctx);
+        PG_result *result = query_database(&db, query, &sql_params, ctx);
 
         int id_column   = *Get(&result->columns, "id");    assert(id_column >= 0);
         int path_column = *Get(&result->columns, "path");  assert(path_column >= 0);
@@ -318,14 +317,16 @@ Response serve_districts(Client *client)
 
     PG_client db = {DATABASE_URL, .use_cache = true};
 
-    string_array params = {.context = ctx};
+    string_array sql_params = {.context = ctx};
 
     // Get the election ID from the request path and add it to the SQL query parameters.
     {
-        char *election = client->request.path_params.data[0];
-        assert(election);
+        string_array path_params = copy_capture_groups(client->route_match, ctx);
+        assert(path_params.count == 1);
 
-        *Add(&params) = election;
+        char *election = path_params.data[0];
+
+        *Add(&sql_params) = election;
     }
 
     char *query =
@@ -359,7 +360,7 @@ Response serve_districts(Client *client)
     "   ) t                                    "
     ;
 
-    PG_result *result = query_database(&db, query, &params, ctx);
+    PG_result *result = query_database(&db, query, &sql_params, ctx);
 
     assert(*Get(&result->columns, "json") == 0);
     assert(result->rows.count == 1);
@@ -396,13 +397,17 @@ Response serve_seats_won(Client *client)
     "   ) t                                                            "
     ;
 
-    string_array params = {.context = ctx};
+    string_array sql_params = {.context = ctx};
     {
-        char *election = client->request.path_params.data[0];  assert(election);
-        *Add(&params) = election;
+        string_array path_params = copy_capture_groups(client->route_match, ctx);
+        assert(path_params.count == 1);
+
+        char *election = path_params.data[0];
+
+        *Add(&sql_params) = election;
     }
 
-    PG_result *result = query_database(&db, query, &params, ctx);
+    PG_result *result = query_database(&db, query, &sql_params, ctx);
 
     assert(*Get(&result->columns, "json") == 0);
     assert(result->rows.count == 1); //|Bug: There may be 0 rows if the election ID in the request path does not exist. Currently in this case there's a segfault.
@@ -451,16 +456,19 @@ Response serve_contest_votes(Client *client)
     "   ) t                                                             "
     ;
 
-    string_array params = {.context = ctx};
+    string_array sql_params = {.context = ctx};
     {
-        char *election = client->request.path_params.data[0];  assert(election);
-        *Add(&params) = election;
+        string_array path_params = copy_capture_groups(client->route_match, ctx);
+        assert(path_params.count == 2);
 
-        char *district = client->request.path_params.data[1];  assert(district);
-        *Add(&params) = district;
+        char *election = path_params.data[0];
+        char *district = path_params.data[1];
+
+        *Add(&sql_params) = election;
+        *Add(&sql_params) = district;
     }
 
-    PG_result *result = query_database(&db, query, &params, ctx);
+    PG_result *result = query_database(&db, query, &sql_params, ctx);
 
     assert(*Get(&result->columns, "json") == 0);
     assert(result->rows.count == 1); //|Bug: There may be 0 rows if the election ID in the request path does not exist. Currently in this case there's a segfault.
@@ -491,7 +499,7 @@ int main(int argc, char **argv)
 
     Server *server = create_server(address, port, top_context);
 
-    add_route(server, GET, "/vertices/(.+)",                                &serve_vertices);
+    add_route(server, GET, "/vertices/.+",                                  &serve_vertices);
     add_route(server, GET, "/elections/(\\d+)/districts.json",              &serve_districts);
     add_route(server, GET, "/elections/(\\d+)/seats-won.json",              &serve_seats_won);
     add_route(server, GET, "/elections/(\\d+)/contests/(\\d+)/votes.json",  &serve_contest_votes);

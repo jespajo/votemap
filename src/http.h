@@ -38,8 +38,16 @@ enum HTTP_method {GET=1, POST}; // We can add HTTP_ prefixes to these later if w
 struct Request {
     enum HTTP_method        method;
     char_array              path;
-    string_array            path_params;
-    string_dict             query;
+    string_dict             query_params;
+};
+
+// A Request_handler is a function that takes a pointer to a Client and returns a Response.
+typedef Response Request_handler(Client*);
+
+struct Route {
+    enum HTTP_method        method;
+    Regex                  *path_regex;
+    Request_handler        *handler;
 };
 
 struct Response {
@@ -66,6 +74,9 @@ struct Client {
     s16_array               crlf_offsets;
     Request                 request;
 
+    Route                  *route;
+    Match                  *route_match;
+
     Response                response;
 
     char_array              reply_header;   // Our response's header in text form.
@@ -76,15 +87,6 @@ struct Client {
         HTTP_VERSION_1_1,
     }                       http_version;
     bool                    keep_alive;     // Whether to keep the socket open after processing the request.
-};
-
-// A Request_handler is a function that takes a pointer to a Client and returns a Response.
-typedef Response Request_handler(Client*);
-
-struct Route {
-    enum HTTP_method        method;
-    Regex                  *path_regex;
-    Request_handler        *handler;
 };
 
 Server *create_server(u32 address, u16 port, Memory_context *context);
