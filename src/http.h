@@ -13,7 +13,7 @@ typedef struct Route       Route;
 typedef Array(Route)       Route_array;
 typedef Map(s32, Client*)  Client_map;
 typedef Array(pthread_t)   pthread_t_array;
-typedef struct Client_queue Client_queue;
+typedef struct Task_queue  Task_queue;
 typedef struct File_list_accessor File_list_accessor;
 
 struct Server {
@@ -29,7 +29,7 @@ struct Server {
 
     Client_map              clients;
 
-    Client_queue           *work_queue;
+    Task_queue             *task_queue;
     pthread_t_array         worker_threads;
     s32                     worker_pipe[2];     // File descriptors for the pipe that workers use to communicate to the server (read, write).
 };
@@ -60,6 +60,7 @@ struct Response {
 };
 
 struct Client {
+    Server                 *server;
     Memory_context         *context;
 
     s32                     socket;         // The client socket's file descriptor.

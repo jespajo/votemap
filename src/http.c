@@ -1,7 +1,3 @@
-//|Todo:
-// Add a Server* to the Client struct.
-// Schedule resource update and cleanup to happen asynchronously.
-
 // For sigemptyset and sigaddset, we need to define _POSIX_C_SOURCE (as anything).
 // For pthread_sigmask, we need to define _POSIX_C_SOURCE >= 199506L.
 #define _POSIX_C_SOURCE 199506L
@@ -19,17 +15,34 @@
 #include "strings.h"
 #include "system.h"
 
-struct Client_queue {
+typedef struct Task Task;
+
+struct Task {
+    enum {
+        DEAL_WITH_A_CLIENT=1,
+        REFRESH_FILE_LIST,
+        TIME_TO_WIND_UP,
+    }                       type;
+    union {
+        // If the type is DEAL_WITH_A_CLIENT:
+        Client             *client;
+
+        // If the type is REFRESH_FILE_LIST:
+        File_list_accessor *file_list_accessor;
+    };
+};
+
+struct Task_queue {
     pthread_mutex_t         mutex;
     pthread_cond_t          ready;          // The server will broadcast when there are tasks.
 
-    Array(Client*);
-    Client                **head;           // A pointer to the first element in the array that hasn't been taken from the queue. If it points to the element after the end of the array, the queue is empty.
+    Array(Task);
+    Task                   *head;           // A pointer to the first element in the array that hasn't been taken from the queue. If it points to the element after the end of the array, the queue is empty.
 };
 
-static Client_queue *create_queue(Memory_context *context)
+static Task_queue *create_queue(Memory_context *context)
 {
-    Client_queue *queue = NewArray(queue, context);
+    Task_queue *queue = NewArray(queue, context);
 
     pthread_mutex_init(&queue->mutex, NULL);
     pthread_cond_init(&queue->ready, NULL);
@@ -40,9 +53,9 @@ static Client_queue *create_queue(Memory_context *context)
     return queue;
 }
 
-static void add_to_queue(Client_queue *queue, Client *client)
+static void add_to_queue(Task_queue *queue, Task task)
 {
-    Client_queue *q = queue;
+    Task_queue *q = queue;
 
     pthread_mutex_lock(&q->mutex);
 
@@ -53,30 +66,30 @@ static void add_to_queue(Client_queue *queue, Client *client)
 
     if (q->count == q->limit && head_index > 0) {
         // We're out of room in the array, but there's space to the left of the head. Shift the head back to the start of the array.
-        memmove(q->data, q->head, (q->count - head_index)*sizeof(Client*));
+        memmove(q->data, q->head, (q->count - head_index)*sizeof(q->data[0]));
         q->count  -= head_index;
         head_index = 0;
     }
 
-    *Add(q) = client;
+    *Add(q) = task;
     q->head = &q->data[head_index];
 
     if (queue_was_empty)  pthread_cond_broadcast(&q->ready);
     pthread_mutex_unlock(&q->mutex);
 }
 
-static Client *pop_queue(Client_queue *queue)
+static Task pop_queue(Task_queue *queue)
 {
-    Client_queue *q = queue;
+    Task_queue *q = queue;
 
     pthread_mutex_lock(&q->mutex);
     while (q->head == &q->data[q->count])  pthread_cond_wait(&q->ready, &q->mutex);
 
-    Client *client = *q->head;
+    Task task = *q->head;
     q->head += 1;
 
     pthread_mutex_unlock(&q->mutex);
-    return client;
+    return task;
 }
 
 static bool receive_message(Client *client)
@@ -411,10 +424,11 @@ static bool send_reply(Client *client)
     return true;
 }
 
-static void init_client(Client *client, Memory_context *context, s32 socket, s64 start_time)
+static void init_client(Server *server, Client *client, Memory_context *context, s32 socket, s64 start_time)
 {
     *client                   = (Client){0};
 
+    client->server            = server;
     client->context           = context;
     client->start_time        = start_time;
     client->socket            = socket;
@@ -482,16 +496,27 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
     return result;
 }
 
+void refresh_file_list(File_list_accessor *accessor); //|Temporary: Until we put the File_list_accessor stuff into its own module.
+
 static void *worker_thread_routine(void *arg)
 // The worker thread's main loop.
 {
     Server *server = arg;
-    Client_queue *queue = server->work_queue;
+    Task_queue *queue = server->task_queue;
 
     while (true)
     {
-        Client *client = pop_queue(queue);
-        if (!client)  break; // The server adds NULL pointers to the queue to tell the workers it's time to wind up.
+        Task task = pop_queue(queue);
+
+        if (task.type == TIME_TO_WIND_UP)  break;
+
+        if (task.type == REFRESH_FILE_LIST) {
+            refresh_file_list(task.file_list_accessor);
+            continue;
+        }
+
+        assert(task.type == DEAL_WITH_A_CLIENT); //|Cleanup: From here to the end of the loop should be its own function.
+        Client *client = task.client;
 
         if (client->phase == PARSING_REQUEST) {
             bool received = receive_message(client);
@@ -532,7 +557,7 @@ static void *worker_thread_routine(void *arg)
                 if (client->keep_alive) {
                     // Reset the client and prepare to receive more data on the socket.
                     reset_context(client->context);
-                    init_client(client, client->context, client->socket, current_time);
+                    init_client(server, client, client->context, client->socket, current_time);
                 } else {
                     client->phase = READY_TO_CLOSE;
                 }
@@ -615,7 +640,7 @@ Server *create_server(u32 address, u16 port, Memory_context *context)
 
     server->clients = (Client_map){.context = context, .binary_mode = true};
 
-    server->work_queue = create_queue(context);
+    server->task_queue = create_queue(context);
 
     server->worker_threads = (pthread_t_array){.context = context};
     int NUM_WORKER_THREADS = 4; //|Todo: Make this configurable or find out how many processors the computer has.
@@ -809,7 +834,7 @@ void start_server(Server *server)
     //
     // The pollfds array is both the array of file descriptors passed to poll() and the authoritative list
     // of the clients currently owned by the main thread. The main thread initialises a memory context for
-    // new clients and then passes them to worker threads via the server.work_queue. Until a worker thread
+    // new clients and then passes them to worker threads via the server.task_queue. Until a worker thread
     // sends the client pointer back to the server via the worker pipe, it owns (i.e. can modify) the
     // Client struct and the client's memory context. Separately the server maintains server.clients, a
     // hash table containing all open connections, keyed by the file descriptors of the open sockets. This
@@ -893,11 +918,11 @@ void start_server(Server *server)
                 set_blocking(client_socket, false);
 
                 Client *client = New(Client, server->context);
-                init_client(client, new_context(server->context), client_socket, current_time);
+                init_client(server, client, new_context(server->context), client_socket, current_time);
 
                 assert(!IsSet(&server->clients, client_socket));
                 *Set(&server->clients, client_socket) = client;
-                add_to_queue(server->work_queue, client);
+                add_to_queue(server->task_queue, (Task){DEAL_WITH_A_CLIENT, .client=client});
                 continue;
             }
 
@@ -920,7 +945,7 @@ void start_server(Server *server)
                 // We can read from or write to a client socket.
                 Client *client = *Get(&server->clients, pollfd->fd);
                 assert(client);
-                add_to_queue(server->work_queue, client);
+                add_to_queue(server->task_queue, (Task){DEAL_WITH_A_CLIENT, .client=client});
                 array_unordered_remove_by_index(&pollfds, pollfd_index);
                 continue; //|Cleanup: We continue in every case?
             }
@@ -945,7 +970,7 @@ void start_server(Server *server)
     }
 
     // Signal to the worker threads that it's time to wind up.
-    for (s64 i = 0; i < server->worker_threads.count; i++)  add_to_queue(server->work_queue, NULL);
+    for (s64 i = 0; i < server->worker_threads.count; i++)  add_to_queue(server->task_queue, (Task){TIME_TO_WIND_UP});
 
     // Join the worker threads.
     for (int i = 0; i < server->worker_threads.count; i++) {
@@ -967,8 +992,9 @@ Response serve_files(Client *client)
     File_list_accessor *accessor = client->route->file_list_accessor;
     File_list_resource *resource = acquire_file_list(accessor);
 
-    // Check whether the resource has expired.
-    s64 CACHE_TIMEOUT = 50000000; //|Temporary: This is absurdly high (over a year), but that's just until we get this to work asynchronously. In our real project the list of files we want to serve doesn't change, and at the moment every part of this is quick except updating the list.
+    // Check whether the resource has expired. If the file list is older than CACHE_TIMEOUT milliseconds,
+    // we'll schedule it to be created again, though we'll still use the old one for the current request.
+    s64 CACHE_TIMEOUT = 1000;
     s64 current_time = get_monotonic_time();
     bool expired = (current_time - resource->time_created) > CACHE_TIMEOUT;
 
@@ -990,8 +1016,8 @@ Response serve_files(Client *client)
     }
 
     if (we_should_update) {
-        // |Todo: Schedule this work to be done on a different thread so we can respond to the current request ASAP.
-        refresh_file_list(accessor);
+        Task_queue *task_queue = client->server->task_queue;
+        add_to_queue(task_queue, (Task){REFRESH_FILE_LIST, .file_list_accessor=accessor});
     }
 
     Memory_context *context = client->context;
@@ -1047,7 +1073,11 @@ Response serve_files(Client *client)
 done:;
     bool should_clean_up = release_file_list(resource);
 
-    if (should_clean_up)  free_file_list_resource(resource);
+    if (should_clean_up) {
+        // Clean up the old resource. We could create a task to schedule this work on a different thread
+        // rather than making the current request wait, but there's no need because cleaning up is fast.
+        free_file_list_resource(resource);
+    }
 
     return response;
 }
