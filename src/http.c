@@ -1,5 +1,4 @@
 //|Todo:
-// Put the file list accessor on the route.
 // Add a Server* to the Client struct.
 // Schedule resource update and cleanup to happen asynchronously.
 
@@ -787,8 +786,6 @@ File_list_accessor *create_file_list_accessor(char *directory, Memory_context *c
 
     return accessor;
 }
-
-File_list_accessor *global_file_list_accessor = NULL; // |Incomplete: This will live on the Route.
 #endif
 
 void add_file_route(Server *server, char *path_pattern, char *directory)
@@ -796,15 +793,15 @@ void add_file_route(Server *server, char *path_pattern, char *directory)
 //
 // We might want to make this more flexible later: directory could be a single file (which, if it won't change, we could just keep in memory for the program's lifetime!---that will mean extending the concept of a "shared resource"). Also, the path_pattern could be like "files/(?<file_name>.*)"---that is, have a special capture group that gets taken as the file path rather than the full request path.
 {
-    assert(global_file_list_accessor == NULL);
-    global_file_list_accessor = create_file_list_accessor(directory, server->context);
-
-    //|Todo: Assert the server hasn't started.
-
     Regex *regex = compile_regex(path_pattern, server->context);
     assert(regex);
 
-    *Add(&server->routes) = (Route){GET, regex, &serve_files};
+    Route route = {GET, regex, &serve_files};
+
+    route.file_list_accessor = create_file_list_accessor(directory, server->context);
+
+    //|Robustness: Assert the server hasn't started.
+    *Add(&server->routes) = route;
 }
 
 void start_server(Server *server)
@@ -965,52 +962,9 @@ void start_server(Server *server)
     }
 }
 
-static Response serve_file_insecurely(Request *request, Memory_context *context) //|Deprecated
-//|Insecure!! This function will serve any file in your filesystem, even supporting '..' in paths to go up a directory.
-{
-    char *path = request->path.data;
-    s64 path_size = request->path.count;
-
-    // If the path starts with a '/', "remove" it by advancing the pointer 1 byte.
-    if (*path == '/') {
-        path      += 1;
-        path_size -= 1;
-    }
-
-    u8_array *file = load_binary_file(path, context);
-    if (!file) {
-        char static body[] = "We couldn't find that file.\n";
-        return (Response){404, .body=body, .size=lengthof(body)};
-    }
-
-    char *file_extension = NULL;
-
-    for (s64 i = path_size-1; i >= 0; i--) {
-        if (path[i] == '/')  break;
-        if (path[i] == '.') {
-            if (i < path_size-1)  file_extension = &path[i+1];
-            break;
-        }
-    }
-
-    char *content_type = NULL;
-
-    if (file_extension) {
-        if (!strcmp(file_extension, "html"))       content_type = "text/html";
-        else if (!strcmp(file_extension, "js"))    content_type = "text/javascript";
-        else if (!strcmp(file_extension, "json"))  content_type = "application/json";
-        else if (!strcmp(file_extension, "ttf"))   content_type = "font/ttf";
-    }
-
-    string_dict headers = {.context = context};
-    if (content_type)  *Set(&headers, "content-type") = content_type;
-
-    return (Response){200, headers, file->data, file->count};
-}
-
 Response serve_files(Client *client)
 {
-    File_list_accessor *accessor = global_file_list_accessor;
+    File_list_accessor *accessor = client->route->file_list_accessor;
     File_list_resource *resource = acquire_file_list(accessor);
 
     // Check whether the resource has expired.
@@ -1042,27 +996,55 @@ Response serve_files(Client *client)
 
     Memory_context *context = client->context;
     Request        *request = &client->request;
-
-    if (!strcmp(request->path.data, "/"))  append_string(&request->path, "index.html"); //|Hack
-
-    char *requested_file = &request->path.data[1];
-    string_array *list = &resource->file_list;
-
-    char *match = search_alphabetically_sorted_strings(requested_file, list->data, list->count);
+    string_array *file_list = &resource->file_list;
 
     Response response = {0};
+
+    // |Temporary: Eventually, instead of a file list, we'll have a tree of nodes. Each node will say whether it's a directory, so we can use that to decide whether to treat the requested file as a directory. But for now, we're just going to assume, if the request path ends in '/', it's a request for a directory.
+    bool is_directory = (request->path.data[request->path.count-1] == '/');
+
+    char_array *file_path = get_string(context, "%s/%s", accessor->directory, &request->path.data[1]);
+    if (is_directory) {
+        append_string(file_path, "index.html");
+    }
+    char *test_path = &file_path->data[strlen(accessor->directory)+1];
+
+    char *match = search_alphabetically_sorted_strings(test_path, file_list->data, file_list->count);
     if (!match) {
         char static body[] = "That file isn't on our list.\n";
-        response = (Response){404, .body = body, .size = lengthof(body)};
-    } else {
-        // This is a |Temporary |Hack. We need a system that:
-        // - serves index.html if we can find it in any directory on the list (currently we only do it for "/")
-        // - doesn't rewrite the request path
-        request->path = *get_string(context, "%s/%s", accessor->directory, requested_file);
-
-        response = serve_file_insecurely(request, context);
+        response = (Response){404, .body=body, .size=lengthof(body)};
+        goto done;
     }
 
+    u8_array *file = load_binary_file(file_path->data, context);
+    if (!file) {
+        char static body[] = "That file is on our list, yet it doesn't exist.\n";
+        response = (Response){500, .body=body, .size=lengthof(body)};
+        goto done;
+    }
+
+    response = (Response){200, .body=file->data, .size=file->count};
+
+    char *content_type = NULL;
+    for (s64 i = file_path->count-1; i >= 0; i--) {
+        if (file_path->data[i] == '/')  break;
+        if (file_path->data[i] != '.')  continue;
+
+        char *file_extension = &file_path->data[i+1];
+
+        if (!strcmp(file_extension, "html"))       content_type = "text/html";
+        else if (!strcmp(file_extension, "js"))    content_type = "text/javascript";
+        else if (!strcmp(file_extension, "json"))  content_type = "application/json";
+        else if (!strcmp(file_extension, "ttf"))   content_type = "font/ttf";
+
+        break;
+    }
+    if (content_type) {
+        response.headers = (string_dict){.context = context};
+        *Set(&response.headers, "content-type") = content_type;
+    }
+
+done:;
     bool should_clean_up = release_file_list(resource);
 
     if (should_clean_up)  free_file_list_resource(resource);

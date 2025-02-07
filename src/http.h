@@ -14,6 +14,7 @@ typedef Array(Route)       Route_array;
 typedef Map(s32, Client*)  Client_map;
 typedef Array(pthread_t)   pthread_t_array;
 typedef struct Client_queue Client_queue;
+typedef struct File_list_accessor File_list_accessor;
 
 struct Server {
     Memory_context         *context;
@@ -48,6 +49,7 @@ struct Route {
     enum HTTP_method        method;
     Regex                  *path_regex;
     Request_handler        *handler;
+    File_list_accessor     *file_list_accessor;
 };
 
 struct Response {
@@ -61,7 +63,7 @@ struct Client {
     Memory_context         *context;
 
     s32                     socket;         // The client socket's file descriptor.
-    s64                     start_time;     // When we accepted the connection.
+    s64                     start_time;     // When we accepted the connection, or last reset the struct to be reused if client.keep_alive.
 
     enum {
         PARSING_REQUEST=1,
@@ -72,10 +74,12 @@ struct Client {
 
     char_array              message;        // A buffer for storing bytes received.
     s16_array               crlf_offsets;
+
+
     Request                 request;
 
     Route                  *route;
-    Match                  *route_match;
+    Match                  *route_match;    // The result of applying the matching route's path_regex to the request path.
 
     Response                response;
 
