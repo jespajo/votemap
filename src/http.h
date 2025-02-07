@@ -39,7 +39,7 @@ struct Request {
     enum HTTP_method        method;
     char_array              path;
     string_array            path_params;
-    string_dict             query;//|Todo: Rename query_params.
+    string_dict             query;
 };
 
 struct Response {
@@ -49,8 +49,37 @@ struct Response {
     s64                     size;           // The number of bytes in the body.
 };
 
-// A Request_handler is a function that takes a pointer to a Request and returns a Response.
-typedef Response Request_handler(Request*, Memory_context*);
+struct Client {
+    Memory_context         *context;
+
+    s32                     socket;         // The client socket's file descriptor.
+    s64                     start_time;     // When we accepted the connection.
+
+    enum {
+        PARSING_REQUEST=1,
+        HANDLING_REQUEST,
+        SENDING_REPLY,
+        READY_TO_CLOSE,
+    }                       phase;
+
+    char_array              message;        // A buffer for storing bytes received.
+    s16_array               crlf_offsets;
+    Request                 request;
+
+    Response                response;
+
+    char_array              reply_header;   // Our response's header in text form.
+    s64                     num_bytes_sent; // The total number of bytes we've sent of our response. Includes both header and body.
+
+    enum {
+        HTTP_VERSION_1_0=1,
+        HTTP_VERSION_1_1,
+    }                       http_version;
+    bool                    keep_alive;     // Whether to keep the socket open after processing the request.
+};
+
+// A Request_handler is a function that takes a pointer to a Client and returns a Response.
+typedef Response Request_handler(Client*);
 
 struct Route {
     enum HTTP_method        method;
@@ -64,7 +93,7 @@ void add_route(Server *server, enum HTTP_method method, char *path_pattern, Requ
 void add_file_route(Server *server, char *path_pattern, char *directory);
 
 // Request_handler functions:
-Response serve_files(Request *request, Memory_context *context); //|Cleanup: Remove this, because external code shouldn't use it directly, only via add_file_route().
-Response serve_404(Request *request, Memory_context *context);
+Response serve_files(Client *client); //|Cleanup: Remove this, because external code shouldn't use it directly, only via add_file_route().
+Response serve_404(Client *client);
 
 #endif // HTTP_H_INCLUDED

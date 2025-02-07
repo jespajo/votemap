@@ -1,5 +1,4 @@
 //|Todo:
-// Change the Request_handler signature to take a Client*.
 // Put the route on the client.
 // Put the file list accessor on the route.
 // Add a Server* to the Client struct.
@@ -22,35 +21,6 @@
 #include "http.h"
 #include "strings.h"
 #include "system.h"
-
-struct Client {
-    Memory_context         *context;
-
-    s32                     socket;         // The client socket's file descriptor.
-    s64                     start_time;     // When we accepted the connection.
-
-    enum {
-        PARSING_REQUEST=1,
-        HANDLING_REQUEST,
-        SENDING_REPLY,
-        READY_TO_CLOSE,
-    }                       phase;
-
-    char_array              message;        // A buffer for storing bytes received.
-    s16_array               crlf_offsets;
-    Request                 request;
-
-    Response                response;
-
-    char_array              reply_header;   // Our response's header in text form.
-    s64                     num_bytes_sent; // The total number of bytes we've sent of our response. Includes both header and body.
-
-    enum {
-        HTTP_VERSION_1_0=1,
-        HTTP_VERSION_1_1,
-    }                       http_version;
-    bool                    keep_alive;     // Whether to keep the socket open after processing the request.
-};
 
 struct Client_queue {
     pthread_mutex_t         mutex;
@@ -535,7 +505,7 @@ static void *worker_thread_routine(void *arg)
             if (!handler)  handler = &serve_404;
 
             // Run the handler.
-            client->response = (*handler)(&client->request, client->context);
+            client->response = (*handler)(client);
             assert(client->response.status);
 
             client->phase = SENDING_REPLY;
@@ -738,7 +708,18 @@ File_list_resource *acquire_file_list(File_list_accessor *accessor)
     return resource;
 }
 
-void release_file_list(File_list_resource *resource)
+void free_file_list_resource(File_list_resource *resource)
+{
+    assert(resource->num_refs.value == 0);
+
+    pthread_mutex_destroy(&resource->num_refs.mutex);
+    pthread_mutex_destroy(&resource->update_pending.mutex);
+
+    free_context(resource->context);
+}
+
+bool release_file_list(File_list_resource *resource)
+// Return true if we were the last one to release the resource and hence must clean it up.
 {
     int num_refs;
     pthread_mutex_lock(&resource->num_refs.mutex);
@@ -748,16 +729,11 @@ void release_file_list(File_list_resource *resource)
     }
     pthread_mutex_unlock(&resource->num_refs.mutex);
 
-    if (num_refs == 0) {
-        // Free the resource. For now, we're just doing this on the same thread. |Speed
-        pthread_mutex_destroy(&resource->num_refs.mutex);
-        pthread_mutex_destroy(&resource->update_pending.mutex);
-
-        free_context(resource->context);
-    }
+    return (num_refs == 0);
 }
 
 void refresh_file_list(File_list_accessor *accessor)
+// Replace the current resource on the accessor. Clean up the old resource if no-one else has a reference to it.
 {
     Memory_context *context = new_context(accessor->context);
 
@@ -781,7 +757,11 @@ void refresh_file_list(File_list_accessor *accessor)
     }
     pthread_mutex_unlock(&accessor->mutex);
 
-    if (old_resource)  release_file_list(old_resource);
+    if (!old_resource)  return; // This lets us also use this function when we init an accessor for the first time (assuming the accessor has been initialised to zero, so its resource pointer is NULL).
+
+    bool should_clean_up = release_file_list(old_resource);
+
+    if (should_clean_up)  free_file_list_resource(old_resource);
 }
 
 File_list_accessor *create_file_list_accessor(char *directory, Memory_context *context)
@@ -1028,7 +1008,7 @@ static Response serve_file_insecurely(Request *request, Memory_context *context)
     return (Response){200, headers, file->data, file->count};
 }
 
-Response serve_files(Request *request, Memory_context *context)
+Response serve_files(Client *client)
 {
     File_list_accessor *accessor = global_file_list_accessor;
     File_list_resource *resource = acquire_file_list(accessor);
@@ -1060,6 +1040,9 @@ Response serve_files(Request *request, Memory_context *context)
         refresh_file_list(accessor);
     }
 
+    Memory_context *context = client->context;
+    Request        *request = &client->request;
+
     if (!strcmp(request->path.data, "/"))  append_string(&request->path, "index.html"); //|Hack
 
     char *requested_file = &request->path.data[1];
@@ -1080,12 +1063,14 @@ Response serve_files(Request *request, Memory_context *context)
         response = serve_file_insecurely(request, context);
     }
 
-    release_file_list(resource);
+    bool should_clean_up = release_file_list(resource);
+
+    if (should_clean_up)  free_file_list_resource(resource);
 
     return response;
 }
 
-Response serve_404(Request *request, Memory_context *context)
+Response serve_404(Client *client)
 {
     char const static body[] = "Can't find it.\n";
 

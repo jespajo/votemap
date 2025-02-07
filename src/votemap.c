@@ -138,15 +138,15 @@ Tile_info parse_tile_request(Request *request)
     return result;
 }
 
-Response serve_vertices(Request *request, Memory_context *context)
+Response serve_vertices(Client *client)
 {
-    Memory_context *ctx = context;
+    Memory_context *ctx = client->context;
 
     Vertex_array *verts = NewArray(verts, ctx);
 
     PG_client db = {DATABASE_URL, .use_cache = true, .keep_alive = true};
 
-    Tile_info tile = parse_tile_request(request);
+    Tile_info tile = parse_tile_request(&client->request);
     if (!tile.parse_success) {
         return (Response){400, .body = tile.fail_reason, .size = strlen(tile.fail_reason)};
     }
@@ -312,9 +312,9 @@ Response serve_vertices(Request *request, Memory_context *context)
     return response;
 }
 
-Response serve_districts(Request *request, Memory_context *context)
+Response serve_districts(Client *client)
 {
-    Memory_context *ctx = context;
+    Memory_context *ctx = client->context;
 
     PG_client db = {DATABASE_URL, .use_cache = true};
 
@@ -322,7 +322,7 @@ Response serve_districts(Request *request, Memory_context *context)
 
     // Get the election ID from the request path and add it to the SQL query parameters.
     {
-        char *election = request->path_params.data[0];
+        char *election = client->request.path_params.data[0];
         assert(election);
 
         *Add(&params) = election;
@@ -373,10 +373,10 @@ Response serve_districts(Request *request, Memory_context *context)
     return response;
 }
 
-Response serve_seats_won(Request *request, Memory_context *context)
+Response serve_seats_won(Client *client)
 // Serve a summary of the number of seats won by each party for a particular election, for drawing the "Seats won" chart.
 {
-    Memory_context *ctx = context;
+    Memory_context *ctx = client->context;
 
     PG_client db = {DATABASE_URL, .use_cache = true};
 
@@ -398,7 +398,7 @@ Response serve_seats_won(Request *request, Memory_context *context)
 
     string_array params = {.context = ctx};
     {
-        char *election = request->path_params.data[0];  assert(election);
+        char *election = client->request.path_params.data[0];  assert(election);
         *Add(&params) = election;
     }
 
@@ -417,9 +417,9 @@ Response serve_seats_won(Request *request, Memory_context *context)
     return response;
 }
 
-Response serve_contest_votes(Request *request, Memory_context *context)
+Response serve_contest_votes(Client *client)
 {
-    Memory_context *ctx = context;
+    Memory_context *ctx = client->context;
 
     PG_client db = {DATABASE_URL, .use_cache = true};
 
@@ -453,10 +453,10 @@ Response serve_contest_votes(Request *request, Memory_context *context)
 
     string_array params = {.context = ctx};
     {
-        char *election = request->path_params.data[0];  assert(election);
+        char *election = client->request.path_params.data[0];  assert(election);
         *Add(&params) = election;
 
-        char *district = request->path_params.data[1];  assert(district);
+        char *district = client->request.path_params.data[1];  assert(district);
         *Add(&params) = district;
     }
 
