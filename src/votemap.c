@@ -154,12 +154,12 @@ Response serve_vertices(Client *client)
     // Negate the Y values to convert the map units of the browser to the database's coordinate reference system.
     string_array sql_params = {.context = ctx};
     {
-        *Add(&sql_params) = get_string(ctx, "%f", tile.upp)->data;
-        *Add(&sql_params) = get_string(ctx, "%f", tile.x0)->data;
-        *Add(&sql_params) = get_string(ctx, "%f", -tile.y0)->data;
-        *Add(&sql_params) = get_string(ctx, "%f", tile.x1)->data;
-        *Add(&sql_params) = get_string(ctx, "%f", -tile.y1)->data;
-        *Add(&sql_params) = get_string(ctx, "%d", tile.election_id)->data;
+        *Add(&sql_params) = get_string(ctx, "%f", tile.upp).data;
+        *Add(&sql_params) = get_string(ctx, "%f", tile.x0).data;
+        *Add(&sql_params) = get_string(ctx, "%f", -tile.y0).data;
+        *Add(&sql_params) = get_string(ctx, "%f", tile.x1).data;
+        *Add(&sql_params) = get_string(ctx, "%f", -tile.y1).data;
+        *Add(&sql_params) = get_string(ctx, "%d", tile.election_id).data;
     }
 
     // Draw the electorate districts as polygons.

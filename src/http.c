@@ -1029,11 +1029,11 @@ Response serve_files(Client *client)
     // |Temporary: Eventually, instead of a file list, we'll have a tree of nodes. Each node will say whether it's a directory, so we can use that to decide whether to treat the requested file as a directory. But for now, we're just going to assume, if the request path ends in '/', it's a request for a directory.
     bool is_directory = (request->path.data[request->path.count-1] == '/');
 
-    char_array *file_path = get_string(context, "%s/%s", accessor->directory, &request->path.data[1]);
+    char_array file_path = get_string(context, "%s/%s", accessor->directory, &request->path.data[1]);
     if (is_directory) {
-        append_string(file_path, "index.html");
+        append_string(&file_path, "index.html");
     }
-    char *test_path = &file_path->data[strlen(accessor->directory)+1];
+    char *test_path = &file_path.data[strlen(accessor->directory)+1];
 
     char *match = search_alphabetically_sorted_strings(test_path, file_list->data, file_list->count);
     if (!match) {
@@ -1042,7 +1042,7 @@ Response serve_files(Client *client)
         goto done;
     }
 
-    u8_array *file = load_binary_file(file_path->data, context);
+    u8_array *file = load_binary_file(file_path.data, context);
     if (!file) {
         char static body[] = "That file is on our list, yet it doesn't exist.\n";
         response = (Response){500, .body=body, .size=lengthof(body)};
@@ -1052,11 +1052,11 @@ Response serve_files(Client *client)
     response = (Response){200, .body=file->data, .size=file->count};
 
     char *content_type = NULL;
-    for (s64 i = file_path->count-1; i >= 0; i--) {
-        if (file_path->data[i] == '/')  break;
-        if (file_path->data[i] != '.')  continue;
+    for (s64 i = file_path.count-1; i >= 0; i--) {
+        if (file_path.data[i] == '/')  break;
+        if (file_path.data[i] != '.')  continue;
 
-        char *file_extension = &file_path->data[i+1];
+        char *file_extension = &file_path.data[i+1];
 
         if (!strcmp(file_extension, "html"))       content_type = "text/html";
         else if (!strcmp(file_extension, "js"))    content_type = "text/javascript";

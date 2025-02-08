@@ -31,13 +31,13 @@ static void vaprintf(char_array *array, char *format, va_list args)
     array->count += length;
 }
 
-char_array *get_string(Memory_context *context, char *format, ...)
+char_array get_string(Memory_context *context, char *format, ...)
 {
-    char_array *string = NewArray(string, context);
+    char_array string = {.context = context};
 
     va_list vargs;
     va_start(vargs, format);
-    vaprintf(string, format, vargs);
+    vaprintf(&string, format, vargs);
     va_end(vargs);
 
     return string;

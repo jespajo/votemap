@@ -169,7 +169,7 @@ Topology *load_topology(PG_client *database, char *topology_name, Memory_context
     return topo;
 }
 
-char_array *get_topology_printed(Topology *topology, Memory_context *context)
+char_array get_topology_printed(Topology *topology, Memory_context *context)
 {
     Path_array faces = {.context = context}; //|Leak
     {
@@ -221,26 +221,26 @@ char_array *get_topology_printed(Topology *topology, Memory_context *context)
         }
     }
 
-    char_array *out = get_string(context, "MULTIPOLYGON(");
+    char_array out = get_string(context, "MULTIPOLYGON(");
     {
         for (s64 i = 0; i < faces.count; i++) {
             Path *face = &faces.data[i];
             assert(face->count);
             assert(same_point(face->data[0], face->data[face->count-1]));
 
-            if (!i)  append_string(out, "\n ((");
-            else     append_string(out, ",\n ((");
+            if (!i)  append_string(&out, "\n ((");
+            else     append_string(&out, ",\n ((");
 
             for (s64 j = 0; j < face->count; j++) {
                 float x = face->data[j].v[0];
                 float y = face->data[j].v[1];
 
-                if (!j)  append_string(out, "%.0f %.0f", x, y);
-                else     append_string(out, ", %.0f %.0f", x, y);
+                if (!j)  append_string(&out, "%.0f %.0f", x, y);
+                else     append_string(&out, ", %.0f %.0f", x, y);
             }
-            append_string(out, "))");
+            append_string(&out, "))");
         }
-        *Add(out) = ')';
+        *Add(&out) = ')';
     }
 
     return out;
@@ -445,9 +445,9 @@ int main()
 
     simplify_topology(topo, NULL);
 
-    char_array *printed = get_topology_printed(topo, ctx);
+    char_array printed = get_topology_printed(topo, ctx);
 
-    write_array_to_file(printed, "topo.txt");
+    write_array_to_file(&printed, "topo.txt");
 
     free_context(ctx);
     return 0;

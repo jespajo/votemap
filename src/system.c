@@ -153,16 +153,16 @@ static void recursively_add_file_names(char *top_path, s64 top_path_length, s64 
             if (!strcmp(dirent->d_name, "."))   continue;
             if (!strcmp(dirent->d_name, ".."))  continue;
 
-            char_array *file_path = get_string(files->context, "%s/%s", top_path, dirent->d_name);
+            char_array file_path = get_string(files->context, "%s/%s", top_path, dirent->d_name);
 
-            if (trim_prefix_length > 0)  assert(file_path->data[trim_prefix_length-1] == '/');
+            if (trim_prefix_length > 0)  assert(file_path.data[trim_prefix_length-1] == '/');
 
-            *Add(files) = &file_path->data[trim_prefix_length];
+            *Add(files) = &file_path.data[trim_prefix_length];
 
             struct stat file_info = {0};
-            int r = stat(file_path->data, &file_info);
+            int r = stat(file_path.data, &file_info);
             if (r == -1) {
-                Fatal("Couldn't stat file %s: %s", file_path->data, get_last_error().string);
+                Fatal("Couldn't stat file %s: %s", file_path.data, get_last_error().string);
             }
 
             int S_IFMT  = 0170000; //|Cleanup: #include these octal constants. Feature test macros?
@@ -172,7 +172,7 @@ static void recursively_add_file_names(char *top_path, s64 top_path_length, s64 
             bool is_readable  = (file_info.st_mode & S_IXOTH); // This is conservative. We're only reading directories if anyone can read them.
 
             if (is_directory && is_readable) {
-                recursively_add_file_names(file_path->data, file_path->count, trim_prefix_length, files);
+                recursively_add_file_names(file_path.data, file_path.count, trim_prefix_length, files);
             }
         }
     }
