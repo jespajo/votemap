@@ -801,10 +801,7 @@ File_list_accessor *create_file_list_accessor(char *directory, Memory_context *c
         int length = strlen(directory);
         if (directory[length-1] == '/')  length -= 1;
 
-        char *copy = alloc(length+1, sizeof(char), context);
-        memcpy(copy, directory, length);
-        copy[length] = '\0';
-        accessor->directory = copy;
+        accessor->directory = copy_string(directory, length, context).data;
     }
 
     refresh_file_list(accessor);

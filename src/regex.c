@@ -166,7 +166,7 @@ Regex *compile_regex(char *pattern, Memory_context *context)
 {
     Regex *re = New(Regex, context);
 
-    re->source = copy_string(pattern, context);
+    re->source = copy_string(pattern, strlen(pattern), context).data;
 
     re->program = (Regex_program){.context = context};
 
@@ -220,10 +220,7 @@ Regex *compile_regex(char *pattern, Memory_context *context)
                     }
                     // We could disallow a zero-length name, but we can have zero-length dict keys, so it's fine.
 
-                    save_name = alloc(name_length+1, sizeof(char), context);
-                    memcpy(save_name, p, name_length);
-                    save_name[name_length] = '\0';
-
+                    save_name = copy_string(p, name_length, context).data;
                     p += name_length;
                 }
 
@@ -751,9 +748,7 @@ string_array copy_capture_groups(Match *match, Memory_context *context)
         Capture *capture = &match->captures.data[i];
         char *copy = NULL;
         if (capture->data) {
-            copy = alloc(capture->length+1, sizeof(char), context);
-            memcpy(copy, capture->data, capture->length);
-            copy[capture->length] = '\0';
+            copy = copy_string(capture->data, capture->length, context).data;
         }
         *Add(&copies) = copy;
     }
@@ -774,9 +769,7 @@ string_dict copy_named_capture_groups(Match *match, Regex *regex, Memory_context
         Capture *capture = &match->captures.data[i];
         if (!capture->data)  continue;
 
-        char *copy = alloc(capture->length+1, sizeof(char), context);
-        memcpy(copy, capture->data, capture->length);
-        copy[capture->length] = '\0';
+        char *copy = copy_string(capture->data, capture->length, context).data;
 
         *Set(&copies, name) = copy;
     }

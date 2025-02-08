@@ -51,6 +51,27 @@ void append_string(char_array *out, char *format, ...)
     va_end(vargs);
 }
 
+char_array copy_string(char *source, s64 length, Memory_context *context)
+// The result will be zero-terminated, following our rule that char_arrays are also valid C strings.
+//
+// To be conservative with memory, this function won't round up its copy buffer to a power of two.
+// So if you want to keep building on the returned array with Add() or append_string(), you should
+// call array_reserve(&array, round_up_pow2(array.limit)) on it yourself.
+{
+    // It's fine if the source string doesn't end with a null byte, but there can't be a null byte
+    // in the part we're copying, because then the result would break our rule.
+    for (s64 i = 0; i < length; i++)  assert(source[i] != '\0'); //|Cleanup: Even for debug builds, this is probably unnecessary.
+
+    char_array copy = {.context = context};
+    array_reserve(&copy, length+1);
+
+    memcpy(copy.data, source, length);
+    copy.data[length] = '\0';
+    copy.count = length;
+
+    return copy;
+}
+
 void print_double(double number, char_array *out)
 // Remove trailing zeroes from the fractional part.
 // If it's a whole number then remove the whole fractional part.
@@ -110,8 +131,7 @@ char_array2 *split_string(char *string, s64 length, char split_char, Memory_cont
 {
     char_array2 *result = NewArray(result, context);
 
-    char *buffer = alloc(length+1, sizeof(char), context);
-    memcpy(buffer, string, length);
+    char *buffer = copy_string(string, length, context).data;
 
     // If true, the returned array will have empty char_arrays where the split_char appears twice in a row,
     // or at the start or end of the string. We may want to make this configurable later.

@@ -36,15 +36,16 @@ void *maybe_grow_array(void *data, s64 *limit, s64 count, u64 unit_size, Memory_
 }
 
 void *array_reserve_(void *data, s64 *limit, s64 new_limit, u64 unit_size, Memory_context *context)
-// Resize or allocate room for `new_limit` items. Modify *limit and return the new data pointer.
+// Ensure that the array has space for at least new_limit items. If we need to resize or allocate,
+// modify *limit and return the new data pointer. Otherwise return the old pointer.
 //
 // This function modifies *limit, so why don't we make the first parameter `void **data` and get
 // the function to modify *data as well? The reason is that the compiler lets us implicitly cast
 // e.g. `int *` to `void *`, but not `int **` to `void **`.
 {
     assert(new_limit > 0);
-    assert(context);
-    assert(new_limit > *limit); // We could just return early instead, but I can't think of a use-case. If one comes up we can change this.
+
+    if (new_limit <= *limit)  return data;
 
     if (!data) {
         assert(*limit == 0);
