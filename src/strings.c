@@ -179,12 +179,13 @@ static int compare_strings(void const *a, void const *b)
     return strcmp(*(char**)a, *(char**)b);
 }
 
-void sort_strings_alphabetically(char **strings, s64 num_strings)
+void sort_strings_alphabetically(char **strings, s64 num_strings)//|Deprecated
+// "Alphabetically" isn't accurate, because 'B' comes before 'a'.
 {
     qsort(strings, num_strings, sizeof(char*), compare_strings);
 }
 
-char *search_alphabetically_sorted_strings(char *string, char **strings, s64 num_strings)
+char *search_alphabetically_sorted_strings(char *string, char **strings, s64 num_strings)//|Deprecated
 {
     char **match = bsearch(&string, strings, num_strings, sizeof(char*), compare_strings);
 

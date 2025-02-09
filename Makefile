@@ -1,7 +1,7 @@
 MAKEFLAGS += --jobs=$(shell nproc)
 
-#cc := clang -fsanitize=thread
-cc := gcc
+#cc := gcc
+cc := clang -fsanitize=thread
 
 cflags += -Wall -Werror
 cflags += -Wno-unused

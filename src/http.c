@@ -670,7 +670,7 @@ void add_route(Server *server, enum HTTP_method method, char *path_pattern, Requ
 }
 
 #ifndef FILE_LIST_STUFF_WHICH_WE_WILL_PROBABLY_PUT_INTO_ITS_OWN_MODULE
-typedef struct File_list_accessor File_list_accessor;
+//typedef struct File_list_accessor File_list_accessor;
 typedef struct File_list_resource File_list_resource;
 
 struct File_list_accessor {

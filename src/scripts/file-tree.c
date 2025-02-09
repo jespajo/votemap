@@ -9,8 +9,8 @@ typedef struct File_node File_node;
 typedef Array(File_node) File_node_array;
 
 struct File_node {
-    char_array      path;       // We need to construct the full path to stat the file, so we might as well keep it.
-    char           *name;       // We don't make another copy for this; it's a pointer to the final segment of the .path array.
+    char_array      path;       // The full path to the file, starting with whatever path was passed to get_file_tree().
+    char           *name;       // Not a unique copy but a pointer to the last segment of the path member above.
     enum {
         UNKNOWN_FILE_TYPE,
         REGULAR_FILE,
@@ -19,8 +19,26 @@ struct File_node {
     File_node_array children;
 };
 
+int compare_file_names(void const *ptr1, void const *ptr2)
+// This is to qsort() or bsearch() File_nodes. It puts them in lexicographic order based on their .name members.
+// It's not quite alphabetical order: 'B' comes before 'a'.
+{
+    File_node *node1 = (File_node*)ptr1;
+    File_node *node2 = (File_node*)ptr2;
+
+    return strcmp(node1->name, node2->name);
+}
+
+// |Todo: Move to array.h.
+#define qsort_array(ARRAY, COMPARE_FUNCTION) \
+    qsort((ARRAY)->data, (ARRAY)->count, sizeof((ARRAY)->data[0]), (COMPARE_FUNCTION))
+// |Todo: Move to array.h, document usage gotchas.
+#define bsearch_array(KEY, ARRAY, COMPARE_FUNCTION) \
+    bsearch((KEY), (ARRAY)->data, (ARRAY)->count, sizeof((ARRAY)->data[0]), (COMPARE_FUNCTION))
+
 static void fill_out_file_node(File_node *file_node, Memory_context *context)
 // Given a File_node* that already has a .path and .name, add the other information, running recursively for directories.
+// Child file nodes are sorted by name.
 {
     assert(file_node->path.data[file_node->path.count-1] != '/');
 
@@ -81,6 +99,8 @@ static void fill_out_file_node(File_node *file_node, Memory_context *context)
         Fatal("Couldn't close directory %s: %s", file_node->path.data, get_last_error().string);
     }
 
+    qsort_array(&file_node->children, compare_file_names);
+
     for (s64 i = 0; i < file_node->children.count; i++) {
         fill_out_file_node(&file_node->children.data[i], context);
     }
@@ -116,18 +136,74 @@ void append_printed_file_tree(char_array *out, File_node *node, int depth)
     }
 }
 
+File_node *find_file_node(char *path, File_node *root)
+// Find a file node in a tree. The path is relative to the root---so if the root is /tmp/ and you're
+// looking for /tmp/abc/def, the path should be "abc/def". You can put a slash at the end ("abc/def/")
+// only if the target is a directory. We don't allow double slashes. If the path is the empty string,
+// we'll return the root node.
+{
+    File_node *node = root;
+
+    s64 i = 0;
+
+    while (node) {
+        if (path[i] == '/') {
+            if (node->type == DIRECTORY)  i += 1;
+        }
+        if (path[i] == '\0')  break;
+
+        s64 j = i;
+        while (path[j] != '\0' && path[j] != '/')  j += 1;
+
+        // Temporarily modify the path to get a zero-terminated string we can use for searching.
+        // We'll make sure to put it back the way it was.
+        char tmp = path[j];
+        path[j] = '\0';
+        node = bsearch_array(&(File_node){.name=&path[i]}, &node->children, compare_file_names);
+        path[j] = tmp;
+
+        i = j;
+    }
+
+    return node;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc < 2) {
+        printf("Usage:\n");
+        printf("  Print a directory tree:\n");
+        printf("    %s <directory>\n", argv[0]);
+        printf("  Look for a file in a directory:\n");
+        printf("    %s <directory> <file path>\n", argv[0]);
+        return 0;
+    }
+
     Memory_context *ctx = new_context(NULL);
 
-    char *root_path = ".";
-    if (argc > 1)  root_path = argv[1];
-
+    char *root_path = argv[1];
     File_node *tree = get_file_tree(root_path, ctx);
 
-    char_array out = {.context = ctx};
-    append_printed_file_tree(&out, tree, 0);
-    puts(out.data);
+    if (argc == 2) {
+        char_array out = {.context = ctx};
+        append_printed_file_tree(&out, tree, 0);
+        puts(out.data);
+        return 0;
+    }
+
+    char *file_path = argv[2];
+    File_node *node = find_file_node(file_path, tree);
+
+    if (!node) {
+        puts("We couldn't find that file.");
+    } else {
+        printf("We found that file!\n");
+        printf("  path: %s\n", node->path.data);
+        printf("  type: ");
+        if (node->type == REGULAR_FILE)    printf("regular file\n");
+        else if (node->type == DIRECTORY)  printf("directory\n");
+        else                               printf("unknown\n");
+    }
 
     free_context(ctx);
     return 0;
