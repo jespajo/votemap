@@ -549,7 +549,7 @@ static void *worker_thread_routine(void *arg)
                     char *method = req->method == GET ? "GET" : req->method == POST ? "POST" : "UNKNOWN!!";
                     char *path   = req->path.count ? req->path.data : "";
                     char *query  = req->query_params.count ? encode_query_string(&req->query_params, ctx)->data : "";
-                    s64 ms = current_time - client->start_time;
+                    s64 ms = current_time - client->start_time; //|Fixme: The fact that we use the client->start_time here results in inaccurate logging about how long requests take, because browsers leave connections open for a long time in between requests. Instead we should be using the time when we received the first byte of the request.
                     printf("[%d] %s %s%s %ldms\n", client->response.status, method, path, query, ms);
                     fflush(stdout);
                 }
@@ -982,6 +982,46 @@ void start_server(Server *server)
     }
 }
 
+Response create_index_page(File_node *file_node, Memory_context *context)
+{
+    assert(file_node->type == DIRECTORY);
+
+    char_array doc = get_string(context, "<!DOCTYPE HTML>\n");
+    append_string(&doc, "<html>\n");
+
+    append_string(&doc, "<head>\n");
+    append_string(&doc, "<title>%s</title>\n", file_node->name);
+    append_string(&doc, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n");
+    append_string(&doc, "</head>\n");
+
+    append_string(&doc, "<body>\n");
+    append_string(&doc, "<p><a href=\"../\">[Go up a directory.]</a></p>\n");
+    append_string(&doc, "<h1>%s</h1>\n", file_node->name);
+
+    //
+    // Make two passes over the child nodes to print the directories first.
+    //
+    for (s64 i = 0; i < file_node->children.count; i++) {
+        File_node *child = &file_node->children.data[i];
+        if (child->type == DIRECTORY) {
+            append_string(&doc, "<p><a href=\"%s/\">%s/</a></p>\n", child->name, child->name);
+        }
+    }
+    for (s64 i = 0; i < file_node->children.count; i++) {
+        File_node *child = &file_node->children.data[i];
+        if (child->type != DIRECTORY) {
+            append_string(&doc, "<p><a href=\"%s\">%s</a></p>\n", child->name, child->name);
+        }
+    }
+    append_string(&doc, "</body>\n");
+    append_string(&doc, "</html>\n");
+
+    string_dict headers = (string_dict){.context = context};
+    *Set(&headers, "content-type") = "text/html";
+
+    return (Response){200, .headers=headers, .body=doc.data, .size=doc.count};
+}
+
 Response serve_files(Client *client)
 {
     File_tree_accessor *accessor = client->route->file_tree_accessor;
@@ -1030,9 +1070,25 @@ Response serve_files(Client *client)
 
     if (file_node->type == DIRECTORY) {
         File_node *index = find_file_node("index.html", file_node);
-
-        // |Todo: Dynamically create an index page if index.html doesn't exist.
-        if (index)  file_node = index;
+        if (index) {
+            file_node = index;
+        } else if (request->path.data[request->path.count-1] == '/') {
+            // There is no index.html in this directory. Create an index page dynamically.
+            response = create_index_page(file_node, context);
+            goto done;
+        } else {
+            //
+            // The request path doesn't end with a slash. Force the client to send it again with a slash.
+            // This is mean, but it makes it easier for us to create index pages dynamically, because if
+            // a web page's URL ends with a slash, browsers treat links on the page as relative to the
+            // page itself. So this means we can link to the files in this directory just by their name.
+            //
+            char static body[] = "This page has moved permanently.\n";
+            response = (Response){301, .body=body, .size=lengthof(body)};
+            response.headers = (string_dict){.context = context};
+            *Set(&response.headers, "location") = get_string(context, "%s/", request->path.data).data;
+            goto done;
+        }
     }
 
     if (file_node->type != REGULAR_FILE) {

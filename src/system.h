@@ -1,7 +1,7 @@
 #ifndef SYSTEM_H_INCLUDED
 #define SYSTEM_H_INCLUDED
 
-#include <errno.h> // So you have constants like EAGAIN etc.
+#include <errno.h> // So everyone who #includes "system.h" gets errno and constants like EAGAIN.
 
 #include "array.h"
 
