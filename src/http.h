@@ -14,7 +14,7 @@ typedef Array(Route)       Route_array;
 typedef Map(s32, Client*)  Client_map;
 typedef Array(pthread_t)   pthread_t_array;
 typedef struct Task_queue  Task_queue;
-typedef struct File_list_accessor File_list_accessor;
+typedef struct File_tree_accessor File_tree_accessor;
 
 struct Server {
     Memory_context         *context;
@@ -49,7 +49,7 @@ struct Route {
     enum HTTP_method        method;
     Regex                  *path_regex;
     Request_handler        *handler;
-    File_list_accessor     *file_list_accessor;
+    File_tree_accessor     *file_tree_accessor;
 };
 
 struct Response {

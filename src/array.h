@@ -45,4 +45,10 @@ void array_unordered_remove_by_index_(void *data, s64 *count, u64 unit_size, s64
 #define array_unordered_remove_by_index(ARRAY, INDEX) \
     array_unordered_remove_by_index_((ARRAY)->data, &(ARRAY)->count, sizeof((ARRAY)->data), (INDEX))
 
+// Syntactic varnish for qsort() and bsearch():
+#define qsort_array(ARRAY, COMPARE_FUNCTION) \
+    qsort((ARRAY)->data, (ARRAY)->count, sizeof((ARRAY)->data[0]), (COMPARE_FUNCTION))
+#define bsearch_array(KEY, ARRAY, COMPARE_FUNCTION) \
+    bsearch((KEY), (ARRAY)->data, (ARRAY)->count, sizeof((ARRAY)->data[0]), (COMPARE_FUNCTION))
+
 #endif // ARRAY_H_INCLUDED

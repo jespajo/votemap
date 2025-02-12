@@ -20,15 +20,15 @@ typedef struct Task Task;
 struct Task {
     enum {
         DEAL_WITH_A_CLIENT=1,
-        REFRESH_FILE_LIST,
+        REFRESH_FILE_TREE,
         TIME_TO_WIND_UP,
     }                       type;
     union {
         // If the type is DEAL_WITH_A_CLIENT:
         Client             *client;
 
-        // If the type is REFRESH_FILE_LIST:
-        File_list_accessor *file_list_accessor;
+        // If the type is REFRESH_FILE_TREE:
+        File_tree_accessor *file_tree_accessor;
     };
 };
 
@@ -496,7 +496,7 @@ static char_array *encode_query_string(string_dict *query, Memory_context *conte
     return result;
 }
 
-void refresh_file_list(File_list_accessor *accessor); //|Temporary: Until we put the File_list_accessor stuff into its own module.
+void refresh_file_tree(File_tree_accessor *accessor); //|Temporary: Until we put the File_tree_accessor stuff into its own module.
 
 static void *worker_thread_routine(void *arg)
 // The worker thread's main loop.
@@ -510,8 +510,8 @@ static void *worker_thread_routine(void *arg)
 
         if (task.type == TIME_TO_WIND_UP)  break;
 
-        if (task.type == REFRESH_FILE_LIST) {
-            refresh_file_list(task.file_list_accessor);
+        if (task.type == REFRESH_FILE_TREE) {
+            refresh_file_tree(task.file_tree_accessor);
             continue;
         }
 
@@ -669,20 +669,20 @@ void add_route(Server *server, enum HTTP_method method, char *path_pattern, Requ
     *Add(&server->routes) = (Route){method, regex, handler};
 }
 
-#ifndef FILE_LIST_STUFF_WHICH_WE_WILL_PROBABLY_PUT_INTO_ITS_OWN_MODULE
-//typedef struct File_list_accessor File_list_accessor;
-typedef struct File_list_resource File_list_resource;
+#ifndef FILE_TREE_STUFF_WHICH_WE_WILL_PROBABLY_PUT_INTO_ITS_OWN_MODULE
+//typedef struct File_tree_accessor File_tree_accessor;
+typedef struct File_tree_resource File_tree_resource;
 
-struct File_list_accessor {
+struct File_tree_accessor {
     Memory_context     *context;
 
     char               *directory;
 
     pthread_mutex_t     mutex;
-    File_list_resource *resource;
+    File_tree_resource *resource;
 };
 
-struct File_list_resource {
+struct File_tree_resource {
     // A child context of the accessor's context. It contains everything to do with
     // this resource including the resource struct itself.
     Memory_context     *context;
@@ -692,21 +692,20 @@ struct File_list_resource {
         int                 value;
     }                   num_refs;
 
-    string_array        file_list;
+    File_node          *file_tree;
     s64                 time_created;
 
     // The first thread to notice that a resource has expired sets update_pending = true
     // to let other threads know that it is taking responsibility for the update.
-    // (If we weren't using C99, we could use an atomic test-and-set instead of a mutex.)
     struct {
         pthread_mutex_t     mutex;
         bool                value;
     }                   update_pending;
 };
 
-File_list_resource *acquire_file_list(File_list_accessor *accessor)
+File_tree_resource *acquire_file_tree(File_tree_accessor *accessor)
 {
-    File_list_resource *resource = NULL;
+    File_tree_resource *resource = NULL;
 
     pthread_mutex_lock(&accessor->mutex);
     {
@@ -732,7 +731,7 @@ File_list_resource *acquire_file_list(File_list_accessor *accessor)
     return resource;
 }
 
-void free_file_list_resource(File_list_resource *resource)
+void free_file_tree_resource(File_tree_resource *resource)
 {
     assert(resource->num_refs.value == 0);
 
@@ -742,7 +741,7 @@ void free_file_list_resource(File_list_resource *resource)
     free_context(resource->context);
 }
 
-bool release_file_list(File_list_resource *resource)
+bool release_file_tree(File_tree_resource *resource)
 // Return true if we were the last one to release the resource and hence must clean it up.
 {
     int num_refs;
@@ -756,24 +755,23 @@ bool release_file_list(File_list_resource *resource)
     return (num_refs == 0);
 }
 
-void refresh_file_list(File_list_accessor *accessor)
+void refresh_file_tree(File_tree_accessor *accessor)
 // Replace the current resource on the accessor. Clean up the old resource if no-one else has a reference to it.
 {
     Memory_context *context = new_context(accessor->context);
 
-    File_list_resource *resource = New(File_list_resource, context);
+    File_tree_resource *resource = New(File_tree_resource, context);
     resource->context = context;
     pthread_mutex_init(&resource->update_pending.mutex, NULL);
 
-    resource->file_list = get_all_files_under_directory(accessor->directory, context);
-    sort_strings_alphabetically(resource->file_list.data, resource->file_list.count); // |Speed: Do we get the file list already sorted, making this the pathological case for qsort()?
+    resource->file_tree = get_file_tree(accessor->directory, context);
 
     resource->time_created = get_monotonic_time();//|Todo: Maybe take this as an arg.
     pthread_mutex_init(&resource->num_refs.mutex, NULL);
     resource->num_refs.value = 1;
 
     // Put the resource on the accessor.
-    File_list_resource *old_resource;
+    File_tree_resource *old_resource;
     pthread_mutex_lock(&accessor->mutex);
     {
         old_resource = accessor->resource;
@@ -781,18 +779,18 @@ void refresh_file_list(File_list_accessor *accessor)
     }
     pthread_mutex_unlock(&accessor->mutex);
 
-    if (!old_resource)  return; // This lets us also use this function when we init an accessor for the first time (assuming the accessor has been initialised to zero, so its resource pointer is NULL).
+    if (!old_resource)  return; // This lets us also use this function to create a resource for the first time, assuming the accessor has already been initialised except for its resource member, which should be NULL.
 
-    bool should_clean_up = release_file_list(old_resource);
+    bool should_clean_up = release_file_tree(old_resource);
 
-    if (should_clean_up)  free_file_list_resource(old_resource);
+    if (should_clean_up)  free_file_tree_resource(old_resource);
 }
 
-File_list_accessor *create_file_list_accessor(char *directory, Memory_context *context)
+File_tree_accessor *create_file_tree_accessor(char *directory, Memory_context *context)
 {
     Memory_context *sub_context = new_context(context); // |Memory
 
-    File_list_accessor *accessor = New(File_list_accessor, sub_context);
+    File_tree_accessor *accessor = New(File_tree_accessor, sub_context);
     accessor->context = sub_context;
     pthread_mutex_init(&accessor->mutex, NULL);
 
@@ -804,7 +802,7 @@ File_list_accessor *create_file_list_accessor(char *directory, Memory_context *c
         accessor->directory = copy_string(directory, length, context).data;
     }
 
-    refresh_file_list(accessor);
+    refresh_file_tree(accessor);
 
     return accessor;
 }
@@ -820,7 +818,7 @@ void add_file_route(Server *server, char *path_pattern, char *directory)
 
     Route route = {GET, regex, &serve_files};
 
-    route.file_list_accessor = create_file_list_accessor(directory, server->context);
+    route.file_tree_accessor = create_file_tree_accessor(directory, server->context);
 
     //|Robustness: Assert the server hasn't started.
     *Add(&server->routes) = route;
@@ -986,10 +984,10 @@ void start_server(Server *server)
 
 Response serve_files(Client *client)
 {
-    File_list_accessor *accessor = client->route->file_list_accessor;
-    File_list_resource *resource = acquire_file_list(accessor);
+    File_tree_accessor *accessor = client->route->file_tree_accessor;
+    File_tree_resource *resource = acquire_file_tree(accessor);
 
-    // Check whether the resource has expired. If the file list is older than CACHE_TIMEOUT milliseconds,
+    // Check whether the resource has expired. If the file tree is older than CACHE_TIMEOUT milliseconds,
     // we'll schedule it to be created again, though we'll still use the old one for the current request.
     s64 CACHE_TIMEOUT = 1000;
     s64 current_time = get_monotonic_time();
@@ -1014,32 +1012,36 @@ Response serve_files(Client *client)
 
     if (we_should_update) {
         Task_queue *task_queue = client->server->task_queue;
-        add_to_queue(task_queue, (Task){REFRESH_FILE_LIST, .file_list_accessor=accessor});
+        add_to_queue(task_queue, (Task){REFRESH_FILE_TREE, .file_tree_accessor=accessor});
     }
 
     Memory_context *context = client->context;
     Request        *request = &client->request;
-    string_array *file_list = &resource->file_list;
 
     Response response = {0};
 
-    // |Temporary: Eventually, instead of a file list, we'll have a tree of nodes. Each node will say whether it's a directory, so we can use that to decide whether to treat the requested file as a directory. But for now, we're just going to assume, if the request path ends in '/', it's a request for a directory.
-    bool is_directory = (request->path.data[request->path.count-1] == '/');
+    File_node *file_node = find_file_node(&request->path.data[1], resource->file_tree);
 
-    char_array file_path = get_string(context, "%s/%s", accessor->directory, &request->path.data[1]);
-    if (is_directory) {
-        append_string(&file_path, "index.html");
-    }
-    char *test_path = &file_path.data[strlen(accessor->directory)+1];
-
-    char *match = search_alphabetically_sorted_strings(test_path, file_list->data, file_list->count);
-    if (!match) {
+    if (!file_node) {
         char static body[] = "That file isn't on our list.\n";
         response = (Response){404, .body=body, .size=lengthof(body)};
         goto done;
     }
 
-    u8_array *file = load_binary_file(file_path.data, context);
+    if (file_node->type == DIRECTORY) {
+        File_node *index = find_file_node("index.html", file_node);
+
+        // |Todo: Dynamically create an index page if index.html doesn't exist.
+        if (index)  file_node = index;
+    }
+
+    if (file_node->type != REGULAR_FILE) {
+        char static body[] = "We can't serve that type of file.\n";
+        response = (Response){403, .body=body, .size=lengthof(body)};
+        goto done;
+    }
+
+    u8_array *file = load_binary_file(file_node->path.data, context);
     if (!file) {
         char static body[] = "That file is on our list, yet it doesn't exist.\n";
         response = (Response){500, .body=body, .size=lengthof(body)};
@@ -1049,11 +1051,11 @@ Response serve_files(Client *client)
     response = (Response){200, .body=file->data, .size=file->count};
 
     char *content_type = NULL;
-    for (s64 i = file_path.count-1; i >= 0; i--) {
-        if (file_path.data[i] == '/')  break;
-        if (file_path.data[i] != '.')  continue;
+    for (s64 i = file_node->path.count-1; i >= 0; i--) {
+        if (file_node->path.data[i] == '/')  break;
+        if (file_node->path.data[i] != '.')  continue;
 
-        char *file_extension = &file_path.data[i+1];
+        char *file_extension = &file_node->path.data[i+1];
 
         if (!strcmp(file_extension, "html"))       content_type = "text/html";
         else if (!strcmp(file_extension, "js"))    content_type = "text/javascript";
@@ -1068,12 +1070,12 @@ Response serve_files(Client *client)
     }
 
 done:;
-    bool should_clean_up = release_file_list(resource);
+    bool should_clean_up = release_file_tree(resource);
 
     if (should_clean_up) {
         // Clean up the old resource. We could create a task to schedule this work on a different thread
         // rather than making the current request wait, but there's no need because cleaning up is fast.
-        free_file_list_resource(resource);
+        free_file_tree_resource(resource);
     }
 
     return response;
