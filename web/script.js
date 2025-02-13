@@ -1169,7 +1169,7 @@ async function maybeFetchVertices() {
     if (!dynamicTileset[upp])  dynamicTileset[upp] = {};
     const tileset = dynamicTileset[upp];
 
-    const pixelsPerTile = 256;
+    const pixelsPerTile = 512;
     const tileSize = pixelsPerTile*upp;
 
     /** @type Tileset */
